@@ -38,6 +38,11 @@ def load_config(path: str) -> dict:
 def ensure_cache(cfg: dict) -> PathCache:
     if os.path.exists(cfg["cache"]):
         return PathCache.load(cfg["cache"])
+    if "trace" not in cfg:
+        raise SystemExit(
+            f"path cache {cfg['cache']} does not exist and the config has no 'trace' "
+            "block; export it first (e.g. python -m nrp.mitsuba_exporter, see examples/)"
+        )
     t = cfg["trace"]
     print(f"cache missing; tracing {t['width']}x{t['height']} @ {t['spp']} spp ...")
     cache = trace_path_cache(t["width"], t["height"], t["spp"], t["bounces"], t["seed"])

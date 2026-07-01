@@ -31,7 +31,10 @@ Two backends share one path-cache/GATHERLIGHT vocabulary:
 - **mise** — non-nix alternative and task runner: `mise trust && mise install`, then
   `mise run test|lint|fmt|train|train-torch|smoke`.
 - **uv** — Python project/venv manager: `uv sync` installs numpy + torch (the only
-  runtime dependencies) and the dev group; `uv run <cmd>` runs inside the venv.
+  required runtime dependencies) and the dev group; `uv run <cmd>` runs inside the
+  venv. Optional extras: `uv sync --extra mitsuba --extra oidn` (or `mise run
+  sync-all`) adds the Mitsuba 3 exporter and the OIDN denoiser. On macOS the `oidn`
+  wheel links against Homebrew's TBB: `brew install tbb`.
 
 ## Quickstart
 
@@ -45,6 +48,17 @@ uv run python -m nrp.train --config examples/toy_sphere.json
 # --- torch backend (paper architecture) ---
 # Reuses the same path cache; trains hashgrid MLP with the denoised image pool.
 uv run python -m nrp.torch_backend.train --config examples/toy_sphere_torch.json
+
+# --- Mitsuba 3 scene (needs: uv sync --extra mitsuba --extra oidn) ---
+# Export a real Mitsuba scene into the path-cache schema (§4.1), then train on it
+# with OIDN-denoised targets (paper-exact §4.4 pipeline).
+uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box \
+  --width 48 --height 48 --spp 16 --bounces 4 --out out/mitsuba/path_cache.npz
+uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_torch.json
+
+# Benchmark proxy inference across resolutions on every available device (cpu/mps/cuda).
+uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt \
+  --resolutions 48 128 256 512 1024 --out out/bench.json
 
 # Consistency check: GATHERLIGHT over the cache vs an independent re-trace.
 uv run python -m nrp.compare_reference --cache out/toy/path_cache.npz \
@@ -96,7 +110,7 @@ uv run ruff check .                            # or: mise run lint
 | §4.2 fp16 / rgb9e5 compressed cache layout | Not implemented | float64 `.npz` (toy caches are MiB, not GiB) |
 | §4.3 inputs: hashgrid(px) + albedo/depth/normal + light params | **Implemented** | `torch_backend/encoding.py` (multiresolution hash [MESK22]), `model.py` |
 | §4.4 per-pixel random lights + denoised target pool (300 / 2-every-5) | **Implemented** (pool size configurable) | `torch_backend/train.py::ImagePool` |
-| §4.4 OIDN denoiser | Substituted | aux-guided joint bilateral filter (`torch_backend/denoise.py`) — same guidance, weaker prior |
+| §4.4 OIDN denoiser | **Implemented** (optional extra) | `torch_backend/denoise.py::oidn_denoise` (RT filter, HDR, albedo+normal guides); aux-guided joint bilateral as the dependency-free fallback |
 | §4.4 segment-based light-position sampling + bbox fallback | **Implemented** | `torch_backend/sampling.py` |
 | §4.4 loss: relative MSE, sg(prediction)²+ε denominator, ε=0.01 (Eq. 4) | **Implemented** (torch) | `torch_backend/model.py::relative_mse_loss`, gradient unit-tested |
 | §5.3 inverse: Eq. 5 multi-light sum, Reinhard MSE (Eq. 6) | **Implemented** | `torch_backend/optimize_lights.py` |
@@ -105,7 +119,8 @@ uv run ruff check .                            # or: mise run lint
 | §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
 | §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
 | §6.1 multi-view / compositing-layer NRPs | Not implemented | single fixed camera, single layer |
-| §5 production scenes (Hyperion/Mitsuba, 512 spp, RTX 5090) | Out of scope | toy Cornell-style box; a Mitsuba 3 exporter is the natural upgrade |
+| §4.1 Mitsuba 3 path-data pass (academic scenes) | **Implemented** (optional extra) | `nrp/mitsuba_exporter.py`: BSDF sampling, no NEE, throughput RR, aux G-buffer; XML scenes or builtin cornell box |
+| §5 production scenes (Hyperion, 512 spp, RTX 5090) | Out of scope | Hyperion is Disney-internal; any Mitsuba XML scene works via the exporter |
 
 ## Measured results (toy scene, laptop CPU)
 
@@ -129,6 +144,20 @@ runs on an Apple Silicon laptop CPU, single process; none are quoted from the pa
   fraction 0.25. The paper's reparameterization + tonemapped loss dramatically
   outperforms the numpy backend's naive clipped-Adam recovery (center error 0.44 on
   the same task).
+- **Mitsuba cornell box + OIDN (paper-exact data pipeline):** 103,680 segments exported
+  in 1.6 s (48×48, 16 spp, 4 bounces, RR); torch proxy trained on OIDN-denoised pool
+  targets reaches held-out **PSNR 25.87 dB vs raw GATHERLIGHT** (26.48 dB vs denoised)
+  in 48 s — the best-conditioned scene in the repo.
+- **Inference benchmark** (62,923-param sphere model, `out/bench.json`; Apple Silicon):
+
+  | device | 48² | 128² | 256² | 512² | 1024² |
+  |---|---|---|---|---|---|
+  | cpu | 170 Hz | 71 Hz | 21 Hz | 9.0 Hz | 2.8 Hz |
+  | mps | 481 Hz | 359 Hz | **117 Hz** | **37 Hz** | 8.6 Hz |
+
+  On this laptop's GPU (MPS) the proxy holds the paper's ~30–60 Hz interactive range
+  up to 512×512. The paper's RTX 5090 numbers at production resolution remain out of
+  reach without CUDA + tiny-cuda-nn, as documented.
 - **Interactive-rate statement:** proxy inference is linear in pixel count and
   independent of scene complexity, as the paper argues — but the paper's 30–60 Hz is
   measured on an RTX 5090 at production resolutions. On this CPU the same statement
@@ -140,24 +169,28 @@ Documented substitutions, not silent approximations:
 
 - **CPU (or MPS) PyTorch, no tiny-cuda-nn, no Triton kernel** — architecture is
   faithful, absolute performance is not.
-- **Joint bilateral denoiser instead of OIDN** — same auxiliary guidance
-  (albedo/normal/depth), far weaker prior. Swap in `oidn` bindings behind
-  `joint_bilateral_denoise` for parity.
+- **OIDN is optional** — the paper's denoiser is used when the `oidn` extra is
+  installed (`"denoise": {"method": "oidn"}`); the dependency-free default remains the
+  aux-guided joint bilateral filter (same guidance signal, weaker prior).
 - **Softplus output head** — the paper doesn't specify its head; softplus keeps
   contributions positive.
-- **Toy path tracer instead of Hyperion/Mitsuba 3** — Lambertian Cornell-style box
-  only; no volumes, no fur/translucency, no production-scale anything.
+- **The Mitsuba exporter drives Mitsuba's scalar variant from Python** — correct and
+  portable (no JIT backend requirements) but slow for large exports; the paper records
+  paths inside the renderer's own tracing loop. No volumes are exported (surface
+  interactions only).
 - **numpy backend diverges further by design** (sinusoidal encoding, target-normalized
   loss, extra derived geometric inputs) — it is the readable finite-difference-checked
   reference, not the paper replica; the torch backend is the paper replica.
 
 ## Next steps
 
-1. **Mitsuba 3 scene exporter** — trace a real academic scene (Kitchen/Bedroom/Cornell)
-   into the path-cache schema; the paper's quantitative tables become reproducible.
-2. **OIDN denoising** — optional dependency behind the existing denoise interface.
-3. **GPU/MPS benchmarking + a fused gather** (torch.compile or Triton when CUDA is
-   available) to approach the paper's reconstruction timings (Table 1).
+1. **Richer Mitsuba scenes** — the exporter takes any scene XML; running the paper's
+   Kitchen/Bedroom scenes (with a vectorized drjit tracing loop for speed) would make
+   its quantitative tables directly reproducible.
+2. **Volumetric path export** (§3.1 volumes) — record free-flight scattering vertices
+   from participating media.
+3. **A fused GATHERLIGHT kernel** (torch.compile, or Triton when CUDA is available) to
+   approach the paper's reconstruction timings (Table 1); training on MPS/CUDA.
 4. **Multi-light joint training targets and quad-light inverse optimization** (the
    paper optimizes spheres; quads are forward-only here too).
 5. **Compressed cache layout** (fp16 + rgb9e5) for sequence-scale caches (§4.2).
@@ -167,9 +200,10 @@ Documented substitutions, not silent approximations:
 
 ```
 nrp/                 numpy reference backend + shared vocabulary (cache, lights, gather)
-nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse)
+nrp/mitsuba_exporter.py  Mitsuba 3 scene -> path cache (optional extra)
+nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
-tests/               62+ unit tests (geometry, gather, hashgrid, loss gradients, reparam, smokes)
+tests/               71 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
 flake.nix / mise.toml / .envrc   toolchain
 ```
 

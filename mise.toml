@@ -8,6 +8,10 @@ ruff = "latest"
 description = "Create/refresh the uv venv with dev dependencies"
 run = "uv sync"
 
+[tasks.sync-all]
+description = "uv sync including the mitsuba + oidn extras"
+run = "uv sync --extra mitsuba --extra oidn"
+
 [tasks.test]
 description = "Run the unit test suite"
 run = "uv run python -m unittest discover -s tests"
@@ -31,3 +35,15 @@ run = "uv run python -m nrp.torch_backend.train --config examples/toy_sphere_tor
 [tasks.smoke]
 description = "Fast end-to-end smoke: numpy train + relight + inverse on a tiny trace"
 run = "uv run python -m unittest discover -s tests -p 'test_training_smoke.py'"
+
+[tasks.export-mitsuba]
+description = "Export the Mitsuba cornell box into a path cache (needs the mitsuba extra)"
+run = "uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box --width 48 --height 48 --spp 16 --bounces 4 --out out/mitsuba/path_cache.npz"
+
+[tasks.train-mitsuba]
+description = "Train the torch proxy on the Mitsuba-exported cache with OIDN denoising"
+run = "uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_torch.json"
+
+[tasks.bench]
+description = "Benchmark proxy inference across resolutions on all available devices"
+run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --out out/bench.json"

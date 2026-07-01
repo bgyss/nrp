@@ -27,7 +27,7 @@ from ..gather_light import gather_light
 from ..metrics import psnr, smape
 from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
-from .denoise import joint_bilateral_denoise
+from .denoise import denoise_image
 from .model import LIGHT_PARAM_DIMS, TorchNRP, relative_mse_loss
 from .sampling import sample_light
 
@@ -71,13 +71,15 @@ class ImagePool:
 
     def _render_target(self, light) -> np.ndarray:
         image = gather_light(self.cache, light)  # unit emission: pre-emission contribution
-        if self.cfg.get("denoise", {}).get("enabled", True):
-            image = joint_bilateral_denoise(
+        dn = self.cfg.get("denoise", {})
+        if dn.get("enabled", True):
+            image = denoise_image(
                 image,
                 self.cache.albedo,
                 self.cache.normal,
                 self.cache.depth,
-                **{k: v for k, v in self.cfg.get("denoise", {}).items() if k != "enabled"},
+                method=dn.get("method", "bilateral"),
+                **{k: v for k, v in dn.items() if k not in ("enabled", "method")},
             )
         return image.reshape(-1, 3)
 
@@ -156,11 +158,12 @@ def train(cfg: dict) -> dict:
             ).expand(n_px, -1)
             pred = model(xy, aux, params).cpu().numpy().astype(np.float64)
             raw = gather_light(cache, light).reshape(n_px, 3)
-            den = joint_bilateral_denoise(
+            den = denoise_image(
                 raw.reshape(cache.height, cache.width, 3),
                 cache.albedo,
                 cache.normal,
                 cache.depth,
+                method=cfg.get("denoise", {}).get("method", "bilateral"),
             ).reshape(n_px, 3)
             val_metrics.append(
                 {

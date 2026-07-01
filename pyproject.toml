@@ -10,6 +10,10 @@ dependencies = [
   "torch>=2.12.1",
 ]
 
+[project.optional-dependencies]
+mitsuba = ["mitsuba>=3.6"]
+oidn = ["oidn>=0.2"]
+
 [dependency-groups]
 dev = [
   "ruff>=0.4",

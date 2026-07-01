@@ -1,0 +1,37 @@
+{
+  "_comment": "Torch training on a Mitsuba-exported cache. Export first: uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box --width 48 --height 48 --spp 16 --bounces 4 --out out/mitsuba/path_cache.npz",
+  "cache": "../out/mitsuba/path_cache.npz",
+  "out_dir": "../out/mitsuba-torch",
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.1,
+    "radius_max": 0.5
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "method": "oidn"
+  },
+  "iters": 3000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 12,
+      "base_resolution": 4,
+      "finest_resolution": 48
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}
