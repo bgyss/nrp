@@ -24,6 +24,12 @@ Two backends share one path-cache/GATHERLIGHT vocabulary:
   sum, Reinhard-tonemapped MSE of Eq. 6, logit/inverse-softplus reparameterization,
   mini-batch pixel-fraction SGD of Table 3).
 
+Full documentation lives in [docs/](docs/): [architecture](docs/architecture.md),
+[section-by-section paper mapping](docs/paper-mapping.md),
+[performance methodology + all measured results](docs/performance.md),
+[status report](docs/report-2026-07-01.md), and a
+[roadmap of ten goal-prompt-ready improvements](docs/roadmap.md).
+
 ## Toolchain (nix + mise + uv)
 
 - **nix** — reproducible tool source of truth: `nix develop` gives python 3.12, uv,
@@ -184,17 +190,12 @@ Documented substitutions, not silent approximations:
 
 ## Next steps
 
-1. **Richer Mitsuba scenes** — the exporter takes any scene XML; running the paper's
-   Kitchen/Bedroom scenes (with a vectorized drjit tracing loop for speed) would make
-   its quantitative tables directly reproducible.
-2. **Volumetric path export** (§3.1 volumes) — record free-flight scattering vertices
-   from participating media.
-3. **A fused GATHERLIGHT kernel** (torch.compile, or Triton when CUDA is available) to
-   approach the paper's reconstruction timings (Table 1); training on MPS/CUDA.
-4. **Multi-light joint training targets and quad-light inverse optimization** (the
-   paper optimizes spheres; quads are forward-only here too).
-5. **Compressed cache layout** (fp16 + rgb9e5) for sequence-scale caches (§4.2).
-6. **Multi-view NRPs and per-layer compositing** (§6.1).
+Ten candidate improvements — vectorized Mitsuba export, volumes, fused GPU gather,
+multi-light/quad inverse (Table 3), compressed caches (§4.2), paper-scale training,
+multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
+Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
+(each with verification and performance-testing requirements) in
+[docs/roadmap.md](docs/roadmap.md).
 
 ## Layout
 
@@ -204,6 +205,7 @@ nrp/mitsuba_exporter.py  Mitsuba 3 scene -> path cache (optional extra)
 nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
 tests/               71 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
+docs/                architecture, paper mapping, performance, status report, roadmap
 flake.nix / mise.toml / .envrc   toolchain
 ```
 
