@@ -1,12 +1,13 @@
 [project]
 name = "nrp"
 version = "0.1.0"
-description = "CPU-only sample reimplementation of the neural-render-proxies decomposition: path caching, decoupled emission gathering, a compact differentiable proxy, and inverse lighting."
+description = "Sample reimplementation of Neural Render Proxies (Sancho et al., EGSR 2026): light-agnostic path caching, decoupled emission gathering, hashgrid-encoded differentiable proxies (PyTorch + numpy reference), and inverse lighting."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
   "numpy>=2.0",
+  "torch>=2.12.1",
 ]
 
 [dependency-groups]

@@ -1,0 +1,43 @@
+{
+  "cache": "../out/toy/path_cache.npz",
+  "out_dir": "../out/toy-torch",
+  "trace": {
+    "width": 48,
+    "height": 48,
+    "spp": 24,
+    "bounces": 3,
+    "seed": 1
+  },
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.05,
+    "radius_max": 0.25
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "radius": 2
+  },
+  "iters": 3000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 12,
+      "base_resolution": 4,
+      "finest_resolution": 48
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}

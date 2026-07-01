@@ -1,0 +1,33 @@
+# Non-nix toolchain pin + task runner. `mise trust` once, then `mise install`.
+[tools]
+python = "3.12"
+uv = "latest"
+ruff = "latest"
+
+[tasks.sync]
+description = "Create/refresh the uv venv with dev dependencies"
+run = "uv sync"
+
+[tasks.test]
+description = "Run the unit test suite"
+run = "uv run python -m unittest discover -s tests"
+
+[tasks.lint]
+description = "ruff check"
+run = "uv run ruff check ."
+
+[tasks.fmt]
+description = "ruff format"
+run = "uv run ruff format ."
+
+[tasks.train]
+description = "Train the numpy proxy on the toy scene (traces the cache if missing)"
+run = "uv run python -m nrp.train --config examples/toy_sphere.json"
+
+[tasks.train-torch]
+description = "Train the torch proxy (hashgrid + denoised pool) on the toy scene"
+run = "uv run python -m nrp.torch_backend.train --config examples/toy_sphere_torch.json"
+
+[tasks.smoke]
+description = "Fast end-to-end smoke: numpy train + relight + inverse on a tiny trace"
+run = "uv run python -m unittest discover -s tests -p 'test_training_smoke.py'"

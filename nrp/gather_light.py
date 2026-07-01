@@ -23,25 +23,61 @@ import json
 
 import numpy as np
 
-from .lights import SphereLight, segment_hits_sphere
+from .lights import (
+    QuadLight,
+    SphereLight,
+    light_from_dict,
+    segment_hits_quad,
+    segment_hits_sphere,
+)
 from .path_cache import PathCache
 
 
-def gather_throughput(cache: PathCache, center: np.ndarray, radius: float) -> np.ndarray:
-    """Per-pixel summed throughput of segments hitting the sphere, *before* emission
-    scaling — the quantity the neural proxy learns. Returns (H, W, 3)."""
+def _accumulate_hits(cache: PathCache, hits: np.ndarray) -> np.ndarray:
     contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
-    if cache.segment_count:
-        hits = segment_hits_sphere(cache.seg_origin, cache.seg_dir, cache.seg_tmax, center, radius)
-        np.add.at(contrib, cache.seg_pixel[hits], cache.seg_throughput[hits])
+    np.add.at(contrib, cache.seg_pixel[hits], cache.seg_throughput[hits])
     denom = np.maximum(cache.n_paths, 1).astype(np.float64)
     contrib /= denom[:, None]
     return contrib.reshape(cache.height, cache.width, 3)
 
 
-def gather_light(cache: PathCache, light: SphereLight) -> np.ndarray:
-    """Full per-pixel light contribution: gather_throughput scaled by light.rgb."""
-    return gather_throughput(cache, light.center, light.radius) * light.rgb
+def gather_throughput(cache: PathCache, center: np.ndarray, radius: float) -> np.ndarray:
+    """Per-pixel summed throughput of segments hitting the sphere, *before* emission
+    scaling — the quantity the neural proxy learns (GATHERsphere). Returns (H, W, 3)."""
+    if not cache.segment_count:
+        return np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    hits = segment_hits_sphere(cache.seg_origin, cache.seg_dir, cache.seg_tmax, center, radius)
+    return _accumulate_hits(cache, hits)
+
+
+def gather_throughput_quad(
+    cache: PathCache, center: np.ndarray, normal: np.ndarray, width: float, height: float
+) -> np.ndarray:
+    """GATHERquad: pre-emission throughput sum over segments crossing the rectangle."""
+    if not cache.segment_count:
+        return np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    hits = segment_hits_quad(
+        cache.seg_origin, cache.seg_dir, cache.seg_tmax, center, normal, width, height
+    )
+    return _accumulate_hits(cache, hits)
+
+
+def gather_light(cache: PathCache, light: SphereLight | QuadLight) -> np.ndarray:
+    """Full per-pixel contribution of one light: GATHERtype scaled by emission rgb."""
+    if isinstance(light, SphereLight):
+        return gather_throughput(cache, light.center, light.radius) * light.rgb
+    return (
+        gather_throughput_quad(cache, light.center, light.normal, light.width, light.height)
+        * light.rgb
+    )
+
+
+def gather_lights(cache: PathCache, lights: list) -> np.ndarray:
+    """GATHERLIGHT over a light list: sum of per-light contributions (Eq. 1 linearity)."""
+    image = np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    for light in lights:
+        image += gather_light(cache, light)
+    return image
 
 
 def undersampled_mask(cache: PathCache) -> np.ndarray:
@@ -62,7 +98,7 @@ def main() -> None:
     except json.JSONDecodeError:
         with open(args.light) as f:
             spec = json.load(f)
-    light = SphereLight.from_dict(spec)
+    light = light_from_dict(spec)
     image = gather_light(cache, light)
     np.save(args.out, image)
     n_under = int(undersampled_mask(cache).sum())
