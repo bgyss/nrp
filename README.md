@@ -127,9 +127,9 @@ uv run ruff check .                            # or: mise run lint
 | §4.4 OIDN denoiser | **Implemented** (optional extra) | `torch_backend/denoise.py::oidn_denoise` (RT filter, HDR, albedo+normal guides); aux-guided joint bilateral as the dependency-free fallback |
 | §4.4 segment-based light-position sampling + bbox fallback | **Implemented** | `torch_backend/sampling.py` |
 | §4.4 loss: relative MSE, sg(prediction)²+ε denominator, ε=0.01 (Eq. 4) | **Implemented** (torch) | `torch_backend/model.py::relative_mse_loss`, gradient unit-tested |
-| §5.3 inverse: Eq. 5 multi-light sum, Reinhard MSE (Eq. 6) | **Implemented** | `torch_backend/optimize_lights.py` |
-| §5.3 logit/inv-softplus reparameterization, Adam lr 0.05 × 500 | **Implemented** | `torch_backend/optimize_lights.py::ReparamSphereLights` |
-| §5.3 mini-batch pixel-fraction SGD (Table 3) | **Implemented** | `--pixel-fraction` |
+| §5.3 inverse: Eq. 5 multi-light sum, Reinhard MSE (Eq. 6) | **Implemented** (sphere + quad, joint multi-light) | `torch_backend/optimize_lights.py` |
+| §5.3 logit/inv-softplus reparameterization, Adam lr 0.05 × 500 | **Implemented** | `ReparamSphereLights` / `ReparamQuadLights` (quad normal: unconstrained 3-vector normalized in `quad_params`, gradient-tested) |
+| §5.3 mini-batch pixel-fraction SGD (Table 3) | **Implemented** + grid replication | `--pixel-fraction`; `examples/inverse_grid.py` runs the N×α grid (out/inverse-grid/) |
 | §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
 | §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
 | §6.1 multi-view / compositing-layer NRPs | Not implemented | single fixed camera, single layer |
@@ -166,6 +166,14 @@ runs on an Apple Silicon laptop CPU, single process; none are quoted from the pa
   **2.4 M seg/s at 48² (39×)** and **3.5 M seg/s at 128² (59×)** over the scalar
   loop (`out/export-bench.json`; both loops statistically equivalent by a fixed-seed
   GATHERLIGHT test).
+- **Quad + multi-light inverse optimization (roadmap item 4):** §5.3 now recovers
+  sphere *and* quad lights, jointly for N lights. The Table-3-style grid
+  (`mise run inverse-grid`, N ∈ {1,3,5} × α ∈ {1.0…0.01}, 5 runs/cell) reproduces
+  the paper's trend: re-rendered PSNR is flat in pixel fraction (≤0.3 dB drop at
+  α=0.01) while time falls ~5×. Quad recovery is proxy-fidelity-bound (diagnosed,
+  not assumed — see `docs/performance.md`); with a 96-spp/10k-iter proxy and
+  physical re-ranking of restarts it reaches **center error 0.039 < 0.05**
+  (`mise run quad-check`).
 - **Batched device GATHERLIGHT (roadmap item 3):** `torch_backend/gather.py` gathers
   a light over all cached segments in one weight-and-scatter op — **8.1 ms/image on
   MPS vs 58.6 ms numpy-CPU (7.2×) on a 2.9 M-segment 256² cache** — matching numpy
@@ -221,11 +229,11 @@ Documented substitutions, not silent approximations:
 
 ## Next steps
 
-Roadmap item 1 (vectorized Mitsuba export + a real academic scene) is done — see
-`docs/performance.md`, as are item 2 (volumetric path export — homogeneous medium in
-the toy tracer, schema v2) and item 3 (batched device GATHERLIGHT + MPS training,
-`torch_backend/gather.py`). Remaining candidate improvements —
-multi-light/quad inverse (Table 3), compressed caches (§4.2), paper-scale training,
+Roadmap items 1–4 are done — vectorized Mitsuba export + a real academic scene,
+volumetric path export (schema v2), batched device GATHERLIGHT + MPS training, and
+quad/multi-light inverse optimization with the Table-3 grid — all measured in
+`docs/performance.md`. Remaining candidate improvements —
+compressed caches (§4.2), paper-scale training,
 multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
 (each with verification and performance-testing requirements) in
@@ -240,7 +248,7 @@ nrp/export_bench.py  exporter throughput benchmark (scalar vs wavefront)
 nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
 examples/scenes/     gallery-scene download script (assets never committed)
-tests/               90 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
+tests/               95 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
 docs/                architecture, paper mapping, performance, status report, roadmap
 flake.nix / mise.toml / .envrc   toolchain
 ```

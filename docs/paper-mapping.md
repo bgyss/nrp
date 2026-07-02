@@ -134,21 +134,29 @@ roadmap items 9–10.
 
 ## §5.3 Light optimization — faithful
 
-- Eq. 5: predicted image = Σᵢ Eᵢ · N_sphere(px, ℓᵢ, rᵢ), accumulated sequentially per
-  light (`--n-lights`).
+- Eq. 5: predicted image = Σᵢ Eᵢ · N_type(px, shapeᵢ), accumulated sequentially per
+  light (`--n-lights`) — sphere and quad models, joint multi-light recovery.
 - Eq. 6: MSE on Reinhard-tonemapped values T(I) = I/(1+I).
-- Reparameterization: center/radius through the logit of their bounded domains
-  (recovered by sigmoid — bounds can never be violated), color through inverse
-  softplus from ℝ₊. Adam in unconstrained space; paper defaults lr 0.05, 500
-  iterations.
+- Reparameterization: bounded quantities (center; sphere radius; quad width/height)
+  through the logit of their bounded domains (recovered by sigmoid — bounds can never
+  be violated), color through inverse softplus from ℝ₊, and the quad normal as an
+  unconstrained 3-vector normalized inside `quad_params` (gradients flow through the
+  normalization and are provably tangential — unit-tested). Adam in unconstrained
+  space; paper defaults lr 0.05, 500 iterations.
 - Mini-batch SGD (Table 3): `--pixel-fraction α` evaluates a random pixel subset of
   size ⌊α·H·W⌋ per iteration, drawn without replacement.
+  `examples/inverse_grid.py` replicates the Table-3 structure (N ∈ {1,3,5} joint
+  lights × α ∈ {1.0, 0.25, 0.05, 0.01}, 5 runs/cell) on the Mitsuba cornell box.
 - Every result is re-rendered through reference GATHERLIGHT; proxy-space and
-  physically-gathered errors are reported separately.
+  physically-gathered errors are reported separately, and restarts are *ranked* by
+  the physical re-render — an addition to the paper, motivated by an observed failure
+  mode where proxy loss prefers image matches at parameter-far configurations
+  (quad recovery is proxy-fidelity-bound; see docs/performance.md).
 
 *Evidence the machinery matters:* on the identical hidden-light recovery task, the
 torch §5.3 implementation reaches center error 0.013 where the numpy backend's naive
-clipped-Adam optimizer stalls at 0.44.
+clipped-Adam optimizer stalls at 0.44. Quad recovery (`--quad-check`) reaches center
+error < 0.05 with a 96-spp/10k-iteration proxy.
 
 *Not replicated:* the Mitsuba-3 and ZeroGrads baseline comparisons (Fig. 9), and the
 50-run statistical protocol.

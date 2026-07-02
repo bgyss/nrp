@@ -71,6 +71,14 @@ run = "uv run python -m nrp.export_bench --out out/export-bench.json"
 description = "Benchmark proxy inference across resolutions on all available devices"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --out out/bench.json"
 
+[tasks.inverse-grid]
+description = "Table-3-style grid: N in {1,3,5} lights x pixel fractions, 5 runs/cell (Mitsuba cornell)"
+run = "uv run python examples/inverse_grid.py --model out/mitsuba-torch/model.pt --cache out/mitsuba/path_cache.npz --out out/inverse-grid/report.json"
+
+[tasks.quad-check]
+description = "Train a toy quad proxy and verify 1-light quad recovery (center error < 0.05)"
+run = "uv run python examples/inverse_grid.py --quad-check --out out/inverse-grid/quad_check.json"
+
 [tasks.bench-gather]
 description = "Benchmark GATHERLIGHT: numpy vs batched torch (cpu/mps) on three cache sizes"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --resolutions 48 --gather-caches out/toy/path_cache.npz out/mitsuba/path_cache_128.npz out/mitsuba/path_cache_256.npz --out out/gather-bench.json"

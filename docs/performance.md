@@ -199,6 +199,51 @@ is why reports carry both.
 At pixel fraction 0.25, each optimization step evaluates 576 of 2,304 pixels; the
 full 500-step, 4-restart run completes in well under a minute on CPU at 48².
 
+## Inverse-optimization grid (roadmap item 4, Table 3 structure)
+
+`mise run inverse-grid` → `out/inverse-grid/report.json`. Mitsuba cornell box (48²,
+25.9 dB sphere proxy), N hidden sphere lights jointly recovered from one rendered
+target, 500 Adam steps, 5 runs per cell (fresh hidden lights + init each run);
+re-rendered (reference-GATHERLIGHT) PSNR vs the target.
+
+| N | metric | α=1.0 | α=0.25 | α=0.05 | α=0.01 |
+|---|---|---|---|---|---|
+| 1 | PSNR (dB) | 15.8 ± 8.8 | 15.8 ± 8.8 | 15.8 ± 8.8 | 15.8 ± 8.6 |
+| 1 | s/run | 3.5 | 1.4 | 0.7 | 0.7 |
+| 3 | PSNR (dB) | 17.8 ± 1.6 | 17.7 ± 1.8 | 17.8 ± 1.4 | 17.5 ± 1.5 |
+| 3 | s/run | 9.7 | 4.0 | 2.0 | 1.8 |
+| 5 | PSNR (dB) | 16.1 ± 2.1 | 16.1 ± 2.2 | 16.1 ± 2.1 | 16.1 ± 2.2 |
+| 5 | s/run | 16.9 | 7.5 | 4.2 | 3.7 |
+
+- **The paper's Table-3 trend reproduces qualitatively**: recovered quality is flat
+  in α — dropping from all pixels to 1% of them costs at most ~0.3 dB in any row —
+  while wall-clock falls ~5× from α=1.0 to α=0.05. Below that the speedup saturates
+  (per-step fixed costs and the final full-frame re-render dominate at 48²), where
+  the paper's GPU-scale runs keep gaining; the shape, not the constants, matches.
+- N=1's large σ (8.8 dB) is bimodal single-light recovery: most runs succeed, an
+  occasional hidden light lands where the proxy is weakest and the run stalls in a
+  wrong basin — the same failure mode the restarts mechanism exists for (grid runs
+  use a single start per run by design, to measure the raw cell cost).
+
+## Quad-light inverse recovery (roadmap item 4)
+
+Quad recovery is **proxy-fidelity-bound**, established by explicit diagnostics
+rather than assumed: with a 24-spp/3k-iteration toy quad proxy (~20 dB), the proxy
+loss at the *true* parameters (0.056) is 2× the loss at the wrong optima the
+optimizer finds (0.023–0.028), and an optimization started *at* the truth walks
+0.14 away — the optimizer is fine, the proxy's image-match optimum sits at wrong
+parameters. Three changes fix it (`examples/inverse_grid.py --quad-check`,
+`out/inverse-grid/quad_check.json`):
+
+1. a higher-fidelity proxy (96-spp cache, 10k iterations, 2¹⁴ hash table);
+2. restart ranking by the **physical GATHERLIGHT re-render** instead of proxy loss
+   (proxy loss prefers parameter-far image matches; now also used by the CLI);
+3. a well-conditioned fixture: near-surface dim quad (Reinhard sensitivity falls as
+   1/(1+I)², so bright targets carry less positional gradient).
+
+Result: **center error 0.039 < 0.05** (best of 12 restarts), re-rendered
+18.8 dB vs the target — deterministic from one command.
+
 ## Denoising
 
 OIDN (RT, HDR, albedo+normal guides) on a flat-2.0 HDR signal with σ=0.5 noise:

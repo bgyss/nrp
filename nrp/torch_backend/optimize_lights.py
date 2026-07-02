@@ -1,13 +1,15 @@
 """Paper-faithful inverse lighting through the torch NRP (§5.3).
 
-Optimizes N sphere lights' (center, radius, rgb) to match a target image:
-- Predicted image: I(px) = sum_i E_i * N_sphere(px, l_i, r_i)   (Eq. 5),
+Optimizes N sphere or quad lights' shape parameters and rgb to match a target image:
+- Predicted image: I(px) = sum_i E_i * N_type(px, shape_i)   (Eq. 5),
   accumulated sequentially per light.
 - Loss: MSE on Reinhard-tonemapped values, T(I) = I / (1 + I)   (Eq. 6).
-- Reparameterization to unconstrained space: center and radius through the logit of
-  their bounded domains (recovered via sigmoid), color through inverse softplus from
-  R>0 (recovered via softplus). Adam runs in unconstrained space (paper defaults:
-  lr 0.05, 500 iterations).
+- Reparameterization to unconstrained space: bounded quantities (center; sphere
+  radius; quad width/height) through the logit of their bounded domains (recovered
+  via sigmoid), color through inverse softplus from R>0 (recovered via softplus), and
+  the quad normal as an unconstrained 3-vector normalized inside `quad_params` so
+  gradients flow through the normalization. Adam runs in unconstrained space (paper
+  defaults: lr 0.05, 500 iterations).
 - Mini-batch SGD: --pixel-fraction alpha evaluates the loss on a random pixel subset of
   size floor(alpha * H * W) each iteration, drawn without replacement (Table 3).
 
@@ -28,10 +30,10 @@ import numpy as np
 import torch
 
 from ..gather_light import gather_lights
-from ..lights import SphereLight, light_from_dict
+from ..lights import QuadLight, SphereLight, light_from_dict
 from ..metrics import psnr, smape
 from ..path_cache import PathCache
-from .model import TorchNRP, sphere_params
+from .model import TorchNRP, quad_params, sphere_params
 from .train import pixel_tensors
 
 DEFAULT_BOUNDS = {
@@ -39,6 +41,8 @@ DEFAULT_BOUNDS = {
     "center_max": [0.9, 0.9, 0.9],
     "radius_min": 0.03,
     "radius_max": 0.3,
+    "size_min": 0.05,
+    "size_max": 0.6,
 }
 
 
@@ -87,22 +91,127 @@ class ReparamSphereLights:
         return [
             SphereLight(
                 center=c.detach().cpu().numpy().astype(np.float64),
-                radius=float(r),
+                radius=float(r.detach()),
                 rgb=e.detach().cpu().numpy().astype(np.float64),
             )
             for c, r, e in zip(centers, radii, rgbs, strict=True)
         ]
 
 
+class ReparamQuadLights:
+    """N quad lights in unconstrained space.
+
+    center/width/height go through the logit of their bounded domains; the normal is
+    a raw unconstrained 3-vector that `quad_params` normalizes (gradients flow through
+    the normalization); rgb through inverse softplus.
+    """
+
+    def __init__(self, init: list[dict], bounds: dict, device: torch.device):
+        self.lo = torch.tensor(
+            list(bounds["center_min"]) + [bounds["size_min"]] * 2,
+            dtype=torch.float32,
+            device=device,
+        )
+        self.hi = torch.tensor(
+            list(bounds["center_max"]) + [bounds["size_max"]] * 2,
+            dtype=torch.float32,
+            device=device,
+        )
+        geo = torch.tensor(
+            [list(light["center"]) + [light["width"], light["height"]] for light in init],
+            dtype=torch.float32,
+            device=device,
+        )
+        frac = ((geo - self.lo) / (self.hi - self.lo)).clamp(1e-4, 1.0 - 1e-4)
+        normal = torch.tensor(
+            [light["normal"] for light in init], dtype=torch.float32, device=device
+        )
+        rgb = torch.tensor([light["rgb"] for light in init], dtype=torch.float32, device=device)
+        self.u_geo = logit(frac).requires_grad_(True)
+        self.u_normal = normal.clone().requires_grad_(True)
+        self.u_rgb = inv_softplus(rgb.clamp(min=1e-4)).requires_grad_(True)
+
+    @property
+    def parameters(self) -> list[torch.Tensor]:
+        return [self.u_geo, self.u_normal, self.u_rgb]
+
+    def constrained(self):
+        geo = self.lo + torch.sigmoid(self.u_geo) * (self.hi - self.lo)
+        return (
+            geo[:, :3],
+            self.u_normal,
+            geo[:, 3],
+            geo[:, 4],
+            torch.nn.functional.softplus(self.u_rgb),
+        )
+
+    def to_lights(self) -> list[QuadLight]:
+        centers, normals, widths, heights, rgbs = self.constrained()
+        return [
+            QuadLight(
+                center=c.detach().cpu().numpy().astype(np.float64),
+                normal=n.detach().cpu().numpy().astype(np.float64),
+                width=float(w.detach()),
+                height=float(h.detach()),
+                rgb=e.detach().cpu().numpy().astype(np.float64),
+            )
+            for c, n, w, h, e in zip(centers, normals, widths, heights, rgbs, strict=True)
+        ]
+
+
+def make_reparam(light_type: str, init: list[dict], bounds: dict, device: torch.device):
+    if light_type == "sphere":
+        return ReparamSphereLights(init, bounds, device)
+    if light_type == "quad":
+        return ReparamQuadLights(init, bounds, device)
+    raise ValueError(f"unknown light type {light_type!r}")
+
+
+def random_init(
+    rng: np.random.Generator, light_type: str, bounds: dict, n_lights: int
+) -> list[dict]:
+    """Random restart initialization inside the bounded domain."""
+    lo = np.asarray(bounds["center_min"])
+    hi = np.asarray(bounds["center_max"])
+    init = []
+    for _ in range(n_lights):
+        spec = {
+            "center": (lo + rng.random(3) * (hi - lo)).tolist(),
+            "rgb": (0.5 + rng.random(3)).tolist(),
+        }
+        if light_type == "sphere":
+            spec["radius"] = float(
+                bounds["radius_min"] + rng.random() * (bounds["radius_max"] - bounds["radius_min"])
+            )
+        else:
+            normal = rng.normal(size=3)
+            spec["normal"] = (normal / np.linalg.norm(normal)).tolist()
+            spec["width"], spec["height"] = (
+                float(bounds["size_min"] + rng.random() * (bounds["size_max"] - bounds["size_min"]))
+                for _ in range(2)
+            )
+        init.append(spec)
+    return init
+
+
 def predicted_image(
-    model: TorchNRP, lights: ReparamSphereLights, xy: torch.Tensor, aux: torch.Tensor
+    model: TorchNRP,
+    lights: ReparamSphereLights | ReparamQuadLights,
+    xy: torch.Tensor,
+    aux: torch.Tensor,
 ) -> torch.Tensor:
     """Eq. 5 over a pixel subset: sequential accumulation over lights."""
     n = xy.shape[0]
-    centers, radii, rgbs = lights.constrained()
     image = torch.zeros((n, 3), device=xy.device)
-    for i in range(centers.shape[0]):
-        image = image + model(xy, aux, sphere_params(centers[i], radii[i], n)) * rgbs[i]
+    if isinstance(lights, ReparamSphereLights):
+        centers, radii, rgbs = lights.constrained()
+        for i in range(centers.shape[0]):
+            image = image + model(xy, aux, sphere_params(centers[i], radii[i], n)) * rgbs[i]
+    else:
+        centers, normals, widths, heights, rgbs = lights.constrained()
+        for i in range(centers.shape[0]):
+            params = quad_params(centers[i], normals[i], widths[i], heights[i], n)
+            image = image + model(xy, aux, params) * rgbs[i]
     return image
 
 
@@ -132,7 +241,7 @@ def optimize(
     if protect_mask is not None:
         prot = torch.as_tensor(protect_mask.reshape(n_px, 1), dtype=torch.float32, device=device)
 
-    lights = ReparamSphereLights(init, bounds, device)
+    lights = make_reparam(model.light_type, init, bounds, device)
     if prot is not None:
         if protect_base is None:
             with torch.no_grad():
@@ -170,10 +279,17 @@ def optimize(
     gather_final = gather_lights(cache, result_lights).reshape(n_px, 3)
     target_flat = target.reshape(n_px, 3)
 
+    # Physical (reference-GATHERLIGHT) tonemapped MSE: used to rank restarts, since
+    # proxy loss can prefer image matches at parameter-far solutions (proxy bias).
+    gather_tm = gather_final / (1.0 + gather_final)
+    target_tm = target_flat / (1.0 + target_flat)
+    gather_loss = float(np.mean((gather_tm - target_tm) ** 2))
+
     report = {
         "optimized_lights": [light.to_dict() for light in result_lights],
         "steps": steps,
         "pixel_fraction": pixel_fraction,
+        "gather_tonemapped_mse": gather_loss,
         "proxy_loss_first": loss_curve[0],
         "proxy_loss_last": loss_curve[-1],
         "proxy_loss_curve": loss_curve[:: max(1, steps // 50)],
@@ -237,8 +353,6 @@ def main() -> None:
         parser.error("exactly one of --target-light / --target is required")
 
     model = TorchNRP.load(args.model)
-    if model.light_type != "sphere":
-        parser.error("inverse optimization currently supports sphere-light models (paper §5.3)")
     cache = PathCache.load(args.cache)
     bounds = DEFAULT_BOUNDS
 
@@ -259,21 +373,9 @@ def main() -> None:
     best = None
     best_init = None
     restart_summary = []
-    lo = np.asarray(bounds["center_min"])
-    hi = np.asarray(bounds["center_max"])
     for restart in range(args.restarts):
         rng = np.random.default_rng(args.seed + restart)
-        init = [
-            {
-                "center": (lo + rng.random(3) * (hi - lo)).tolist(),
-                "radius": float(
-                    bounds["radius_min"]
-                    + rng.random() * (bounds["radius_max"] - bounds["radius_min"])
-                ),
-                "rgb": (0.5 + rng.random(3)).tolist(),
-            }
-            for _ in range(n_lights)
-        ]
+        init = random_init(rng, model.light_type, bounds, n_lights)
         candidate = optimize(
             model,
             cache,
@@ -290,9 +392,15 @@ def main() -> None:
             seed=args.seed + restart,
         )
         restart_summary.append(
-            {"seed": args.seed + restart, "proxy_loss_last": candidate["proxy_loss_last"]}
+            {
+                "seed": args.seed + restart,
+                "proxy_loss_last": candidate["proxy_loss_last"],
+                "gather_tonemapped_mse": candidate["gather_tonemapped_mse"],
+            }
         )
-        if best is None or candidate["proxy_loss_last"] < best["proxy_loss_last"]:
+        # Rank restarts by the physical re-render, not the proxy loss: the proxy can
+        # prefer image matches at parameter-far configurations.
+        if best is None or candidate["gather_tonemapped_mse"] < best["gather_tonemapped_mse"]:
             best, best_init = candidate, init
 
     images = best.pop("_images")
@@ -303,8 +411,15 @@ def main() -> None:
         opt_light = best["optimized_lights"][0]
         best["true_light"] = true.to_dict()
         best["center_error"] = float(np.linalg.norm(np.array(opt_light["center"]) - true.center))
-        best["radius_error"] = float(abs(opt_light["radius"] - true.radius))
         best["rgb_error"] = float(np.linalg.norm(np.array(opt_light["rgb"]) - true.rgb))
+        if isinstance(true, SphereLight):
+            best["radius_error"] = float(abs(opt_light["radius"] - true.radius))
+        else:
+            best["width_error"] = float(abs(opt_light["width"] - true.width))
+            best["height_error"] = float(abs(opt_light["height"] - true.height))
+            # A quad emits from both faces, so n and -n are the same light.
+            cosang = abs(float(np.dot(np.array(opt_light["normal"]), true.normal)))
+            best["normal_angle_deg"] = float(np.degrees(np.arccos(np.clip(cosang, -1.0, 1.0))))
 
     os.makedirs(args.out_dir, exist_ok=True)
     np.save(os.path.join(args.out_dir, "optimized_proxy.npy"), images["proxy"])
