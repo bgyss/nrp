@@ -77,9 +77,15 @@ the Country Kitchen exports at 128×128 / 64 spp in ~4 s and trains to 25.2 dB h
 PSNR (`examples/kitchen_torch.json`). Scene assets are downloaded on demand
 (`examples/scenes/download_scene.py`), never vendored.
 
-**§4.2 memory layout (fp16 geometry, rgb9e5 throughput) — not implemented.** Toy
-caches are megabytes; the compressed layout matters at the paper's tens-of-gigabytes
-scale. Roadmap item.
+**§4.2 memory layout (fp16 geometry, rgb9e5 throughput) — implemented (opt-in).**
+`PathCache.save(path, compressed=True)` writes the paper's packed layout: segment
+geometry and G-buffer aux in fp16, per-segment throughput as shared-exponent rgb9e5
+words (`nrp/rgb9e5.py`, the `EXT_texture_shared_exponent` conversion rules,
+round-trip property-tested to the 2⁻⁹ mantissa bound). `load` auto-detects the
+layout and hands back float64 arrays, so gather/training are layout-agnostic;
+escape segments survive because fp16 represents inf exactly. Sizes, decode cost,
+and the (negligible) quality delta are measured in `docs/performance.md`; float64
+stays the default because toy caches are megabytes, not the paper's gigabytes.
 
 **§4.3 network inputs — faithful.** Beyond light parameters, exactly the paper's nine
 extra inputs: pixel coordinates px (2D, encoded) and F_px = albedo (3) + depth (1) +

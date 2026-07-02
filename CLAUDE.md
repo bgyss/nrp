@@ -96,6 +96,9 @@ dict form for tiny hand-authored test caches. `validate()` enforces shapes, inde
 ranges, positive t_max, unit directions. Schema v2 adds a `schema_version` field and
 optional `medium` metadata (`{sigma_t, albedo}`) for caches free-flight sampled
 through a homogeneous medium; v1 surface-only caches load unchanged.
+`save(path, compressed=True)` writes the paper's §4.2 packed layout (fp16 geometry
++ rgb9e5 shared-exponent throughput, `nrp/rgb9e5.py`); `load` auto-detects the
+layout and always returns float64 arrays.
 
 **Lights (`nrp/lights.py`)** are virtual pure emitters that never block or scatter
 cached paths, so one cache serves every light configuration — this is what makes the

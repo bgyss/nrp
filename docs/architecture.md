@@ -43,7 +43,10 @@ The central artifact. For a fixed camera and static scene (S = total segments):
 
 Serializations: compressed `.npz` (tracer exports) and a JSON dict form for tiny
 hand-authored caches in tests. `validate()` enforces shapes, index ranges, positive
-t_max, and unit directions.
+t_max, and unit directions. The `.npz` form has an opt-in packed layout
+(`save(path, compressed=True)`, paper §4.2): fp16 geometry/aux + rgb9e5
+shared-exponent throughput (`nrp/rgb9e5.py`), auto-detected by `load`, which
+always returns float64 arrays (fp16 directions are renormalized on load).
 
 ## Lights (`nrp/lights.py`)
 

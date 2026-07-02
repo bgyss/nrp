@@ -244,6 +244,40 @@ parameters. Three changes fix it (`examples/inverse_grid.py --quad-check`,
 Result: **center error 0.039 < 0.05** (best of 12 restarts), re-rendered
 18.8 dB vs the target — deterministic from one command.
 
+## Packed cache layout (roadmap item 5, §4.2: fp16 + rgb9e5)
+
+`PathCache.save(path, compressed=True)` writes segment geometry and G-buffer aux as
+fp16 and per-segment throughput as shared-exponent rgb9e5 (`nrp/rgb9e5.py`); `load`
+auto-detects the layout and returns float64 arrays either way. Measured by
+`uv run python examples/pack_bench.py --train` (report: `out/pack/report.json`),
+20 random sphere lights per scene, load times best-of-3:
+
+| scene | segments | float64 | packed | ratio | load (f64→packed) | gather ms/img (f64→packed) | gather PSNR packed vs f64, min |
+|---|---|---|---|---|---|---|---|
+| toy box 48² | 165,888 | 6.74 MB | 1.62 MB | **4.2×** | 37 → 17 ms | 3.20 → 3.17 | **43.6 dB** |
+| Mitsuba cornell box 48² | 103,680 | 3.70 MB | 1.16 MB | **3.2×** | 22 → 12 ms | 1.96 → 1.94 | **53.9 dB** |
+
+- **Size:** 3.2–4.2× on-disk (both layouts go through `np.savez_compressed`, so the
+  ratio is measured after zlib — raw array bytes shrink ~4.3×; the toy cache packs
+  better because its float64 mantissas are incompressible MC noise, while the
+  Mitsuba cache's zlib already exploited structure). The lower end of the roadmap's
+  4–6× expectation; honest as measured.
+- **Decode cost:** packing moves all decode work to `load` — and packed *load* is
+  ~2× **faster** (half the bytes to decompress dominates the fp16/rgb9e5 decode).
+  Gather time is unchanged (identical float64 arrays after load), so there is no
+  per-image decode tax, unlike the paper's in-kernel decode.
+- **Fidelity:** packed-cache GATHERLIGHT images are ≥ 43 dB (toy) / ≥ 54 dB
+  (Mitsuba) faithful to the float64 cache's over 20 random lights — far inside the
+  0.5 dB budget for any downstream metric.
+- **End-to-end training cost:** toy torch config trained from float64 vs packed
+  cache over seeds {0, 1, 2} (identical config, same seeds): held-out PSNR
+  21.69 ± 2.12 dB (float64) vs 21.63 ± 2.56 dB (packed) — **mean delta −0.06 dB**,
+  within the 0.3 dB target. Per-seed deltas (−0.66/+0.07/+0.40 dB) are trajectory
+  noise: the caches' tiny numerical differences perturb the SGD path chaotically,
+  so single-seed comparisons measure seed sensitivity (σ ≈ 2.1–2.6 dB across
+  seeds), not packing damage — hence the mean-over-seeds claim, per the repo's
+  statistical-testing convention.
+
 ## Denoising
 
 OIDN (RT, HDR, albedo+normal guides) on a flat-2.0 HDR signal with σ=0.5 noise:

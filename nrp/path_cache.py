@@ -19,6 +19,17 @@ Two serializations: `.npz` for tracer-exported caches, and a JSON dict form
 (`to_dict`/`from_dict`) for tiny hand-authored caches in tests. In JSON, an escape
 segment's t_max is `null` (JSON has no inf).
 
+The `.npz` form has two layouts. The default stores every float array as float64.
+`save(path, compressed=True)` writes the paper's packed layout (§4.2) instead:
+geometry (segment origins/directions/t_max and the G-buffer aux) as fp16,
+per-segment throughput as shared-exponent rgb9e5 words (`nrp/rgb9e5.py`), and
+seg_pixel as int32. `load` auto-detects the layout (packed caches carry a
+`packed_layout` key) and always hands back float64 arrays, so everything
+downstream of `load` is layout-agnostic. fp16 directions are renormalized on
+load to restore unit length. Escape segments survive packing: fp16 represents
+inf exactly, and finite t_max values are clamped to the fp16 finite range so
+they can never round *to* inf.
+
 Schema versions:
   - v1: surface-only, no version field (all caches written before mid-2026).
   - v2: adds `schema_version` and an optional `medium` metadata dict
@@ -35,7 +46,19 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from .rgb9e5 import rgb9e5_decode, rgb9e5_encode
+
 SCHEMA_VERSION = 2
+
+_FP16_MAX = float(np.finfo(np.float16).max)
+_FP16_TINY = float(np.finfo(np.float16).smallest_subnormal)
+
+
+def _to_fp16(arr: np.ndarray) -> np.ndarray:
+    """fp16 with finite values clamped into fp16's finite range (inf stays inf)."""
+    a = np.asarray(arr, dtype=np.float64)
+    finite = np.isfinite(a)
+    return np.where(finite, np.clip(a, -_FP16_MAX, _FP16_MAX), a).astype(np.float16)
 
 
 @dataclass
@@ -89,12 +112,37 @@ class PathCache:
     def segment_count(self) -> int:
         return int(self.seg_pixel.shape[0])
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, compressed: bool = False) -> None:
         self.validate()
         extra = {}
         if self.medium is not None:
             extra["medium_sigma_t"] = float(self.medium["sigma_t"])
             extra["medium_albedo"] = float(self.medium["albedo"])
+        if compressed:
+            # Packed layout (§4.2): fp16 geometry + rgb9e5 throughput. Positive
+            # t_max that would round to fp16 zero is pinned to the smallest
+            # subnormal so validate()'s positivity invariant survives the trip.
+            tmax16 = _to_fp16(self.seg_tmax)
+            tmax16 = np.where((tmax16 == 0) & (self.seg_tmax > 0), np.float16(_FP16_TINY), tmax16)
+            np.savez_compressed(
+                path,
+                schema_version=SCHEMA_VERSION,
+                packed_layout=1,
+                width=self.width,
+                height=self.height,
+                n_paths=self.n_paths,
+                seg_pixel=self.seg_pixel.astype(np.int32),
+                seg_origin=_to_fp16(self.seg_origin),
+                seg_dir=_to_fp16(self.seg_dir),
+                seg_tmax=tmax16,
+                seg_throughput_rgb9e5=rgb9e5_encode(self.seg_throughput),
+                albedo=_to_fp16(self.albedo),
+                position=_to_fp16(self.position),
+                depth=_to_fp16(self.depth),
+                normal=_to_fp16(self.normal),
+                **extra,
+            )
+            return
         np.savez_compressed(
             path,
             schema_version=SCHEMA_VERSION,
@@ -123,19 +171,28 @@ class PathCache:
                 "sigma_t": float(z["medium_sigma_t"]),
                 "albedo": float(z["medium_albedo"]),
             }
+        packed = "packed_layout" in z
+        if packed:
+            seg_dir = z["seg_dir"].astype(np.float64)
+            norms = np.linalg.norm(seg_dir, axis=1, keepdims=True)
+            seg_dir = np.divide(seg_dir, norms, out=seg_dir, where=norms > 0)
+            throughput = rgb9e5_decode(z["seg_throughput_rgb9e5"])
+        else:
+            seg_dir = z["seg_dir"]
+            throughput = z["seg_throughput"]
         cache = cls(
             width=int(z["width"]),
             height=int(z["height"]),
             n_paths=z["n_paths"],
-            seg_pixel=z["seg_pixel"],
-            seg_origin=z["seg_origin"],
-            seg_dir=z["seg_dir"],
-            seg_tmax=z["seg_tmax"],
-            seg_throughput=z["seg_throughput"],
-            albedo=z["albedo"],
-            position=z["position"],
-            depth=z["depth"],
-            normal=z["normal"],
+            seg_pixel=z["seg_pixel"].astype(np.int64),
+            seg_origin=z["seg_origin"].astype(np.float64),
+            seg_dir=seg_dir,
+            seg_tmax=z["seg_tmax"].astype(np.float64),
+            seg_throughput=throughput,
+            albedo=z["albedo"].astype(np.float64),
+            position=z["position"].astype(np.float64),
+            depth=z["depth"].astype(np.float64),
+            normal=z["normal"].astype(np.float64),
             medium=medium,
         )
         cache.validate()

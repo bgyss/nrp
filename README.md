@@ -121,7 +121,7 @@ uv run ruff check .                            # or: mise run lint
 | §3.2 / Fig. 13 quad lights (8 params) | **Implemented** | `nrp/lights.py::QuadLight`, `gather_throughput_quad`, quad-conditioned proxy |
 | §4 PyTorch implementation | **Implemented** | `nrp/torch_backend/` |
 | §4 tiny-cuda-nn + fused Triton GATHERLIGHT kernel | Substituted | plain-PyTorch hashgrid; batched torch gather runs on MPS/CUDA (`torch_backend/gather.py`, all segments in one op — the paper's fused-gather idea at torch-op granularity); numpy gather stays the authoritative reference (`gather_backend` config) |
-| §4.2 fp16 / rgb9e5 compressed cache layout | Not implemented | float64 `.npz` (toy caches are MiB, not GiB) |
+| §4.2 fp16 / rgb9e5 compressed cache layout | **Implemented** (opt-in) | `PathCache.save(path, compressed=True)` — fp16 geometry + rgb9e5 throughput (`nrp/rgb9e5.py`), auto-detected on load; measured in `docs/performance.md` |
 | §4.3 inputs: hashgrid(px) + albedo/depth/normal + light params | **Implemented** | `torch_backend/encoding.py` (multiresolution hash [MESK22]), `model.py` |
 | §4.4 per-pixel random lights + denoised target pool (300 / 2-every-5) | **Implemented** (pool size configurable) | `torch_backend/train.py::ImagePool` |
 | §4.4 OIDN denoiser | **Implemented** (optional extra) | `torch_backend/denoise.py::oidn_denoise` (RT filter, HDR, albedo+normal guides); aux-guided joint bilateral as the dependency-free fallback |
@@ -229,11 +229,12 @@ Documented substitutions, not silent approximations:
 
 ## Next steps
 
-Roadmap items 1–4 are done — vectorized Mitsuba export + a real academic scene,
-volumetric path export (schema v2), batched device GATHERLIGHT + MPS training, and
-quad/multi-light inverse optimization with the Table-3 grid — all measured in
+Roadmap items 1–5 are done — vectorized Mitsuba export + a real academic scene,
+volumetric path export (schema v2), batched device GATHERLIGHT + MPS training,
+quad/multi-light inverse optimization with the Table-3 grid, and the §4.2 packed
+cache layout (fp16 + rgb9e5) — all measured in
 `docs/performance.md`. Remaining candidate improvements —
-compressed caches (§4.2), paper-scale training,
+paper-scale training,
 multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
 (each with verification and performance-testing requirements) in
