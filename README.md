@@ -40,7 +40,9 @@ Full documentation lives in [docs/](docs/): [architecture](docs/architecture.md)
   required runtime dependencies) and the dev group; `uv run <cmd>` runs inside the
   venv. Optional extras: `uv sync --extra mitsuba --extra oidn` (or `mise run
   sync-all`) adds the Mitsuba 3 exporter and the OIDN denoiser. On macOS the `oidn`
-  wheel links against Homebrew's TBB: `brew install tbb`.
+  wheel needs `libtbb.12.dylib`; the nix devshell provides it (oneTBB +
+  `DYLD_FALLBACK_LIBRARY_PATH`), so run through direnv or `nix develop` — no
+  Homebrew TBB required.
 
 ## Quickstart
 

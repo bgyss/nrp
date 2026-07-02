@@ -30,7 +30,9 @@ notes), `paper-mapping.md` (section-by-section paper coverage table), `performan
 Managed by nix (tool source of truth) + mise (task runner) + uv (Python/venv).
 `uv sync` installs numpy + torch only; `uv sync --extra mitsuba --extra oidn` (or
 `mise run sync-all`) adds the optional Mitsuba 3 exporter and OIDN denoiser. On macOS
-the oidn wheel needs `brew install tbb`.
+the oidn wheel needs `libtbb.12.dylib`, provided by the nix devshell (oneTBB via
+`DYLD_FALLBACK_LIBRARY_PATH` in `flake.nix`) — enter via direnv or `nix develop`;
+in a bare shell (no direnv) `oidn_available()` returns False and OIDN tests skip.
 
 ```sh
 uv sync                                          # or: mise run sync
