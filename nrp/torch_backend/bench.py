@@ -76,6 +76,82 @@ def bench_model(
     }
 
 
+def bench_gather(
+    cache_path: str,
+    devices: list[str],
+    n_lights: int = 20,
+    warmup: int = 3,
+    seed: int = 0,
+) -> list[dict]:
+    """GATHERLIGHT ms/image: numpy-CPU reference vs batched torch per device.
+
+    The same `n_lights` random sphere lights (sampled inside the cache's first-hit
+    bbox) are gathered by every backend; reported time is the mean per image.
+    """
+    import numpy as np
+
+    from ..gather_light import gather_light
+    from ..lights import SphereLight
+    from ..path_cache import PathCache
+    from .gather import TorchPathCache
+
+    cache = PathCache.load(cache_path)
+    rng = np.random.default_rng(seed)
+    lo = cache.position.reshape(-1, 3).min(axis=0)
+    hi = cache.position.reshape(-1, 3).max(axis=0)
+    scale = float(np.linalg.norm(hi - lo))
+    lights = [
+        SphereLight(
+            center=rng.uniform(lo, hi),
+            radius=float(rng.uniform(0.02, 0.1) * scale),
+            rgb=[1.0, 1.0, 1.0],
+        )
+        for _ in range(n_lights)
+    ]
+
+    rows = []
+
+    def timed(fn, sync=lambda: None) -> float:
+        for light in lights[:warmup]:
+            fn(light)
+        sync()
+        t0 = time.perf_counter()
+        for light in lights:
+            fn(light)
+        sync()
+        return (time.perf_counter() - t0) / n_lights * 1000.0
+
+    ms = timed(lambda light: gather_light(cache, light))
+    rows.append(
+        {
+            "backend": "numpy",
+            "device": "cpu",
+            "cache": cache_path,
+            "resolution": cache.width,
+            "segments": cache.segment_count,
+            "ms_per_image": ms,
+        }
+    )
+    for device_name in devices:
+        device = torch.device(device_name)
+        tc = TorchPathCache(cache, device)
+        ms = timed(
+            lambda light, tc=tc: tc.gather_light(light),
+            lambda device=device: _synchronize(device),
+        )
+        rows.append(
+            {
+                "backend": "torch",
+                "device": device_name,
+                "cache": cache_path,
+                "resolution": cache.width,
+                "segments": cache.segment_count,
+                "ms_per_image": ms,
+            }
+        )
+    return rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", help="trained model .pt (default: fresh paper-ish model)")
@@ -90,6 +166,12 @@ def main() -> None:
         help="devices to benchmark (default: all available: cpu, mps, cuda)",
     )
     parser.add_argument("--frames", type=int, default=30)
+    parser.add_argument(
+        "--gather-caches",
+        nargs="+",
+        default=[],
+        help="path caches to also benchmark GATHERLIGHT on (numpy vs torch per device)",
+    )
     parser.add_argument("--out", help="write results JSON here")
     args = parser.parse_args()
 
@@ -116,10 +198,28 @@ def main() -> None:
                 f"{row['hz']:>10.1f}"
             )
 
+    gather_results = []
+    for cache_path in args.gather_caches:
+        rows = bench_gather(cache_path, devices=[d for d in devices if d != "cpu"] + ["cpu"])
+        gather_results.extend(rows)
+        for row in rows:
+            print(
+                f"gather {row['backend']:>6}/{row['device']:<4} {cache_path} "
+                f"({row['segments']} segments): {row['ms_per_image']:.2f} ms/image"
+            )
+
     if args.out:
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
         with open(args.out, "w") as f:
-            json.dump({"parameter_count": model.parameter_count, "results": results}, f, indent=2)
+            json.dump(
+                {
+                    "parameter_count": model.parameter_count,
+                    "results": results,
+                    "gather_results": gather_results,
+                },
+                f,
+                indent=2,
+            )
         print(f"wrote {args.out}")
 
 

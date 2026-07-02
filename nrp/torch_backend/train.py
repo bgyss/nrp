@@ -28,6 +28,7 @@ from ..metrics import psnr, smape
 from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
 from .denoise import denoise_image
+from .gather import TorchPathCache
 from .model import LIGHT_PARAM_DIMS, TorchNRP, relative_mse_loss
 from .sampling import sample_light
 
@@ -59,6 +60,11 @@ class ImagePool:
         self.cfg = cfg
         self.rng = rng
         self.device = device
+        # gather_backend "torch" builds pool targets with the batched device gather
+        # (nrp/torch_backend/gather.py); "numpy" (default) keeps the reference path.
+        self.torch_cache = (
+            TorchPathCache(cache, device) if cfg.get("gather_backend", "numpy") == "torch" else None
+        )
         self.size = cfg["pool"]["size"]
         n_px = cache.height * cache.width
         self.params = torch.empty(
@@ -70,7 +76,11 @@ class ImagePool:
             self.fill(i)
 
     def _render_target(self, light) -> np.ndarray:
-        image = gather_light(self.cache, light)  # unit emission: pre-emission contribution
+        # Unit emission: the pre-emission contribution the proxy learns.
+        if self.torch_cache is not None:
+            image = self.torch_cache.gather_light(light).cpu().numpy().astype(np.float64)
+        else:
+            image = gather_light(self.cache, light)
         dn = self.cfg.get("denoise", {})
         if dn.get("enabled", True):
             image = denoise_image(
@@ -226,8 +236,23 @@ def train(cfg: dict) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", required=True)
+    parser.add_argument(
+        "--gather-backend",
+        choices=["numpy", "torch"],
+        default=None,
+        help="pool-target gather implementation (overrides the config; numpy is the "
+        "authoritative reference, torch runs batched on the training device)",
+    )
+    parser.add_argument(
+        "--device", default=None, help="override the config's device (cpu/mps/cuda)"
+    )
     args = parser.parse_args()
-    train(load_config(args.config))
+    cfg = load_config(args.config)
+    if args.gather_backend is not None:
+        cfg["gather_backend"] = args.gather_backend
+    if args.device is not None:
+        cfg["device"] = args.device
+    train(cfg)
 
 
 if __name__ == "__main__":

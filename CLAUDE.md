@@ -105,8 +105,10 @@ GATHERLIGHT; `light_from_dict` dispatches JSON specs.
 
 **GATHERLIGHT (`nrp/gather_light.py`)**: `gather_throughput[_quad]` returns the
 per-pixel pre-emission contribution the proxies learn; `gather_lights` sums a list
-(exploits linearity of transport, Eq. 1). CPU/numpy only — a fused GPU kernel is listed
-as future work in the roadmap.
+(exploits linearity of transport, Eq. 1). The numpy version is the authoritative
+reference; `nrp/torch_backend/gather.py::TorchPathCache` is the batched device
+(CPU/MPS/CUDA) mirror used for pool builds when `gather_backend: torch` (config key
+or `--gather-backend`), parity-tested against numpy at rtol 1e-5.
 
 **Producers**: `nrp/toy_tracer.py` is a dependency-free educational tracer
 (hard-coded Cornell-style box + diffuse sphere, Lambertian, cosine-weighted sampling)

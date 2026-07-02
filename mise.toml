@@ -70,3 +70,7 @@ run = "uv run python -m nrp.export_bench --out out/export-bench.json"
 [tasks.bench]
 description = "Benchmark proxy inference across resolutions on all available devices"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --out out/bench.json"
+
+[tasks.bench-gather]
+description = "Benchmark GATHERLIGHT: numpy vs batched torch (cpu/mps) on three cache sizes"
+run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --resolutions 48 --gather-caches out/toy/path_cache.npz out/mitsuba/path_cache_128.npz out/mitsuba/path_cache_256.npz --out out/gather-bench.json"

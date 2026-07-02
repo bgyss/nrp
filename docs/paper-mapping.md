@@ -60,8 +60,14 @@ too.
 ## §4 Implementation
 
 **PyTorch — faithful; tiny-cuda-nn and Triton — substituted.** The hash encoding is
-plain PyTorch (`torch_backend/encoding.py`), GATHERLIGHT is numpy. Architecture
-matches; absolute throughput does not (documented everywhere numbers appear).
+plain PyTorch (`torch_backend/encoding.py`). GATHERLIGHT has two implementations:
+the authoritative numpy reference and a batched torch mirror
+(`torch_backend/gather.py`) that tests all segments against a light in one
+weight-and-scatter op on CPU/MPS/CUDA — the paper's fused Triton gather at torch-op
+granularity, parity-tested against numpy (rtol 1e-5, 50 sphere + 50 quad lights on
+toy and Mitsuba caches). Training is device-resident end to end (`device: mps`,
+`gather_backend: torch`). Architecture matches; absolute throughput does not
+(documented everywhere numbers appear).
 
 **§4.1 path-data pass over academic scenes — implemented.** The paper records paths
 inside the renderer; here `nrp/mitsuba_exporter.py` drives Mitsuba 3 from Python. The

@@ -113,6 +113,52 @@ Readings:
 - Model sizes: 175 KB (numpy .npz) / 257 KB (torch .pt) — the compression story of
   the paper (7 MB cache → 0.26 MB proxy even at toy scale).
 
+## GATHERLIGHT: numpy vs batched torch (roadmap item 3)
+
+`uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --gather-caches
+out/toy/path_cache.npz out/mitsuba/path_cache_128.npz out/mitsuba/path_cache_256.npz
+--out out/gather-bench.json` — ms per gathered image, mean over 20 random sphere
+lights (3 warmup), `torch.mps.synchronize()` around the clock. torch-CPU runs fp64
+(bit-compatible with numpy); MPS is fp32.
+
+| cache | segments | numpy-CPU | torch-CPU | torch-MPS | MPS speedup |
+|---|---|---|---|---|---|
+| toy 48² | 165,888 | 3.3 ms | 2.6 ms | 1.6 ms | 2.0× |
+| cornell 128² | 736,396 | 14.7 ms | 8.4 ms | 2.8 ms | 5.2× |
+| cornell 256² | 2,945,876 | 58.6 ms | 29.5 ms | 8.1 ms | 7.2× |
+
+The analogue of the paper's Table 1 reconstruction row: batched device gathering
+scales with segment count much more gently than the numpy loop (kernel-launch
+overhead dominates MPS below ~1M segments), which is what makes on-the-fly pool
+replacement affordable at higher resolutions. Parity with numpy is unit-tested
+(rtol 1e-5, 50 sphere + 50 quad lights, toy and Mitsuba caches;
+`tests/test_torch_gather.py`).
+
+## Device-resident training: CPU vs MPS (roadmap item 3)
+
+Full training runs (3k iterations, identical seed, `gather_backend: torch`) on both
+devices; reports in `out/bench-train/`. Held-out PSNR parity is the correctness
+criterion (requirement: within 0.5 dB at equal iterations and seed).
+
+| config | device | train wall-clock | held-out PSNR | Δ vs cpu |
+|---|---|---|---|---|
+| toy 48² | cpu | 43.5 s | 19.17 dB | — |
+| toy 48² | mps | 50.6 s | 19.59 dB | **+0.42 dB** |
+| Mitsuba cornell 48² | cpu | 38.6 s | 25.90 dB | — |
+| Mitsuba cornell 48² | mps | 49.8 s | 25.65 dB | **−0.25 dB** |
+
+- **Quality parity holds** (both configs well inside 0.5 dB; the difference is fp32
+  arithmetic ordering, not a training defect).
+- **MPS is ~15–30% slower end-to-end at this scale** — an honest negative: a
+  62,923-param MLP at batch 4096 under-fills the GPU, so per-iteration launch
+  overhead outweighs compute. The pieces that *do* scale are already GPU-favored
+  (gather 5–7× at 128²–256² above; full-frame inference 4–5× at ≥256², below), so
+  device residency pays off exactly where the paper operates — larger models,
+  resolutions, and batches (roadmap item 6).
+- Pool builds via the torch gather: 0.5 s (toy) / 0.3 s (Mitsuba) on CPU — at 48²
+  the numpy and torch pool costs are equal within noise; the gather table above is
+  where the gap opens.
+
 ## Inference latency (full frame, 62,923-param sphere model)
 
 | device | 48² | 128² | 256² | 512² | 1024² |

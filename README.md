@@ -120,7 +120,7 @@ uv run ruff check .                            # or: mise run lint
 | §3.2 sphere lights (4 params) | **Implemented** | `nrp/lights.py` |
 | §3.2 / Fig. 13 quad lights (8 params) | **Implemented** | `nrp/lights.py::QuadLight`, `gather_throughput_quad`, quad-conditioned proxy |
 | §4 PyTorch implementation | **Implemented** | `nrp/torch_backend/` |
-| §4 tiny-cuda-nn + fused Triton GATHERLIGHT kernel | Substituted | plain-PyTorch hashgrid; numpy gather (CPU project — speed not comparable) |
+| §4 tiny-cuda-nn + fused Triton GATHERLIGHT kernel | Substituted | plain-PyTorch hashgrid; batched torch gather runs on MPS/CUDA (`torch_backend/gather.py`, all segments in one op — the paper's fused-gather idea at torch-op granularity); numpy gather stays the authoritative reference (`gather_backend` config) |
 | §4.2 fp16 / rgb9e5 compressed cache layout | Not implemented | float64 `.npz` (toy caches are MiB, not GiB) |
 | §4.3 inputs: hashgrid(px) + albedo/depth/normal + light params | **Implemented** | `torch_backend/encoding.py` (multiresolution hash [MESK22]), `model.py` |
 | §4.4 per-pixel random lights + denoised target pool (300 / 2-every-5) | **Implemented** (pool size configurable) | `torch_backend/train.py::ImagePool` |
@@ -166,6 +166,14 @@ runs on an Apple Silicon laptop CPU, single process; none are quoted from the pa
   **2.4 M seg/s at 48² (39×)** and **3.5 M seg/s at 128² (59×)** over the scalar
   loop (`out/export-bench.json`; both loops statistically equivalent by a fixed-seed
   GATHERLIGHT test).
+- **Batched device GATHERLIGHT (roadmap item 3):** `torch_backend/gather.py` gathers
+  a light over all cached segments in one weight-and-scatter op — **8.1 ms/image on
+  MPS vs 58.6 ms numpy-CPU (7.2×) on a 2.9 M-segment 256² cache** — matching numpy
+  at rtol 1e-5 (50 sphere + 50 quad lights, toy + Mitsuba caches). Training runs
+  fully device-resident (`device: mps`, `--gather-backend torch`) with held-out PSNR
+  within 0.5 dB of the CPU run at equal seed; at toy scale MPS wall-clock is still
+  ~15–30% slower (63k-param model under-fills the GPU — documented honestly in
+  `docs/performance.md`).
 - **Volumetric export (roadmap item 2):** the toy box filled with a homogeneous
   medium (σ_t 2.0, albedo 0.8) trains the same torch architecture to **18.84 dB**
   held-out PSNR — within 0.33 dB of the surface-only baseline — with **zero changes
@@ -214,8 +222,9 @@ Documented substitutions, not silent approximations:
 ## Next steps
 
 Roadmap item 1 (vectorized Mitsuba export + a real academic scene) is done — see
-`docs/performance.md`, as is item 2 (volumetric path export — homogeneous medium in
-the toy tracer, schema v2). Remaining candidate improvements — fused GPU gather,
+`docs/performance.md`, as are item 2 (volumetric path export — homogeneous medium in
+the toy tracer, schema v2) and item 3 (batched device GATHERLIGHT + MPS training,
+`torch_backend/gather.py`). Remaining candidate improvements —
 multi-light/quad inverse (Table 3), compressed caches (§4.2), paper-scale training,
 multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
@@ -231,7 +240,7 @@ nrp/export_bench.py  exporter throughput benchmark (scalar vs wavefront)
 nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
 examples/scenes/     gallery-scene download script (assets never committed)
-tests/               85 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
+tests/               90 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
 docs/                architecture, paper mapping, performance, status report, roadmap
 flake.nix / mise.toml / .envrc   toolchain
 ```

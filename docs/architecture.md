@@ -58,7 +58,12 @@ dispatches JSON specs; emission `rgb` is the E(v) factor of Eq. 1 and scales lin
 
 `gather_throughput[_quad]` returns the per-pixel **pre-emission** contribution — the
 quantity the proxies learn. `gather_light` scales by rgb; `gather_lights` sums a list
-(linearity of transport, Eq. 1). CPU/numpy; a fused GPU kernel is future work.
+(linearity of transport, Eq. 1). The numpy implementation is the authoritative
+reference; `nrp/torch_backend/gather.py` mirrors it as batched tensor ops
+(`TorchPathCache`: device-resident segments, one weight-and-scatter accumulation per
+light) so gathering runs on MPS/CUDA for pool builds — the paper's fused Triton
+gather at torch-op granularity. Training selects via `gather_backend`
+(config or `--gather-backend numpy|torch`).
 
 ## Producers
 
