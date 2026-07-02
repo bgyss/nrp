@@ -44,6 +44,21 @@ run = "uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box --width
 description = "Train the torch proxy on the Mitsuba-exported cache with OIDN denoising"
 run = "uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_torch.json"
 
+[tasks.export-kitchen]
+description = "Download the Mitsuba gallery kitchen scene and export it at 128x128 / 64 spp"
+run = [
+  "uv run python examples/scenes/download_scene.py kitchen",
+  "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 128 --height 128 --spp 64 --bounces 4 --out out/kitchen/path_cache.npz",
+]
+
+[tasks.train-kitchen]
+description = "Train the torch proxy on the kitchen cache with OIDN denoising"
+run = "uv run python -m nrp.torch_backend.train --config examples/kitchen_torch.json"
+
+[tasks.bench-export]
+description = "Benchmark the exporter: scalar loop vs drjit wavefront at 48x48 and 128x128"
+run = "uv run python -m nrp.export_bench --out out/export-bench.json"
+
 [tasks.bench]
 description = "Benchmark proxy inference across resolutions on all available devices"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --out out/bench.json"

@@ -1,0 +1,37 @@
+{
+  "_comment": "Torch training on the Mitsuba 'Country Kitchen' gallery scene (roadmap item 1). Download + export first: uv run python examples/scenes/download_scene.py kitchen && uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 128 --height 128 --spp 64 --bounces 4 --out out/kitchen/path_cache.npz",
+  "cache": "../out/kitchen/path_cache.npz",
+  "out_dir": "../out/kitchen-torch",
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.1,
+    "radius_max": 0.6
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "method": "oidn"
+  },
+  "iters": 3000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 14,
+      "base_resolution": 4,
+      "finest_resolution": 128
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}

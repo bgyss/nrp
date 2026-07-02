@@ -62,6 +62,14 @@ uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box \
   --width 48 --height 48 --spp 16 --bounces 4 --out out/mitsuba/path_cache.npz
 uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_torch.json
 
+# Real academic scene (Mitsuba 3 gallery "Country Kitchen"): download (assets are
+# never vendored), export with the drjit wavefront loop, train. Or: mise run
+# export-kitchen && mise run train-kitchen.
+uv run python examples/scenes/download_scene.py kitchen
+uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml \
+  --width 128 --height 128 --spp 64 --bounces 4 --out out/kitchen/path_cache.npz
+uv run python -m nrp.torch_backend.train --config examples/kitchen_torch.json
+
 # Benchmark proxy inference across resolutions on every available device (cpu/mps/cuda).
 uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt \
   --resolutions 48 128 256 512 1024 --out out/bench.json
@@ -125,7 +133,7 @@ uv run ruff check .                            # or: mise run lint
 | §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
 | §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
 | §6.1 multi-view / compositing-layer NRPs | Not implemented | single fixed camera, single layer |
-| §4.1 Mitsuba 3 path-data pass (academic scenes) | **Implemented** (optional extra) | `nrp/mitsuba_exporter.py`: BSDF sampling, no NEE, throughput RR, aux G-buffer; XML scenes or builtin cornell box |
+| §4.1 Mitsuba 3 path-data pass (academic scenes) | **Implemented** (optional extra) | `nrp/mitsuba_exporter.py`: BSDF sampling, no NEE, throughput RR, aux G-buffer; drjit wavefront loop (39–59× over the scalar fallback); XML scenes (gallery scenes via `examples/scenes/download_scene.py`) or builtin cornell box |
 | §5 production scenes (Hyperion, 512 spp, RTX 5090) | Out of scope | Hyperion is Disney-internal; any Mitsuba XML scene works via the exporter |
 
 ## Measured results (toy scene, laptop CPU)
@@ -154,6 +162,14 @@ runs on an Apple Silicon laptop CPU, single process; none are quoted from the pa
   in 1.6 s (48×48, 16 spp, 4 bounces, RR); torch proxy trained on OIDN-denoised pool
   targets reaches held-out **PSNR 25.87 dB vs raw GATHERLIGHT** (26.48 dB vs denoised)
   in 48 s — the best-conditioned scene in the repo.
+- **Exporter vectorization (roadmap item 1):** the drjit wavefront loop reaches
+  **2.4 M seg/s at 48² (39×)** and **3.5 M seg/s at 128² (59×)** over the scalar
+  loop (`out/export-bench.json`; both loops statistically equivalent by a fixed-seed
+  GATHERLIGHT test).
+- **Real academic scene (Mitsuba gallery "Country Kitchen"):** 3.27 M segments
+  exported at 128×128 / 64 spp in **4.0 s** (129 MB cache); torch proxy (106,085
+  params, 430 KB) trains in **126 s** to held-out **PSNR 25.24 dB vs raw
+  GATHERLIGHT**, full-frame CPU inference 12 ms (84 Hz) at 128².
 - **Inference benchmark** (62,923-param sphere model, `out/bench.json`; Apple Silicon):
 
   | device | 48² | 128² | 256² | 512² | 1024² |
@@ -180,17 +196,19 @@ Documented substitutions, not silent approximations:
   aux-guided joint bilateral filter (same guidance signal, weaker prior).
 - **Softplus output head** — the paper doesn't specify its head; softplus keeps
   contributions positive.
-- **The Mitsuba exporter drives Mitsuba's scalar variant from Python** — correct and
-  portable (no JIT backend requirements) but slow for large exports; the paper records
-  paths inside the renderer's own tracing loop. No volumes are exported (surface
-  interactions only).
+- **The Mitsuba exporter records paths from Python, not inside the renderer** — the
+  default drjit wavefront loop (`llvm_ad_rgb`/`metal_ad_rgb`, auto-detected) advances
+  all paths one bounce per kernel launch and pulls per-bounce results to numpy; a pure
+  scalar loop (`--mode scalar`, no JIT requirements) remains the fallback and
+  semantics reference. No volumes are exported (surface interactions only).
 - **numpy backend diverges further by design** (sinusoidal encoding, target-normalized
   loss, extra derived geometric inputs) — it is the readable finite-difference-checked
   reference, not the paper replica; the torch backend is the paper replica.
 
 ## Next steps
 
-Ten candidate improvements — vectorized Mitsuba export, volumes, fused GPU gather,
+Roadmap item 1 (vectorized Mitsuba export + a real academic scene) is done — see
+`docs/performance.md`. Remaining candidate improvements — volumes, fused GPU gather,
 multi-light/quad inverse (Table 3), compressed caches (§4.2), paper-scale training,
 multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
@@ -201,10 +219,12 @@ Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal pr
 
 ```
 nrp/                 numpy reference backend + shared vocabulary (cache, lights, gather)
-nrp/mitsuba_exporter.py  Mitsuba 3 scene -> path cache (optional extra)
+nrp/mitsuba_exporter.py  Mitsuba 3 scene -> path cache (optional extra; wavefront + scalar loops)
+nrp/export_bench.py  exporter throughput benchmark (scalar vs wavefront)
 nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
-tests/               71 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
+examples/scenes/     gallery-scene download script (assets never committed)
+tests/               76 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
 docs/                architecture, paper mapping, performance, status report, roadmap
 flake.nix / mise.toml / .envrc   toolchain
 ```

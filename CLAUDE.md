@@ -110,9 +110,12 @@ as future work in the roadmap.
 (hard-coded Cornell-style box + diffuse sphere, Lambertian, cosine-weighted sampling)
 that also renders the *independent* emissive-inline reference used by
 `nrp/compare_reference.py` for the decoupling consistency check.
-`nrp/mitsuba_exporter.py` (extra: `mitsuba`) drives Mitsuba 3's scalar variant over any
-scene XML or `builtin:cornell-box`; emitters in the scene are ignored since this is the
-light-agnostic pass.
+`nrp/mitsuba_exporter.py` (extra: `mitsuba`) drives Mitsuba 3 over any scene XML or
+`builtin:cornell-box`; emitters in the scene are ignored since this is the
+light-agnostic pass. Default is a drjit wavefront loop (`llvm_ad_rgb`/`metal_ad_rgb`,
+auto-detected; 39–59× the scalar throughput); `--mode scalar` keeps the pure-Python
+reference loop. Gallery scenes are fetched by `examples/scenes/download_scene.py`
+(assets never vendored); `nrp/export_bench.py` benchmarks the two loops.
 
 **numpy backend**: `nrp/model.py` is an MLP with hand-rolled, finite-difference-checked
 autodiff, sinusoidal positional encoding, and extra derived geometric inputs (first-hit
@@ -152,8 +155,9 @@ These are documented substitutions, not silent approximations — see the README
 "Known deviations" and "Paper coverage" tables for the full list. Key ones: CPU/MPS
 PyTorch (no tiny-cuda-nn, no Triton fused kernel); OIDN optional (bilateral filter is
 the dependency-free default); softplus output head (paper doesn't specify one); the
-Mitsuba exporter drives the scalar variant from Python (correct but slow for large
-scenes, no volumes); the numpy backend diverges further by design (sinusoidal encoding,
+Mitsuba exporter records paths from Python rather than inside the renderer (drjit
+wavefront loop by default, scalar fallback; no volumes); the numpy backend diverges
+further by design (sinusoidal encoding,
 target-normalized loss) — it's the readable reference, not a paper replica.
 
 ## Testing conventions

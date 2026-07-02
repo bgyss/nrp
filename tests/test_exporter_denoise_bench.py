@@ -17,17 +17,36 @@ from nrp.torch_backend.model import TorchNRP  # noqa: E402
 HAVE_MITSUBA = importlib.util.find_spec("mitsuba") is not None
 
 
+def _have_jit_variant() -> bool:
+    if not HAVE_MITSUBA:
+        return False
+    import mitsuba as mi
+
+    from nrp.mitsuba_exporter import pick_jit_variant
+
+    return pick_jit_variant(mi) is not None
+
+
 @unittest.skipUnless(HAVE_MITSUBA, "mitsuba extra not installed")
 class MitsubaExporterTests(unittest.TestCase):
+    """Schema/semantics tests, run against the scalar loop (the reference)."""
+
+    mode = "scalar"
+
     @classmethod
     def setUpClass(cls):
-        from nrp.mitsuba_exporter import _load_mitsuba, _load_scene, export_path_cache
+        from nrp.mitsuba_exporter import _load_mitsuba, _load_scene
 
-        cls.mi = _load_mitsuba()
+        cls.mi = _load_mitsuba(cls.mode)
         scene = _load_scene(cls.mi, "builtin:cornell-box", 8, 8)
-        cls.cache = export_path_cache(
-            scene, cls.mi, 8, 8, spp=2, max_bounces=3, seed=1, russian_roulette=False
-        )
+        cls.cache = cls._export(scene, cls.mi)
+
+    @classmethod
+    def _export(cls, scene, mi):
+        from nrp.mitsuba_exporter import export_path_cache, export_path_cache_wavefront
+
+        export = export_path_cache_wavefront if cls.mode == "wavefront" else export_path_cache
+        return export(scene, mi, 8, 8, spp=2, max_bounces=3, seed=1, russian_roulette=False)
 
     def test_cache_validates_and_has_expected_counts(self):
         self.cache.validate()
@@ -59,6 +78,40 @@ class MitsubaExporterTests(unittest.TestCase):
                 firsts[px] = self.cache.seg_throughput[i]
         for tp in firsts.values():
             np.testing.assert_allclose(tp, [1.0, 1.0, 1.0])
+
+
+@unittest.skipUnless(_have_jit_variant(), "no working Mitsuba JIT variant")
+class MitsubaExporterWavefrontTests(MitsubaExporterTests):
+    """The same schema/semantics suite against the drjit wavefront loop."""
+
+    mode = "wavefront"
+
+
+@unittest.skipUnless(_have_jit_variant(), "no working Mitsuba JIT variant")
+class ScalarWavefrontEquivalenceTests(unittest.TestCase):
+    def test_gather_light_means_statistically_compatible(self):
+        # Fixed-seed exports of the 8x8 cornell box under both loops must produce
+        # GATHERLIGHT images whose mean radiance agrees within 2% (independent MC
+        # estimates of the same integral; 64 spp keeps the noise well below that).
+        from nrp.mitsuba_exporter import (
+            _load_mitsuba,
+            _load_scene,
+            export_path_cache,
+            export_path_cache_wavefront,
+        )
+
+        light = SphereLight(center=[0.0, 0.0, 0.0], radius=0.6, rgb=[10.0, 10.0, 10.0])
+        means = {}
+        for mode, export in [
+            ("scalar", export_path_cache),
+            ("wavefront", export_path_cache_wavefront),
+        ]:
+            mi = _load_mitsuba(mode)
+            scene = _load_scene(mi, "builtin:cornell-box", 8, 8)
+            cache = export(scene, mi, 8, 8, spp=64, max_bounces=4, seed=0, russian_roulette=False)
+            means[mode] = float(gather_light(cache, light).mean())
+        rel = abs(means["scalar"] - means["wavefront"]) / means["scalar"]
+        self.assertLess(rel, 0.02, f"means diverge: {means} ({rel * 100:.2f}%)")
 
 
 @unittest.skipUnless(oidn_available(), "oidn extra not installed or lib unavailable")

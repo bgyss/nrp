@@ -55,6 +55,14 @@ too.
 plain PyTorch (`torch_backend/encoding.py`), GATHERLIGHT is numpy. Architecture
 matches; absolute throughput does not (documented everywhere numbers appear).
 
+**§4.1 path-data pass over academic scenes — implemented.** The paper records paths
+inside the renderer; here `nrp/mitsuba_exporter.py` drives Mitsuba 3 from Python. The
+default drjit wavefront loop (`llvm_ad_rgb`/`metal_ad_rgb`) is 39–59× the scalar
+fallback's throughput (`docs/performance.md`), making real gallery scenes practical:
+the Country Kitchen exports at 128×128 / 64 spp in ~4 s and trains to 25.2 dB held-out
+PSNR (`examples/kitchen_torch.json`). Scene assets are downloaded on demand
+(`examples/scenes/download_scene.py`), never vendored.
+
 **§4.2 memory layout (fp16 geometry, rgb9e5 throughput) — not implemented.** Toy
 caches are megabytes; the compressed layout matters at the paper's tens-of-gigabytes
 scale. Roadmap item.

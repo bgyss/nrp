@@ -1,0 +1,4 @@
+# Downloaded scene assets are never committed — only the download script is.
+*
+!.gitignore
+!download_scene.py

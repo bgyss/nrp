@@ -66,10 +66,15 @@ quantity the proxies learn. `gather_light` scales by rgb; `gather_lights` sums a
   Cornell-style unit box + diffuse sphere, Lambertian, cosine-weighted sampling,
   fixed bounce count. Also renders the *independent* emissive-inline reference used
   by `nrp/compare_reference.py` for the decoupling consistency check.
-- **`nrp/mitsuba_exporter.py`** (extra: `mitsuba`) — drives Mitsuba 3's scalar
-  variant from Python over any scene XML (or `builtin:cornell-box`): BSDF sampling,
-  no NEE, throughput Russian roulette after bounce 2 (`--no-russian-roulette` for
-  deterministic counts). Emitters in the scene are ignored (light-agnostic pass).
+- **`nrp/mitsuba_exporter.py`** (extra: `mitsuba`) — drives Mitsuba 3 from Python
+  over any scene XML (or `builtin:cornell-box`): BSDF sampling, no NEE, throughput
+  Russian roulette after bounce 2 (`--no-russian-roulette` for deterministic counts).
+  Emitters in the scene are ignored (light-agnostic pass). Two tracing loops share
+  these semantics: the default drjit **wavefront** loop (`llvm_ad_rgb` /
+  `metal_ad_rgb`, auto-detected; all paths advance one bounce per kernel launch) and
+  the pure-Python **scalar** loop (`--mode scalar`), kept as fallback and reference.
+  `nrp/export_bench.py` measures one against the other; official gallery scenes are
+  fetched on demand by `examples/scenes/download_scene.py` (never vendored).
 
 ## numpy backend (`nrp/`)
 
