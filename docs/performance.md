@@ -280,6 +280,48 @@ every checkpoint; PSNR vs raw GATHERLIGHT references):
   wall-clock at this batch size. The 3k *baseline* config runs at 44.2 iters/s on
   MPS (68 s). Inference at 128²: 2.1 ms/frame (~480 Hz) on MPS.
 
+## Image-based baseline vs path-based pool (roadmap item 9, Fig. 6)
+
+`examples/image_based_baseline.py` (one command, `out/image-based/report.json`)
+trains the identical model/optimizer/seed under two supervision regimes on the
+Mitsuba cornell box at 128×128 / 64 spp, 3000 iterations each: **path-based**
+(§4.4-style rolling pool, images continually replaced with fresh lights) vs
+**image-based** (a fixed dataset of R denoised GATHERLIGHT images, no
+resampling — implemented as the same pool trainer with `replace_count: 0`, so the
+code path is shared). All regimes are scored on a common 24-fresh-light held-out
+set (dedicated RNG, asserted disjoint from every regime's recorded supervision
+lights) with tonemapped PSNR (Reinhard, peak 1 — Fig. 6's metric); per-light
+distributions are in the report JSON.
+
+| regime | supervision images | supervision s | tonemapped PSNR (dB) | linear PSNR |
+|---|---|---|---|---|
+| path-based (pool 64, 2/5) | 1,264 | 36.1 | 27.55 ± 4.86 | 24.47 |
+| path pool 256, 2/5 | 1,456 | 43.0 | 28.57 ± 5.68 | 25.46 |
+| image-based R=64 | 64 | 1.9 | 23.57 ± 4.73 | 20.24 |
+| image-based R=256 | 256 | 7.1 | 27.22 ± 5.80 | 24.44 |
+| image-based R=1024 | 1,024 | 25.9 | **29.38 ± 5.26** | 26.00 |
+
+**The paper's ≥ 2.8 dB path-based advantage does *not* reproduce at this scale —
+the sign flips.** At matched supervision budget (1,264 pool images vs a fixed
+1,024), the fixed dataset wins by **1.83 dB** tonemapped. Honest reading of why,
+rather than smoothing over it:
+
+- **Our "image-based" images are not the paper's.** In the paper the image-based
+  baseline pays full render cost per image, and path-based training resamples
+  lights *per pixel* directly from path data. Here both regimes draw from the same
+  cached-path GATHERLIGHT (25.9 s for 1,024 denoised 128² images), so the
+  image-based regime inherits exactly the cheap supervision that is path-based
+  training's actual advantage — the comparison isolates the *sampling schedule*,
+  not the paper's full data-cost story.
+- **The rolling pool bottlenecks light diversity.** A batch sees at most 64
+  concurrent lights vs 1,024 in the fixed dataset; raising the pool to 256
+  recovers +1.0 dB of the 1.83 dB gap, supporting this mechanism (the paper uses
+  pool 300 *and* per-pixel resampling at production scale).
+- The regimes' trend is still the paper's *within* the image-based family:
+  R=64 → 256 → 1024 climbs 23.6 → 27.2 → 29.4 dB with supervision time scaling
+  linearly — data diversity is decisive; only the claim that a rolling pool beats
+  an equally *large and equally cheap* fixed set fails to transfer to toy scale.
+
 ## Packed cache layout (roadmap item 5, §4.2: fp16 + rgb9e5)
 
 `PathCache.save(path, compressed=True)` writes segment geometry and G-buffer aux as

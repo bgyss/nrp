@@ -138,9 +138,21 @@ PSNR-vs-iteration convergence curve is in `docs/performance.md`.
 **Metrics:** PSNR and SMAPE are implemented (`nrp/metrics.py`). SSIM and FLIP (paper
 Tables 1–2) are not; adding them is a roadmap item under the ablation suite.
 
-**§5.1 image-based baseline comparison (Fig. 6) and §5.2 ablations (Table 2, Figs.
-7–8) — not replicated.** Both are experiment suites over the existing machinery;
-roadmap items 9–10.
+**§5.1 image-based baseline comparison (Fig. 6) — replicated in structure; the
+paper's conclusion does not transfer to toy scale.** `examples/image_based_baseline.py`
+trains identical model/optimizer/seed under a rolling path-data pool vs fixed sets of
+R ∈ {64, 256, 1024} denoised GATHERLIGHT images on the cornell box at 128²/64 spp,
+scored by tonemapped PSNR on a common 24-light held-out set asserted disjoint from
+every regime's supervision lights. At matched supervision budget the fixed
+1024-image set *wins* by 1.8 dB (the paper reports path-based ≥ 2.8 dB ahead).
+The divergence is analyzed rather than smoothed over in `docs/performance.md`:
+here both regimes share the same cheap cached-path supervision, so the comparison
+isolates only the sampling schedule, and the 64-slot rolling pool's light
+diversity — not data efficiency — is the binding constraint (pool 256 recovers
++1.0 dB of the gap).
+
+**§5.2 ablations (Table 2, Figs. 7–8) — not replicated.** An experiment suite over
+the existing machinery; roadmap item 10.
 
 ## §5.3 Light optimization — faithful
 

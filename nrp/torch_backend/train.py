@@ -82,6 +82,10 @@ class ImagePool:
         )
         self.targets = torch.empty((self.size, n_px, 3), dtype=torch.float32, device=device)
         self._next_replace = 0
+        # Supervision accounting (roadmap item 9): every light configuration ever
+        # rendered into the pool, and the cumulative gather+denoise cost of doing so.
+        self.used_params: list[np.ndarray] = []
+        self.supervision_seconds = 0.0
         if fill:
             for i in range(self.size):
                 self.fill(i)
@@ -105,6 +109,7 @@ class ImagePool:
         return image.reshape(-1, 3)
 
     def fill(self, slot: int) -> None:
+        t0 = time.perf_counter()
         light = sample_light(
             self.cache,
             self.rng,
@@ -112,12 +117,17 @@ class ImagePool:
             self.cfg["light_bounds"],
             self.cfg.get("sampling", "segments"),
         )
-        self.params[slot] = torch.as_tensor(
-            light_param_vector(light), dtype=torch.float32, device=self.device
-        )
+        vec = light_param_vector(light)
+        self.used_params.append(vec)
+        self.params[slot] = torch.as_tensor(vec, dtype=torch.float32, device=self.device)
         self.targets[slot] = torch.as_tensor(
             self._render_target(light), dtype=torch.float32, device=self.device
         )
+        self.supervision_seconds += time.perf_counter() - t0
+
+    @property
+    def supervision_images(self) -> int:
+        return len(self.used_params)
 
     def replace_round(self) -> None:
         for _ in range(self.cfg["pool"]["replace_count"]):
@@ -184,6 +194,8 @@ def save_checkpoint(path, iteration, model, opt, sched, gen, rng, pool, state) -
             "pool_params": pool.params.detach().cpu(),
             "pool_targets": pool.targets.detach().cpu(),
             "pool_next_replace": pool._next_replace,
+            "pool_used_params": pool.used_params,
+            "pool_supervision_seconds": pool.supervision_seconds,
             **state,
         },
         path,
@@ -235,6 +247,8 @@ def train(cfg: dict, resume: bool = False) -> dict:
         pool.params = ck["pool_params"].to(device)
         pool.targets = ck["pool_targets"].to(device)
         pool._next_replace = ck["pool_next_replace"]
+        pool.used_params = ck.get("pool_used_params", [])
+        pool.supervision_seconds = ck.get("pool_supervision_seconds", 0.0)
         loss_curve = ck["loss_curve"]
         checkpoint_metrics = ck["checkpoint_metrics"]
         pool_seconds = ck["pool_seconds"]
@@ -323,6 +337,8 @@ def train(cfg: dict, resume: bool = False) -> dict:
         "parameter_count": model.parameter_count,
         "model_bytes": os.path.getsize(model_path),
         "pool_build_seconds": pool_seconds,
+        "supervision_images": pool.supervision_images,
+        "supervision_seconds": pool.supervision_seconds,
         "train_seconds": train_seconds,
         "iters_per_second": iters / train_seconds if train_seconds > 0 else None,
         "checkpoint_metrics": checkpoint_metrics,
@@ -338,6 +354,10 @@ def train(cfg: dict, resume: bool = False) -> dict:
             np.mean([m["psnr_db_vs_denoised"] for m in val_metrics])
         ),
     }
+    if cfg.get("record_supervision_lights"):
+        # Opt-in (roadmap item 9): the exact light-parameter vectors of every
+        # supervision image, so experiments can assert validation disjointness.
+        report["supervision_light_params"] = [v.tolist() for v in pool.used_params]
     report_path = os.path.join(cfg["out_dir"], "torch_train_report.json")
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)

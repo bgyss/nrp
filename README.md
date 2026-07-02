@@ -138,6 +138,7 @@ uv run ruff check .                            # or: mise run lint
 | §5.3 inverse: Eq. 5 multi-light sum, Reinhard MSE (Eq. 6) | **Implemented** (sphere + quad, joint multi-light) | `torch_backend/optimize_lights.py` |
 | §5.3 logit/inv-softplus reparameterization, Adam lr 0.05 × 500 | **Implemented** | `ReparamSphereLights` / `ReparamQuadLights` (quad normal: unconstrained 3-vector normalized in `quad_params`, gradient-tested) |
 | §5.3 mini-batch pixel-fraction SGD (Table 3) | **Implemented** + grid replication | `--pixel-fraction`; `examples/inverse_grid.py` runs the N×α grid (out/inverse-grid/) |
+| Fig. 6 image-based baseline comparison | **Implemented** (result diverges, documented) | `examples/image_based_baseline.py`; at toy scale the fixed-image regime *wins* by 1.8 dB — analysis in `docs/performance.md` |
 | §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
 | §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
 | §6.1 multi-view / compositing-layer NRPs | Not implemented | single fixed camera, single layer |
@@ -237,13 +238,14 @@ Documented substitutions, not silent approximations:
 
 ## Next steps
 
-Roadmap items 1–6 are done — vectorized Mitsuba export + a real academic scene,
-volumetric path export (schema v2), batched device GATHERLIGHT + MPS training,
-quad/multi-light inverse optimization with the Table-3 grid, the §4.2 packed
-cache layout (fp16 + rgb9e5), and paper-scale training (8×256 / 50k iterations
-with cosine LR + checkpoint/resume) — all measured in
-`docs/performance.md`. Remaining candidate improvements —
-multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
+Roadmap items 1–6 and 9 are done — vectorized Mitsuba export + a real academic
+scene, volumetric path export (schema v2), batched device GATHERLIGHT + MPS
+training, quad/multi-light inverse optimization with the Table-3 grid, the §4.2
+packed cache layout (fp16 + rgb9e5), paper-scale training (8×256 / 50k iterations
+with cosine LR + checkpoint/resume), and the Fig. 6 image-based baseline (whose
+paper claim does *not* reproduce at toy scale — see `docs/performance.md`) — all
+measured in `docs/performance.md`. Remaining candidate improvements —
+multi-view and per-layer NRPs (§6.1) and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
 (each with verification and performance-testing requirements) in
 [docs/roadmap.md](docs/roadmap.md).
