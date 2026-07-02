@@ -49,6 +49,34 @@ kernel-launch overhead amortizes. A fixed-seed equivalence test (8×8 cornell bo
 64 spp) keeps the two loops statistically compatible: GATHERLIGHT mean radiance
 agreed within 0.15% on the run recorded here (test bound: 2%).
 
+## Volumetric export (roadmap item 2, §3.1 "Volume rendering")
+
+`uv run python examples/volume_report.py --out out/volume-report.json`. Toy box at
+48×48 / 24 spp / 3 bounces, homogeneous medium σ_t = 2.0, single-scattering albedo
+0.8, isotropic phase; surface-only trace with identical settings as baseline.
+GATHERLIGHT gained no volume code: free-flight sampling makes transmittance implicit
+in segment lengths (validated analytically — slab-fixture falloff of a light inside
+the medium matches exp(−σ_t·d) within 5%, `tests/test_volume.py`).
+
+| | surface | volume | ratio |
+|---|---|---|---|
+| segments | 165,888 | 165,888 | 1.00× |
+| cache size | 7.1 MB | 7.6 MB | 1.07× |
+| gather ms/image (20 lights) | 3.8 | 3.6 | 0.93× |
+| torch proxy held-out PSNR | 19.17 dB | 18.84 dB | −0.33 dB |
+| torch proxy held-out SMAPE | 0.92 | 0.83 | |
+
+- **Segment count does not grow** in this tracer: the event budget is fixed
+  (3 bounces), so scatter vertices *replace* surface events rather than adding
+  segments. Cache bytes grow ~7% anyway — shorter, more varied segments compress
+  worse. A tracer with RR/unbounded depth would grow segment count instead.
+- Gather is marginally *faster* on the volume cache (shorter segments → fewer
+  light overlaps to accumulate).
+- Proxy quality on the volumetric scene (same architecture, budget, and seed:
+  `examples/toy_sphere_volume_torch.json`) lands within 0.33 dB of the surface
+  baseline — the proxy absorbs in-medium lighting without special handling. SMAPE
+  improves because the glowing medium lifts pixels off zero, where SMAPE is noisiest.
+
 ## Decoupling consistency (validates §3.1, backend-independent)
 
 GATHERLIGHT over the toy 24-spp cache vs an independent 64-spp re-trace with inline

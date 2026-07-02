@@ -18,13 +18,24 @@ Layout (S = total segment count across all pixels and paths):
 Two serializations: `.npz` for tracer-exported caches, and a JSON dict form
 (`to_dict`/`from_dict`) for tiny hand-authored caches in tests. In JSON, an escape
 segment's t_max is `null` (JSON has no inf).
+
+Schema versions:
+  - v1: surface-only, no version field (all caches written before mid-2026).
+  - v2: adds `schema_version` and an optional `medium` metadata dict
+    (`{"sigma_t": float, "albedo": float}`) recorded by producers that free-flight
+    sample a homogeneous participating medium (§3.1 "Volume rendering"). Segments in
+    a medium cache may end at scattering vertices instead of surfaces; nothing about
+    the segment arrays themselves changes, so v1 readers of the arrays and GATHERLIGHT
+    work unchanged — transmittance is implicit in the recorded segment lengths.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
+
+SCHEMA_VERSION = 2
 
 
 @dataclass
@@ -41,6 +52,7 @@ class PathCache:
     position: np.ndarray
     depth: np.ndarray
     normal: np.ndarray
+    medium: dict | None = field(default=None)
 
     def validate(self) -> None:
         h, w = self.height, self.width
@@ -67,6 +79,11 @@ class PathCache:
         norms = np.linalg.norm(self.seg_dir, axis=1)
         if s and not np.allclose(norms, 1.0, atol=1e-6):
             raise ValueError("seg_dir rows must be unit length")
+        if self.medium is not None:
+            if not float(self.medium["sigma_t"]) > 0.0:
+                raise ValueError("medium sigma_t must be positive")
+            if not 0.0 <= float(self.medium["albedo"]) <= 1.0:
+                raise ValueError("medium albedo must be in [0, 1]")
 
     @property
     def segment_count(self) -> int:
@@ -74,8 +91,13 @@ class PathCache:
 
     def save(self, path: str) -> None:
         self.validate()
+        extra = {}
+        if self.medium is not None:
+            extra["medium_sigma_t"] = float(self.medium["sigma_t"])
+            extra["medium_albedo"] = float(self.medium["albedo"])
         np.savez_compressed(
             path,
+            schema_version=SCHEMA_VERSION,
             width=self.width,
             height=self.height,
             n_paths=self.n_paths,
@@ -88,11 +110,19 @@ class PathCache:
             position=self.position,
             depth=self.depth,
             normal=self.normal,
+            **extra,
         )
 
     @classmethod
     def load(cls, path: str) -> PathCache:
         z = np.load(path)
+        # v1 caches have no schema_version key; v2 adds it plus optional medium_*.
+        medium = None
+        if "medium_sigma_t" in z:
+            medium = {
+                "sigma_t": float(z["medium_sigma_t"]),
+                "albedo": float(z["medium_albedo"]),
+            }
         cache = cls(
             width=int(z["width"]),
             height=int(z["height"]),
@@ -106,6 +136,7 @@ class PathCache:
             position=z["position"],
             depth=z["depth"],
             normal=z["normal"],
+            medium=medium,
         )
         cache.validate()
         return cache
@@ -114,6 +145,8 @@ class PathCache:
         self.validate()
         tmax = [None if not np.isfinite(t) else float(t) for t in self.seg_tmax]
         return {
+            "schema_version": SCHEMA_VERSION,
+            "medium": dict(self.medium) if self.medium is not None else None,
             "width": self.width,
             "height": self.height,
             "n_paths": self.n_paths.tolist(),
@@ -146,6 +179,7 @@ class PathCache:
             position=np.asarray(d["position"], dtype=np.float64),
             depth=np.asarray(d["depth"], dtype=np.float64),
             normal=np.asarray(d["normal"], dtype=np.float64),
+            medium=d.get("medium"),
         )
         cache.validate()
         return cache

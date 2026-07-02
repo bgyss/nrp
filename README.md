@@ -115,7 +115,7 @@ uv run ruff check .                            # or: mise run lint
 |---|---|---|
 | §3.1 SAMPLEPATHS / GATHERLIGHT decoupling | **Implemented** | `nrp/path_cache.py`, `nrp/gather_light.py`, traced by `nrp/toy_tracer.py` |
 | §3.1 BSDF sampling w/o NEE, throughput Russian roulette | **Implemented** (toy scale) | `nrp/toy_tracer.py` — cosine-weighted Lambertian, no NEE |
-| §3.1 volumes / free-flight sampling | Not implemented | toy tracer is surface-only |
+| §3.1 volumes / free-flight sampling | **Implemented** (toy scale) | homogeneous medium in `nrp/toy_tracer.py` (free-flight sampling, isotropic phase); GATHERLIGHT unchanged by design — transmittance is implicit in segment lengths; cache schema v2 carries medium metadata |
 | §3.2 per-light-type networks, E(v) factored out (Eq. 1–3) | **Implemented** | `torch_backend/model.py` (`light_type` = sphere/quad), `gather_lights` |
 | §3.2 sphere lights (4 params) | **Implemented** | `nrp/lights.py` |
 | §3.2 / Fig. 13 quad lights (8 params) | **Implemented** | `nrp/lights.py::QuadLight`, `gather_throughput_quad`, quad-conditioned proxy |
@@ -166,6 +166,12 @@ runs on an Apple Silicon laptop CPU, single process; none are quoted from the pa
   **2.4 M seg/s at 48² (39×)** and **3.5 M seg/s at 128² (59×)** over the scalar
   loop (`out/export-bench.json`; both loops statistically equivalent by a fixed-seed
   GATHERLIGHT test).
+- **Volumetric export (roadmap item 2):** the toy box filled with a homogeneous
+  medium (σ_t 2.0, albedo 0.8) trains the same torch architecture to **18.84 dB**
+  held-out PSNR — within 0.33 dB of the surface-only baseline — with **zero changes
+  to GATHERLIGHT**: free-flight sampling makes transmittance implicit in segment
+  lengths (slab-fixture falloff matches analytic exp(−σ_t·d) within 5%,
+  `tests/test_volume.py`; measurements in `out/volume-report.json`).
 - **Real academic scene (Mitsuba gallery "Country Kitchen"):** 3.27 M segments
   exported at 128×128 / 64 spp in **4.0 s** (129 MB cache); torch proxy (106,085
   params, 430 KB) trains in **126 s** to held-out **PSNR 25.24 dB vs raw
@@ -208,7 +214,8 @@ Documented substitutions, not silent approximations:
 ## Next steps
 
 Roadmap item 1 (vectorized Mitsuba export + a real academic scene) is done — see
-`docs/performance.md`. Remaining candidate improvements — volumes, fused GPU gather,
+`docs/performance.md`, as is item 2 (volumetric path export — homogeneous medium in
+the toy tracer, schema v2). Remaining candidate improvements — fused GPU gather,
 multi-light/quad inverse (Table 3), compressed caches (§4.2), paper-scale training,
 multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
@@ -224,7 +231,7 @@ nrp/export_bench.py  exporter throughput benchmark (scalar vs wavefront)
 nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
 examples/scenes/     gallery-scene download script (assets never committed)
-tests/               76 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
+tests/               85 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
 docs/                architecture, paper mapping, performance, status report, roadmap
 flake.nix / mise.toml / .envrc   toolchain
 ```

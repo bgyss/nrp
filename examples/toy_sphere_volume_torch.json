@@ -1,0 +1,48 @@
+{
+  "_comment": "Torch training on the toy scene filled with a homogeneous scattering medium (roadmap item 2). Same architecture/budget as toy_sphere_torch.json so held-out quality is directly comparable to the surface-only baseline.",
+  "cache": "../out/toy-volume/path_cache.npz",
+  "out_dir": "../out/toy-volume-torch",
+  "trace": {
+    "width": 48,
+    "height": 48,
+    "spp": 24,
+    "bounces": 3,
+    "seed": 1,
+    "medium": {
+      "sigma_t": 2.0,
+      "albedo": 0.8
+    }
+  },
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.05,
+    "radius_max": 0.25
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "radius": 2
+  },
+  "iters": 3000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 12,
+      "base_resolution": 4,
+      "finest_resolution": 48
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}

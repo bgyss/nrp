@@ -30,8 +30,16 @@ the cache. Both are Monte Carlo estimates of the same integral over independent 
 sets: agreement (28.97 dB, 0.03% mean radiance at 24 vs 64 spp) validates the
 decoupling itself.
 
-**Volumes — not implemented.** The paper notes GATHERLIGHT extends unchanged to
-free-flight-sampled media; neither producer here records volume interactions.
+**Volumes — implemented (toy scale).** The paper notes GATHERLIGHT extends unchanged
+to free-flight-sampled media, and this repo now demonstrates exactly that: the toy
+tracer optionally fills the box with a homogeneous medium (`--medium-sigma-t`,
+isotropic phase, single-scattering-albedo throughput factor at each scatter vertex),
+recording segments that end at sampled scatter distances. GATHERLIGHT gained *no*
+volume code — P(segment reaches d) = exp(−σ_t·d) makes transmittance implicit — and a
+slab-fixture test confirms the gathered falloff of a light inside the medium matches
+analytic transmittance within 5% (`tests/test_volume.py`). Cache schema v2 carries
+optional medium metadata; v1 surface caches load unchanged. The Mitsuba exporter
+remains surface-only.
 
 **Known shared limitation (paper §7, ours too):** occlusion is whatever the cached
 segments encode — a light radius grown past a blocker is not re-checked; undersampled

@@ -11,6 +11,12 @@ sphere more than once still counts once per segment, but a path whose consecutiv
 segments each cross the sphere accumulates once per crossing segment. Pixels with zero
 cached paths return 0 (undersampled — reported, not interpolated).
 
+This works unchanged for caches traced through a participating medium (schema v2,
+paper §3.1 "Volume rendering"): free-flight sampling ends segments at scattering
+vertices, so P(segment reaches distance d) = exp(-sigma_t * d) — transmittance toward
+a light inside the medium is implicit in the recorded segment lengths, and no
+volume-specific gather code exists on purpose.
+
 Known differences from the paper's GPU/Triton implementation are recorded in the
 project README (no MIS/next-event estimation, no re-check of occlusion when the light
 radius grows, CPU/numpy instead of Triton).

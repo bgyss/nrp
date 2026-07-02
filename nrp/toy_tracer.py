@@ -111,6 +111,24 @@ def _intersect_scene(origins: np.ndarray, dirs: np.ndarray):
     return t_best, normal, albedo
 
 
+def sample_free_flight(rng: np.random.Generator, sigma_t: float, n: int) -> np.ndarray:
+    """Free-flight distances with pdf sigma_t * exp(-sigma_t * t) (homogeneous medium).
+
+    Sampling distances this way makes transmittance *implicit* in the path cache: the
+    probability that a recorded segment reaches distance d is exp(-sigma_t * d), so
+    GATHERLIGHT needs no changes for lights inside the medium (paper §3.1).
+    """
+    return -np.log1p(-rng.random(n)) / sigma_t
+
+
+def _isotropic_sample(rng: np.random.Generator, n: int) -> np.ndarray:
+    """Uniform directions on the unit sphere (isotropic phase function)."""
+    z = 1.0 - 2.0 * rng.random(n)
+    phi = 2.0 * np.pi * rng.random(n)
+    r = np.sqrt(np.maximum(0.0, 1.0 - z * z))
+    return np.stack([r * np.cos(phi), r * np.sin(phi), z], axis=1)
+
+
 def _cosine_sample(normal: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     """Cosine-weighted hemisphere directions around each (N,3) normal."""
     n = normal.shape[0]
@@ -127,8 +145,23 @@ def _cosine_sample(normal: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return local[:, 0:1] * tangent + local[:, 1:2] * bitangent + local[:, 2:3] * normal
 
 
-def trace_path_cache(width: int, height: int, spp: int, max_bounces: int, seed: int) -> PathCache:
-    """Trace `spp` light-agnostic paths per pixel and return the full PathCache."""
+def trace_path_cache(
+    width: int,
+    height: int,
+    spp: int,
+    max_bounces: int,
+    seed: int,
+    medium: dict | None = None,
+) -> PathCache:
+    """Trace `spp` light-agnostic paths per pixel and return the full PathCache.
+
+    `medium`, if given, is `{"sigma_t": float, "albedo": float}`: a homogeneous
+    participating medium filling the box, free-flight sampled with an isotropic phase
+    function. Segments then may end at scattering vertices (recorded t_max = sampled
+    flight distance); the scatter event multiplies throughput by the single-scattering
+    albedo sigma_s/sigma_t and the path continues in a uniformly sampled direction.
+    A bounce is consumed per event, surface or volume.
+    """
     rng = np.random.default_rng(seed)
     n_pixels = width * height
     seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput = [], [], [], [], []
@@ -140,17 +173,33 @@ def trace_path_cache(width: int, height: int, spp: int, max_bounces: int, seed: 
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
         for _bounce in range(max_bounces):
             t, normal, albedo = _intersect_scene(origins, dirs)
+            if medium is not None:
+                d_flight = sample_free_flight(rng, float(medium["sigma_t"]), origins.shape[0])
+                scatter = d_flight < t
+                t = np.where(scatter, d_flight, t)
             seg_pixel.append(pixel_ids.copy())
             seg_origin.append(origins.copy())
             seg_dir.append(dirs.copy())
             seg_tmax.append(t.copy())
             seg_throughput.append(throughput.copy())
             hit_p = origins + dirs * t[:, None]
-            origins = hit_p + normal * 1e-4
-            dirs = _cosine_sample(normal, rng)
-            throughput = throughput * albedo  # Lambertian, cosine-weighted: brdf*cos/pdf = albedo
+            if medium is not None:
+                iso = _isotropic_sample(rng, origins.shape[0])
+                origins = np.where(scatter[:, None], hit_p, hit_p + normal * 1e-4)
+                dirs = np.where(scatter[:, None], iso, _cosine_sample(normal, rng))
+                # Volume event: throughput *= single-scattering albedo sigma_s/sigma_t
+                # (isotropic phase pdf cancels); surface event: Lambertian albedo.
+                throughput = throughput * np.where(
+                    scatter[:, None], float(medium["albedo"]), albedo
+                )
+            else:
+                origins = hit_p + normal * 1e-4
+                dirs = _cosine_sample(normal, rng)
+                throughput = throughput * albedo  # Lambertian: brdf*cos/pdf = albedo
 
-    # Auxiliary buffers from deterministic pixel-center primary rays.
+    # Auxiliary buffers from deterministic pixel-center primary rays. These stay
+    # surface-only even with a medium: albedo/depth/normal are G-buffer features of
+    # the first *surface* hit (a scatter vertex has no meaningful normal or albedo).
     origins0, dirs0 = _camera_rays(width, height, None)
     t0, normal0, albedo0 = _intersect_scene(origins0, dirs0)
     position0 = origins0 + dirs0 * t0[:, None]
@@ -168,17 +217,24 @@ def trace_path_cache(width: int, height: int, spp: int, max_bounces: int, seed: 
         position=position0.reshape(height, width, 3),
         depth=t0.reshape(height, width),
         normal=normal0.reshape(height, width, 3),
+        medium=dict(medium) if medium is not None else None,
     )
     cache.validate()
     return cache
 
 
 def render_reference(
-    width: int, height: int, spp: int, max_bounces: int, seed: int, light: SphereLight
+    width: int,
+    height: int,
+    spp: int,
+    max_bounces: int,
+    seed: int,
+    light: SphereLight,
+    medium: dict | None = None,
 ) -> np.ndarray:
     """Independent rendered reference: trace fresh paths and evaluate the emissive
     sphere inline (equivalent to GATHERLIGHT over an independent path set)."""
-    cache = trace_path_cache(width, height, spp, max_bounces, seed)
+    cache = trace_path_cache(width, height, spp, max_bounces, seed, medium=medium)
     return gather_light(cache, light)
 
 
@@ -190,9 +246,26 @@ def main() -> None:
     parser.add_argument("--spp", type=int, default=32)
     parser.add_argument("--bounces", type=int, default=3)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--medium-sigma-t",
+        type=float,
+        default=0.0,
+        help="extinction coefficient of a homogeneous medium filling the box (0 = none)",
+    )
+    parser.add_argument(
+        "--medium-albedo",
+        type=float,
+        default=0.8,
+        help="single-scattering albedo sigma_s/sigma_t of the medium",
+    )
     args = parser.parse_args()
 
-    cache = trace_path_cache(args.width, args.height, args.spp, args.bounces, args.seed)
+    medium = None
+    if args.medium_sigma_t > 0.0:
+        medium = {"sigma_t": args.medium_sigma_t, "albedo": args.medium_albedo}
+    cache = trace_path_cache(
+        args.width, args.height, args.spp, args.bounces, args.seed, medium=medium
+    )
     cache.save(args.out)
     print(
         f"traced {args.spp} spp x {args.bounces} bounces at {args.width}x{args.height}: "

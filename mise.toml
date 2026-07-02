@@ -55,6 +55,14 @@ run = [
 description = "Train the torch proxy on the kitchen cache with OIDN denoising"
 run = "uv run python -m nrp.torch_backend.train --config examples/kitchen_torch.json"
 
+[tasks.train-volume]
+description = "Train the torch proxy on the toy scene filled with a homogeneous medium"
+run = "uv run python -m nrp.torch_backend.train --config examples/toy_sphere_volume_torch.json"
+
+[tasks.volume-report]
+description = "Measure volume-vs-surface cache growth, gather time, and proxy quality"
+run = "uv run python examples/volume_report.py --out out/volume-report.json"
+
 [tasks.bench-export]
 description = "Benchmark the exporter: scalar loop vs drjit wavefront at 48x48 and 128x128"
 run = "uv run python -m nrp.export_bench --out out/export-bench.json"

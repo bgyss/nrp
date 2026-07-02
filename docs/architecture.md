@@ -65,7 +65,12 @@ quantity the proxies learn. `gather_light` scales by rgb; `gather_lights` sums a
 - **`nrp/toy_tracer.py`** — dependency-free educational tracer: hard-coded
   Cornell-style unit box + diffuse sphere, Lambertian, cosine-weighted sampling,
   fixed bounce count. Also renders the *independent* emissive-inline reference used
-  by `nrp/compare_reference.py` for the decoupling consistency check.
+  by `nrp/compare_reference.py` for the decoupling consistency check. Optionally
+  fills the box with a homogeneous participating medium (`--medium-sigma-t`,
+  `--medium-albedo`): free-flight-sampled scatter vertices end segments early and an
+  isotropic phase function continues the path, so lights inside the medium illuminate
+  it through plain GATHERLIGHT — transmittance is implicit in segment lengths (cache
+  schema v2 records the medium metadata).
 - **`nrp/mitsuba_exporter.py`** (extra: `mitsuba`) — drives Mitsuba 3 from Python
   over any scene XML (or `builtin:cornell-box`): BSDF sampling, no NEE, throughput
   Russian roulette after bounce 2 (`--no-russian-roulette` for deterministic counts).
