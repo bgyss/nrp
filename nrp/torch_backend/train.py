@@ -11,6 +11,16 @@ relative MSE of Eq. 4 with a stop-gradient denominator.
 Config-driven CLI (see examples/toy_sphere_torch.json). Paths resolve relative to the
 config file; the path cache is traced first if missing. Outputs into `out_dir`:
 model.pt and torch_train_report.json.
+
+Long runs (roadmap item 6) add two optional config keys. `lr_schedule: "cosine"`
+decays the LR from `lr` to `lr_min` (default lr/100) over `iters` with cosine
+annealing. `checkpoint: {"every": N}` saves `out_dir/checkpoint.pt` every N
+iterations with the *full* training state — model, optimizer, scheduler, both RNGs,
+and the image pool — so `--resume` continues the exact trajectory the uninterrupted
+run would have taken (bit-identical on CPU; the unit suite asserts the loss curves
+match). Each checkpoint also evaluates held-out PSNR on a fixed validation light
+set (drawn from a dedicated RNG so it never perturbs pool sampling), which is what
+produces the PSNR-vs-iteration convergence curve in the report.
 """
 
 from __future__ import annotations
@@ -55,7 +65,7 @@ def pixel_tensors(cache: PathCache, device: torch.device) -> tuple[torch.Tensor,
 class ImagePool:
     """Pool of (light params, denoised target image) rows, with periodic replacement."""
 
-    def __init__(self, cache: PathCache, cfg: dict, rng: np.random.Generator, device):
+    def __init__(self, cache: PathCache, cfg: dict, rng: np.random.Generator, device, fill=True):
         self.cache = cache
         self.cfg = cfg
         self.rng = rng
@@ -72,8 +82,9 @@ class ImagePool:
         )
         self.targets = torch.empty((self.size, n_px, 3), dtype=torch.float32, device=device)
         self._next_replace = 0
-        for i in range(self.size):
-            self.fill(i)
+        if fill:
+            for i in range(self.size):
+                self.fill(i)
 
     def _render_target(self, light) -> np.ndarray:
         # Unit emission: the pre-emission contribution the proxy learns.
@@ -114,7 +125,72 @@ class ImagePool:
             self._next_replace = (self._next_replace + 1) % self.size
 
 
-def train(cfg: dict) -> dict:
+def build_val_set(cache: PathCache, cfg: dict) -> list[dict]:
+    """Fixed held-out validation set: fresh light configurations from a dedicated RNG
+    (never the training RNG, so evaluating cannot perturb pool sampling), each with
+    its raw GATHERLIGHT reference (physically grounded) and the denoised one (what
+    the network is supervised with), computed once and reused at every checkpoint."""
+    val_rng = np.random.default_rng([cfg.get("seed", 0), 0x5EED])
+    val_set = []
+    for _ in range(cfg.get("n_val_lights", 12)):
+        light = sample_light(
+            cache, val_rng, cfg["light_type"], cfg["light_bounds"], cfg.get("sampling", "segments")
+        )
+        raw = gather_light(cache, light).reshape(-1, 3)
+        den = denoise_image(
+            raw.reshape(cache.height, cache.width, 3),
+            cache.albedo,
+            cache.normal,
+            cache.depth,
+            method=cfg.get("denoise", {}).get("method", "bilateral"),
+        ).reshape(-1, 3)
+        val_set.append({"light": light, "raw": raw, "denoised": den})
+    return val_set
+
+
+def evaluate(model, val_set, xy, aux, device) -> list[dict]:
+    model.eval()
+    metrics = []
+    n_px = xy.shape[0]
+    with torch.no_grad():
+        for entry in val_set:
+            params = torch.as_tensor(
+                light_param_vector(entry["light"]), dtype=torch.float32, device=device
+            ).expand(n_px, -1)
+            pred = model(xy, aux, params).cpu().numpy().astype(np.float64)
+            light = entry["light"]
+            metrics.append(
+                {
+                    "light": light.to_dict() if hasattr(light, "to_dict") else None,
+                    "psnr_db_vs_raw": psnr(pred, entry["raw"]),
+                    "smape_vs_raw": smape(pred, entry["raw"]),
+                    "psnr_db_vs_denoised": psnr(pred, entry["denoised"]),
+                    "smape_vs_denoised": smape(pred, entry["denoised"]),
+                }
+            )
+    model.train()
+    return metrics
+
+
+def save_checkpoint(path, iteration, model, opt, sched, gen, rng, pool, state) -> None:
+    torch.save(
+        {
+            "iteration": iteration,
+            "model": model.state_dict(),
+            "opt": opt.state_dict(),
+            "sched": sched.state_dict() if sched is not None else None,
+            "torch_gen": gen.get_state(),
+            "numpy_rng": rng.bit_generator.state,
+            "pool_params": pool.params.detach().cpu(),
+            "pool_targets": pool.targets.detach().cpu(),
+            "pool_next_replace": pool._next_replace,
+            **state,
+        },
+        path,
+    )
+
+
+def train(cfg: dict, resume: bool = False) -> dict:
     rng = np.random.default_rng(cfg.get("seed", 0))
     torch.manual_seed(cfg.get("seed", 0))
     device = torch.device(cfg.get("device", "cpu"))
@@ -129,18 +205,50 @@ def train(cfg: dict) -> dict:
         encoding=cfg["model"].get("encoding"),
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.get("lr", 1e-2))
-
-    t_pool0 = time.perf_counter()
-    pool = ImagePool(cache, cfg, rng, device)
-    pool_seconds = time.perf_counter() - t_pool0
-
     iters = cfg["iters"]
+    sched = None
+    if cfg.get("lr_schedule") == "cosine":
+        sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+            opt, T_max=iters, eta_min=cfg.get("lr_min", cfg.get("lr", 1e-2) / 100.0)
+        )
+
+    ckpt_cfg = cfg.get("checkpoint")
+    ckpt_path = os.path.join(cfg["out_dir"], "checkpoint.pt")
+    gen = torch.Generator(device="cpu").manual_seed(cfg.get("seed", 0))
+    val_set = build_val_set(cache, cfg)
+
+    start_iter = 0
+    loss_curve: list[float] = []
+    checkpoint_metrics: list[dict] = []
+    pool_seconds = 0.0
+    train_seconds = 0.0
+    if resume:
+        ck = torch.load(ckpt_path, map_location=device, weights_only=False)
+        start_iter = ck["iteration"]
+        model.load_state_dict(ck["model"])
+        opt.load_state_dict(ck["opt"])
+        if sched is not None:
+            sched.load_state_dict(ck["sched"])
+        gen.set_state(ck["torch_gen"])
+        rng.bit_generator.state = ck["numpy_rng"]
+        pool = ImagePool(cache, cfg, rng, device, fill=False)
+        pool.params = ck["pool_params"].to(device)
+        pool.targets = ck["pool_targets"].to(device)
+        pool._next_replace = ck["pool_next_replace"]
+        loss_curve = ck["loss_curve"]
+        checkpoint_metrics = ck["checkpoint_metrics"]
+        pool_seconds = ck["pool_seconds"]
+        train_seconds = ck["train_seconds"]
+        print(f"resumed from {ckpt_path} at iteration {start_iter}")
+    else:
+        t_pool0 = time.perf_counter()
+        pool = ImagePool(cache, cfg, rng, device)
+        pool_seconds = time.perf_counter() - t_pool0
+
     batch = cfg.get("batch_pixels", 4096)
     replace_every = cfg["pool"]["replace_every"]
-    loss_curve = []
     t_train0 = time.perf_counter()
-    gen = torch.Generator(device="cpu").manual_seed(cfg.get("seed", 0))
-    for it in range(iters):
+    for it in range(start_iter, iters):
         pool_ids = torch.randint(0, pool.size, (batch,), generator=gen).to(device)
         pixel_ids = torch.randint(0, n_px, (batch,), generator=gen).to(device)
         pred = model(xy[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
@@ -148,42 +256,53 @@ def train(cfg: dict) -> dict:
         opt.zero_grad()
         loss.backward()
         opt.step()
+        if sched is not None:
+            sched.step()
         loss_curve.append(loss.detach().item())
         if (it + 1) % replace_every == 0:
             pool.replace_round()
-    train_seconds = time.perf_counter() - t_train0
-
-    # Held-out validation: fresh configurations, never in the pool; reference is the
-    # *raw* GATHERLIGHT estimate (the physically grounded target, per the numpy backend)
-    # and the denoised one (what the network was actually supervised with).
-    model.eval()
-    val_metrics = []
-    with torch.no_grad():
-        for _ in range(cfg.get("n_val_lights", 12)):
-            light = sample_light(
-                cache, rng, cfg["light_type"], cfg["light_bounds"], cfg.get("sampling", "segments")
-            )
-            params = torch.as_tensor(
-                light_param_vector(light), dtype=torch.float32, device=device
-            ).expand(n_px, -1)
-            pred = model(xy, aux, params).cpu().numpy().astype(np.float64)
-            raw = gather_light(cache, light).reshape(n_px, 3)
-            den = denoise_image(
-                raw.reshape(cache.height, cache.width, 3),
-                cache.albedo,
-                cache.normal,
-                cache.depth,
-                method=cfg.get("denoise", {}).get("method", "bilateral"),
-            ).reshape(n_px, 3)
-            val_metrics.append(
+        if ckpt_cfg is not None and (it + 1) % ckpt_cfg["every"] == 0:
+            # Checkpoint evaluation and I/O are excluded from the training clock.
+            train_seconds += time.perf_counter() - t_train0
+            metrics = evaluate(model, val_set, xy, aux, device)
+            checkpoint_metrics.append(
                 {
-                    "light": light.to_dict() if hasattr(light, "to_dict") else None,
-                    "psnr_db_vs_raw": psnr(pred, raw),
-                    "smape_vs_raw": smape(pred, raw),
-                    "psnr_db_vs_denoised": psnr(pred, den),
-                    "smape_vs_denoised": smape(pred, den),
+                    "iteration": it + 1,
+                    "val_psnr_db_vs_raw_mean": float(
+                        np.mean([m["psnr_db_vs_raw"] for m in metrics])
+                    ),
+                    "val_smape_vs_raw_mean": float(np.mean([m["smape_vs_raw"] for m in metrics])),
+                    "train_seconds": train_seconds,
                 }
             )
+            os.makedirs(cfg["out_dir"], exist_ok=True)
+            save_checkpoint(
+                ckpt_path,
+                it + 1,
+                model,
+                opt,
+                sched,
+                gen,
+                rng,
+                pool,
+                {
+                    "loss_curve": loss_curve,
+                    "checkpoint_metrics": checkpoint_metrics,
+                    "pool_seconds": pool_seconds,
+                    "train_seconds": train_seconds,
+                },
+            )
+            c = checkpoint_metrics[-1]
+            print(
+                f"[{it + 1}/{iters}] loss {loss_curve[-1]:.4f} "
+                f"val PSNR {c['val_psnr_db_vs_raw_mean']:.2f} dB "
+                f"({train_seconds:.0f}s train)"
+            )
+            t_train0 = time.perf_counter()
+    train_seconds += time.perf_counter() - t_train0
+
+    val_metrics = evaluate(model, val_set, xy, aux, device)
+    model.eval()
 
     # Single-frame inference latency (full image forward, no gather).
     n_bench = 20
@@ -205,6 +324,8 @@ def train(cfg: dict) -> dict:
         "model_bytes": os.path.getsize(model_path),
         "pool_build_seconds": pool_seconds,
         "train_seconds": train_seconds,
+        "iters_per_second": iters / train_seconds if train_seconds > 0 else None,
+        "checkpoint_metrics": checkpoint_metrics,
         "inference_ms_per_frame": inference_ms,
         "inference_hz": 1000.0 / inference_ms if inference_ms > 0 else None,
         "loss_first": loss_curve[0],
@@ -246,13 +367,18 @@ def main() -> None:
     parser.add_argument(
         "--device", default=None, help="override the config's device (cpu/mps/cuda)"
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="continue from out_dir/checkpoint.pt (requires a 'checkpoint' config block)",
+    )
     args = parser.parse_args()
     cfg = load_config(args.config)
     if args.gather_backend is not None:
         cfg["gather_backend"] = args.gather_backend
     if args.device is not None:
         cfg["device"] = args.device
-    train(cfg)
+    train(cfg, resume=args.resume)
 
 
 if __name__ == "__main__":

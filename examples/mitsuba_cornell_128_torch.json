@@ -1,0 +1,42 @@
+{
+  "_comment": "Paper-scale run (roadmap item 6): 8x256 net, hashgrid finest = image width, 50k iters, pool 128, cosine LR, checkpoints every 1000. Export first: uv run python -m nrp.mitsuba_exporter --width 128 --height 128 --spp 64 --bounces 4 --out out/mitsuba/path_cache_128_64spp.npz. Train: uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_128_torch.json --gather-backend torch --device mps (add --resume to continue an interrupted run).",
+  "cache": "../out/mitsuba/path_cache_128_64spp.npz",
+  "out_dir": "../out/mitsuba-128-torch",
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.1,
+    "radius_max": 0.5
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 128,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "method": "oidn"
+  },
+  "iters": 50000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "lr_schedule": "cosine",
+  "lr_min": 5e-5,
+  "checkpoint": {
+    "every": 1000
+  },
+  "model": {
+    "hidden_width": 256,
+    "hidden_layers": 8,
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 14,
+      "base_resolution": 4,
+      "finest_resolution": 128
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}

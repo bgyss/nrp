@@ -244,6 +244,42 @@ parameters. Three changes fix it (`examples/inverse_grid.py --quad-check`,
 Result: **center error 0.039 < 0.05** (best of 12 restarts), re-rendered
 18.8 dB vs the target — deterministic from one command.
 
+## Paper-scale training (roadmap item 6, the quality ceiling)
+
+`examples/mitsuba_cornell_128_torch.json` runs the paper's training configuration:
+8×256 network + 2¹⁴-entry hashgrid with `finest_resolution` = image width
+(521,061 parameters), pool 128, batch 4096, cosine LR 0.005 → 5×10⁻⁵, 50k
+iterations, OIDN targets, torch gather, on the Mitsuba cornell box at 128×128 /
+64 spp (2,945,475 segments, 103.6 MB float64 cache — wavefront export takes 2.6 s).
+Long-run safety: `checkpoint: {"every": 1000}` writes full training state (model,
+optimizer, scheduler, both RNGs, pool) and `--resume` continues the identical
+trajectory — bit-exact on CPU, asserted by `tests/test_checkpoint_resume.py`.
+
+PSNR-vs-iteration on the fixed 12-light held-out set (dedicated RNG, evaluated at
+every checkpoint; PSNR vs raw GATHERLIGHT references):
+
+| iteration | 1k | 3k | 10k | 25k | 50k |
+|---|---|---|---|---|---|
+| held-out PSNR (dB) | 23.61 | 26.79 | 29.05 | 31.58 | **35.19** |
+| cumulative train s (MPS) | 25 | 85 | 275 | 666 | 1344 |
+
+- **Gain from scale alone: +8.7 dB.** The 3k-iteration baseline config (4×128,
+  2¹² table, pool 64, constant LR) on the *same* cache reaches 26.49 dB in 68 s;
+  the paper-scale run ends at 35.19 dB (37.24 dB vs denoised), SMAPE 0.662 vs
+  0.794. The big model's own 3k checkpoint (26.79 dB) barely beats the small
+  baseline — capacity only pays off with iterations.
+- **Convergence shape:** ~2–3.5 dB per 2.5× iterations with no plateau at 50k —
+  the quality ceiling is not reached at this budget, consistent with the paper
+  training to 100k. SMAPE flattens near 0.66 long before PSNR stops improving
+  (SMAPE is dominated by near-zero pixels where the raw MC reference is itself
+  noisy).
+- **Throughput:** MPS 37.2 iters/s → 1344 s (22.4 min) wall-clock for 50k (pool
+  build 3.4 s; checkpoint eval/save excluded from the training clock). CPU: 23.2
+  iters/s → 2153 s (35.9 min) for the identical run, ending at 34.58 dB — within
+  0.61 dB of MPS (same seeds; device arithmetic differs), MPS 1.6× faster
+  wall-clock at this batch size. The 3k *baseline* config runs at 44.2 iters/s on
+  MPS (68 s). Inference at 128²: 2.1 ms/frame (~480 Hz) on MPS.
+
 ## Packed cache layout (roadmap item 5, §4.2: fp16 + rgb9e5)
 
 `PathCache.save(path, compressed=True)` writes segment geometry and G-buffer aux as

@@ -62,6 +62,13 @@ uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box \
   --width 48 --height 48 --spp 16 --bounces 4 --out out/mitsuba/path_cache.npz
 uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_torch.json
 
+# Paper-scale run (8x256 net, 50k iterations, pool 128, cosine LR, checkpoint every
+# 1000 with --resume support): export at 128x128 / 64 spp, then train (~25 min MPS).
+uv run python -m nrp.mitsuba_exporter --width 128 --height 128 --spp 64 --bounces 4 \
+  --out out/mitsuba/path_cache_128_64spp.npz
+uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_128_torch.json \
+  --gather-backend torch --device mps   # add --resume to continue an interrupted run
+
 # Real academic scene (Mitsuba 3 gallery "Country Kitchen"): download (assets are
 # never vendored), export with the drjit wavefront loop, train. Or: mise run
 # export-kitchen && mise run train-kitchen.
@@ -127,6 +134,7 @@ uv run ruff check .                            # or: mise run lint
 | §4.4 OIDN denoiser | **Implemented** (optional extra) | `torch_backend/denoise.py::oidn_denoise` (RT filter, HDR, albedo+normal guides); aux-guided joint bilateral as the dependency-free fallback |
 | §4.4 segment-based light-position sampling + bbox fallback | **Implemented** | `torch_backend/sampling.py` |
 | §4.4 loss: relative MSE, sg(prediction)²+ε denominator, ε=0.01 (Eq. 4) | **Implemented** (torch) | `torch_backend/model.py::relative_mse_loss`, gradient unit-tested |
+| §4 paper-scale training (8×256, ≥50k iters, pool ≥128) | **Implemented** | `examples/mitsuba_cornell_128_torch.json`; cosine LR decay + full-state checkpoint/`--resume` (bit-exact on CPU, unit-tested) in `torch_backend/train.py` |
 | §5.3 inverse: Eq. 5 multi-light sum, Reinhard MSE (Eq. 6) | **Implemented** (sphere + quad, joint multi-light) | `torch_backend/optimize_lights.py` |
 | §5.3 logit/inv-softplus reparameterization, Adam lr 0.05 × 500 | **Implemented** | `ReparamSphereLights` / `ReparamQuadLights` (quad normal: unconstrained 3-vector normalized in `quad_params`, gradient-tested) |
 | §5.3 mini-batch pixel-fraction SGD (Table 3) | **Implemented** + grid replication | `--pixel-fraction`; `examples/inverse_grid.py` runs the N×α grid (out/inverse-grid/) |
@@ -229,12 +237,12 @@ Documented substitutions, not silent approximations:
 
 ## Next steps
 
-Roadmap items 1–5 are done — vectorized Mitsuba export + a real academic scene,
+Roadmap items 1–6 are done — vectorized Mitsuba export + a real academic scene,
 volumetric path export (schema v2), batched device GATHERLIGHT + MPS training,
-quad/multi-light inverse optimization with the Table-3 grid, and the §4.2 packed
-cache layout (fp16 + rgb9e5) — all measured in
+quad/multi-light inverse optimization with the Table-3 grid, the §4.2 packed
+cache layout (fp16 + rgb9e5), and paper-scale training (8×256 / 50k iterations
+with cosine LR + checkpoint/resume) — all measured in
 `docs/performance.md`. Remaining candidate improvements —
-paper-scale training,
 multi-view and per-layer NRPs (§6.1), the Fig. 6 image-based baseline, and the
 Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
 (each with verification and performance-testing requirements) in

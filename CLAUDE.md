@@ -146,7 +146,10 @@ on.
   or `"bilateral"` (dependency-free aux-guided joint bilateral fallback).
 - `train.py` — §4.4 pool scheme: `pool.size` denoised GATHERLIGHT images, every
   training pixel samples its target uniformly from the pool, `pool.replace_count`
-  images replaced every `pool.replace_every` iterations.
+  images replaced every `pool.replace_every` iterations. Long runs: `lr_schedule:
+  cosine` (+ `lr_min`), `checkpoint: {"every": N}` full-state checkpoints with a
+  `--resume` flag (bit-exact on CPU), and a fixed dedicated-RNG validation set
+  evaluated at each checkpoint (PSNR-vs-iteration curve in the report).
 - `optimize_lights.py` — §5.3: Eq. 5 multi-light sum, Reinhard-tonemapped MSE (Eq. 6),
   logit/inverse-softplus reparameterization, pixel-fraction mini-batch SGD, restarts,
   objective/protect masks, and a mandatory GATHERLIGHT re-render so proxy-space and

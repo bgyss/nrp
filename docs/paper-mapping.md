@@ -124,10 +124,14 @@ denominator and ε = 0.01: `((pred − target)² / (pred.detach()² + 0.01)).mea
 stop-gradient property is unit-tested: the backward pass matches
 `2(pred − target)/(pred² + ε)` to 6 decimal places.
 
-**Training scale — scaled down.** Paper: 8×256 network, 100k iterations, ~1 h on an
-RTX 5090 at 680². Here: 4×128 + hashgrid, 3k iterations, ~1 min CPU at 48². The paper's
-architecture (8×256) is a config change (`hidden_layers: 8, hidden_width: 256`), not a
-code change.
+**Training scale — paper-scale run available.** Paper: 8×256 network, 100k
+iterations, ~1 h on an RTX 5090 at 680². The default toy configs stay small (4×128,
+3k iterations, ~1 min CPU at 48²), but `examples/mitsuba_cornell_128_torch.json`
+runs the paper's architecture — 8×256, hashgrid `finest_resolution` = image width,
+pool 128 — for 50k iterations on the Mitsuba cornell box at 128×128 / 64 spp, with
+cosine LR decay and full-state checkpointing (`checkpoint: {"every": N}` +
+`--resume`; resume is bit-exact on CPU and unit-tested). The measured
+PSNR-vs-iteration convergence curve is in `docs/performance.md`.
 
 ## §5 Evaluation
 
