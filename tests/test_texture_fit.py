@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,7 +13,9 @@ from examples.textured_quad_fit import (  # noqa: E402
     NORMAL,
     WIDTH,
     make_full_rank_cache,
+    make_random_uv_cache,
     make_reference_texture,
+    run_proxy_scaling_case,
 )
 from nrp.gather_light import gather_light  # noqa: E402
 from nrp.lights import TexturedQuadLight  # noqa: E402
@@ -51,6 +54,18 @@ class TextureFitTests(unittest.TestCase):
         self.assertLess(fit.relative_texture_error, 1e-10)
         np.testing.assert_allclose(fit.light.texture, reference.texture, atol=1e-10)
         np.testing.assert_allclose(gather_light(cache, fit.light), target, atol=1e-10)
+
+    def test_random_uv_cache_is_valid(self):
+        cache = make_random_uv_cache(4, 12, seed=9)
+        self.assertEqual(cache.segment_count, 12)
+        cache.validate()
+
+    def test_proxy_scaling_case_reports_underdetermined_high_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = run_proxy_scaling_case(8, Path(tmp), train_samples=16)
+        self.assertEqual(case["texture_parameter_count"], 192)
+        self.assertTrue(case["underdetermined"])
+        self.assertLess(max(case["rank_per_channel"]), case["unknowns_per_channel"])
 
 
 if __name__ == "__main__":

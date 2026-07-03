@@ -691,18 +691,23 @@ Reinhard tonemap plus sRGB encoding.
 
 | tier | source | ms | PSNR vs final | SSIM vs final | FLIP vs final |
 |---|---|---:|---:|---:|---:|
-| preview | proxy | 0.89 | -15.63 dB | 0.023 | 0.955 |
-| draft | cached GATHERLIGHT | 0.15 | 10.81 dB | 0.190 | 0.166 |
-| final | high-spp GATHERLIGHT | 0.41 | inf | 1.000 | 0.000 |
+| preview | proxy | 27.55 | -14.11 dB | 0.023 | 0.954 |
+| draft | cached GATHERLIGHT | 0.16 | 10.81 dB | 0.190 | 0.166 |
+| final | high-spp GATHERLIGHT | 0.39 | inf | 1.000 | 0.000 |
 
 The proxy in this report is intentionally untrained; the measurement is for the
 quality-tier plumbing, sidecar metadata, and residual identity rather than visual
 quality. At the approved light config, proxy plus cached residual matches cached
 GATHERLIGHT to max absolute error **5.6e-17**. Moving the light by dx =
 {0.05, 0.10, 0.20} drops residual-corrected PSNR vs cached GATHERLIGHT to
-{24.66, 23.72, 20.38} dB, which is the expected residual-validity decay. This does
-**not** yet satisfy E9's full final-frame study: no fresh high-spp production-scale
-cache and no supervisor-trust verdict.
+{24.67, 23.73, 20.40} dB, which is the expected residual-validity decay.
+
+The report now includes a toy-scale supervisor-trust verdict with a 1e-12 residual
+identity tolerance and a 25 dB residual-validity threshold. The approved frame is
+exact, but the first measured move (dx=0.05) falls below 25 dB, so the verdict is:
+**trust the approved frame only; re-bake residual after any measured light move**.
+This does **not** yet satisfy E9's full final-frame study: no fresh high-spp
+production-scale cache and no production supervisor-trust verdict.
 
 ## Gather-time production controls (extensions E8, cache fallback slice)
 
@@ -822,10 +827,23 @@ least squares. The synthetic fixture gives each texel independent observations.
 | 8×8 | 192 | 64 / 64 | 1.96e-16 | 322.09 dB |
 
 This satisfies textured-quad reference inverse recovery at the requested 8×8
-resolution and records the parameter-count growth from 12 to 192 RGB values. It does
-**not** yet satisfy the full richer-light proxy study: the torch proxy is still not
-conditioned on texture embeddings, and held-out proxy PSNR vs texture resolution
-{2×2, 4×4, 8×8} remains open.
+resolution and records the parameter-count growth from 12 to 192 RGB values.
+
+The same report now includes a linear texture-proxy scaling baseline: each texture
+size is fitted from the same 48 random quad-hit observations and evaluated on a
+separate 256-observation held-out cache. This isolates the parameter-count pressure
+behind the paper's warning that richer light parameterizations hurt convergence.
+
+| texture | RGB params | train obs | rank / unknowns per channel | held-out PSNR |
+|---:|---:|---:|---:|---:|
+| 2×2 | 12 | 48 | 4 / 4 | 319.61 dB |
+| 4×4 | 48 | 48 | 16 / 16 | 320.47 dB |
+| 8×8 | 192 | 48 | 32 / 64 | 10.66 dB |
+
+The 8×8 case becomes underdetermined at equal observation budget and collapses on
+held-out samples. This satisfies a reference proxy-scaling measurement for texture
+resolution, but it does **not** yet satisfy the full richer-light proxy study: the
+torch proxy is still not conditioned on learned texture embeddings.
 
 ## Image-space target to physical lights (extensions E7, toy demo slice)
 

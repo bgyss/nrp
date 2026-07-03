@@ -6,6 +6,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
+from examples.dynamic_geometry import WarmStartImageProxy  # noqa: E402
 from nrp.dynamic_geometry import (  # noqa: E402
     primary_visibility_invalidation_mask,
     splice_invalidated_pixels,
@@ -55,6 +56,19 @@ class DynamicGeometryTests(unittest.TestCase):
             gather_light(self.after, self.light),
             atol=1e-12,
         )
+
+    def test_warm_start_image_proxy_updates_masked_pixels_only(self):
+        initial = np.zeros((2, 2, 3), dtype=np.float64)
+        target = np.ones((2, 2, 3), dtype=np.float64)
+        mask = np.array([[True, False], [False, True]])
+        proxy = WarmStartImageProxy(initial)
+        losses = proxy.fine_tune(target, mask, steps=3, lr=0.5)
+        updated = proxy.predict()
+        self.assertLess(losses[-1], losses[0])
+        self.assertGreater(float(updated[0, 0, 0]), 0.0)
+        self.assertGreater(float(updated[1, 1, 0]), 0.0)
+        np.testing.assert_allclose(updated[0, 1], 0.0)
+        np.testing.assert_allclose(updated[1, 0], 0.0)
 
 
 if __name__ == "__main__":

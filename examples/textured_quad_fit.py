@@ -64,6 +64,36 @@ def make_full_rank_cache(texture_size: int, samples_per_texel: int = 3) -> PathC
     )
 
 
+def make_random_uv_cache(texture_size: int, samples: int, seed: int) -> PathCache:
+    """Synthetic cache with random quad-hit UVs for held-out proxy-scaling tests."""
+    rng = np.random.default_rng(seed)
+    seg_pixel = np.arange(samples, dtype=np.int64)
+    origins = np.zeros((samples, 3), dtype=np.float64)
+    dirs = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float64), (samples, 1))
+    tmax = np.full(samples, 2.0, dtype=np.float64)
+    throughput = rng.uniform(0.35, 1.25, size=(samples, 3))
+    u_axis, v_axis = quad_tangent_frame(NORMAL)
+    uv = rng.random((samples, 2))
+    for idx, coord in enumerate(uv):
+        hit = CENTER + (coord[0] - 0.5) * WIDTH * u_axis + (coord[1] - 0.5) * HEIGHT * v_axis
+        origins[idx] = hit - dirs[idx]
+
+    return PathCache(
+        width=samples,
+        height=1,
+        n_paths=np.ones(samples, dtype=np.int64),
+        seg_pixel=seg_pixel,
+        seg_origin=origins,
+        seg_dir=dirs,
+        seg_tmax=tmax,
+        seg_throughput=throughput,
+        albedo=np.full((1, samples, 3), 0.5, dtype=np.float64),
+        position=np.zeros((1, samples, 3), dtype=np.float64),
+        depth=np.ones((1, samples), dtype=np.float64),
+        normal=np.tile(np.array([0.0, 0.0, 1.0]), (1, samples, 1)),
+    )
+
+
 def make_reference_texture(texture_size: int) -> np.ndarray:
     y, x = np.meshgrid(
         np.linspace(0.0, 1.0, texture_size),
@@ -117,6 +147,44 @@ def run_case(texture_size: int, out_dir: Path) -> dict:
     }
 
 
+def run_proxy_scaling_case(texture_size: int, out_dir: Path, train_samples: int = 48) -> dict:
+    """Fit from equal train observations and score on a dense held-out UV cache."""
+    train_cache = make_random_uv_cache(texture_size, train_samples, seed=200 + texture_size)
+    heldout_cache = make_random_uv_cache(texture_size, 256, seed=300 + texture_size)
+    reference = TexturedQuadLight(
+        center=CENTER,
+        normal=NORMAL,
+        width=WIDTH,
+        height=HEIGHT,
+        texture=make_reference_texture(texture_size),
+    )
+    train_target = gather_light(train_cache, reference)
+    heldout_target = gather_light(heldout_cache, reference)
+    fit = fit_textured_quad_light(
+        train_cache,
+        train_target,
+        CENTER,
+        NORMAL,
+        WIDTH,
+        HEIGHT,
+        (texture_size, texture_size),
+        reference=reference,
+    )
+    heldout_pred = gather_light(heldout_cache, fit.light)
+    np.save(out_dir / f"proxy_scaling_{texture_size}x{texture_size}_pred.npy", heldout_pred)
+    return {
+        "texture_size": [texture_size, texture_size],
+        "texture_parameter_count": int(texture_size * texture_size * 3),
+        "train_observations": train_samples,
+        "heldout_observations": heldout_cache.width,
+        "rank_per_channel": list(fit.ranks),
+        "unknowns_per_channel": int(texture_size * texture_size),
+        "underdetermined": any(rank < texture_size * texture_size for rank in fit.ranks),
+        "relative_texture_error": fit.relative_texture_error,
+        "heldout_psnr_db": psnr(heldout_pred, heldout_target),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="out/textured-quad-fit/report.json")
@@ -125,13 +193,22 @@ def main() -> None:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cases = [run_case(size, out_path.parent) for size in (2, 4, 8)]
+    scaling = [run_proxy_scaling_case(size, out_path.parent) for size in (2, 4, 8)]
     report = {
         "extension": "E4",
-        "scope": "textured quad inverse recovery via reference GATHERLIGHT",
+        "scope": "textured quad inverse recovery and linear proxy scaling",
         "cases": cases,
+        "linear_proxy_scaling": {
+            "description": (
+                "Least-squares texture proxy fitted from an equal 48 random quad-hit "
+                "observations per texture size and evaluated on a separate 256-sample cache."
+            ),
+            "cases": scaling,
+        },
         "completion_note": (
             "This satisfies the textured-quad reference inverse-recovery slice. "
-            "It does not train a proxy or measure proxy held-out PSNR versus texture size."
+            "The scaling table is a linear texture-proxy baseline, not TorchNRP texture "
+            "conditioning."
         ),
     }
     out_path.write_text(json.dumps(report, indent=2) + "\n")

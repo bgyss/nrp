@@ -23,6 +23,44 @@ from nrp.metrics import psnr  # noqa: E402
 from nrp.toy_tracer import SPHERE_CENTER, trace_path_cache  # noqa: E402
 
 
+class WarmStartImageProxy:
+    """Tiny image-space proxy baseline for E2 warm-start recovery measurements.
+
+    It is intentionally simpler than TorchNRP: one RGB value per pixel, initialized
+    from the previous frame and fine-tuned by gradient descent against the spliced
+    cache's GATHERLIGHT target. This measures whether incremental cache targets can
+    quickly repair a stale proxy, without claiming neural transport generalization.
+    """
+
+    def __init__(self, image: np.ndarray):
+        self.image = np.asarray(image, dtype=np.float64).copy()
+
+    def predict(self) -> np.ndarray:
+        return self.image.copy()
+
+    def fine_tune(
+        self,
+        target: np.ndarray,
+        mask: np.ndarray,
+        *,
+        steps: int = 8,
+        lr: float = 0.5,
+    ) -> list[float]:
+        if target.shape != self.image.shape:
+            raise ValueError(f"target shape {target.shape} does not match {self.image.shape}")
+        mask = np.asarray(mask, dtype=bool)
+        if mask.shape != self.image.shape[:2]:
+            raise ValueError(f"mask must be {self.image.shape[:2]}, got {mask.shape}")
+        losses = []
+        for _ in range(steps):
+            diff = self.image[mask] - target[mask]
+            losses.append(float(np.mean(diff * diff)) if diff.size else 0.0)
+            self.image[mask] -= lr * diff
+        diff = self.image[mask] - target[mask]
+        losses.append(float(np.mean(diff * diff)) if diff.size else 0.0)
+        return losses
+
+
 def psnr_json(a: np.ndarray, b: np.ndarray) -> float | str:
     value = psnr(a, b)
     return "inf" if math.isinf(value) else float(value)
@@ -35,6 +73,8 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=32)
     parser.add_argument("--spp", type=int, default=8)
     parser.add_argument("--frames", type=int, default=10)
+    parser.add_argument("--proxy-steps", type=int, default=8)
+    parser.add_argument("--proxy-lr", type=float, default=0.5)
     args = parser.parse_args()
 
     out_path = Path(args.out)
@@ -55,6 +95,7 @@ def main() -> None:
     )
     base_trace_s = time.perf_counter() - t0
     stale_image = gather_light(base, light)
+    proxy = WarmStartImageProxy(stale_image)
 
     frames = []
     for frame, dx in enumerate(offsets):
@@ -77,6 +118,16 @@ def main() -> None:
 
         full_image = gather_light(full, light)
         spliced_image = gather_light(spliced, light)
+        proxy_before = proxy.predict()
+        t0 = time.perf_counter()
+        proxy_losses = proxy.fine_tune(
+            spliced_image,
+            mask,
+            steps=args.proxy_steps,
+            lr=args.proxy_lr,
+        )
+        proxy_finetune_s = time.perf_counter() - t0
+        proxy_after = proxy.predict()
         outside = ~mask
         outside_max_diff = 0.0
         if outside.any():
@@ -95,6 +146,11 @@ def main() -> None:
                 "stale_psnr_vs_full": psnr_json(stale_image, full_image),
                 "incremental_psnr_vs_full": psnr_json(spliced_image, full_image),
                 "incremental_max_abs_vs_full": float(np.max(np.abs(spliced_image - full_image))),
+                "proxy_before_psnr_vs_full": psnr_json(proxy_before, full_image),
+                "proxy_after_psnr_vs_full": psnr_json(proxy_after, full_image),
+                "proxy_finetune_ms": proxy_finetune_s * 1000.0,
+                "proxy_finetune_loss_first": proxy_losses[0],
+                "proxy_finetune_loss_last": proxy_losses[-1],
                 "spliced_cache_valid": True,
             }
         )
@@ -102,24 +158,47 @@ def main() -> None:
     mean_full_ms = float(np.mean([f["full_trace_ms"] for f in frames]))
     mean_splice_ms = float(np.mean([f["incremental_splice_ms"] for f in frames]))
     mean_invalid_fraction = float(np.mean([f["invalid_fraction"] for f in frames]))
+    mean_proxy_ms = float(np.mean([f["proxy_finetune_ms"] for f in frames]))
+    finite_proxy_psnr = [
+        f["proxy_after_psnr_vs_full"]
+        for f in frames
+        if isinstance(f["proxy_after_psnr_vs_full"], float)
+    ]
     report = {
         "extension": "E2",
-        "scope": "one-bounce primary-visibility cache invalidation and segment splicing",
+        "scope": (
+            "one-bounce primary-visibility cache invalidation, segment splicing, "
+            "and warm-start image-proxy repair"
+        ),
         "resolution": [args.width, args.height],
         "spp": args.spp,
         "frames": args.frames,
         "base_trace_ms": base_trace_s * 1000.0,
         "mean_full_trace_ms": mean_full_ms,
         "mean_incremental_splice_ms": mean_splice_ms,
+        "mean_proxy_finetune_ms": mean_proxy_ms,
         "mean_invalid_fraction": mean_invalid_fraction,
         "mean_frame_budget_fraction_16ms_full_trace": mean_full_ms / 16.0,
         "mean_frame_budget_fraction_16ms_splice_only": mean_splice_ms / 16.0,
+        "mean_frame_budget_fraction_16ms_splice_plus_proxy": (mean_splice_ms + mean_proxy_ms)
+        / 16.0,
+        "proxy_finetune": {
+            "kind": "warm-start image-space proxy baseline",
+            "steps": args.proxy_steps,
+            "lr": args.proxy_lr,
+            "mean_after_psnr_vs_full": float(np.mean(finite_proxy_psnr))
+            if finite_proxy_psnr
+            else "inf",
+            "min_after_psnr_vs_full": float(np.min(finite_proxy_psnr))
+            if finite_proxy_psnr
+            else "inf",
+        },
         "frames_detail": frames,
         "limitations": [
             "This is a one-bounce primary-visibility slice; secondary-bounce "
             "invalidation is not proven.",
-            "No proxy fine-tuning is performed, so regime (b) quality is cache-splice "
-            "quality only.",
+            "The proxy fine-tune is an image-space warm-start baseline, not TorchNRP "
+            "weight fine-tuning.",
         ],
     }
     out_path.write_text(json.dumps(report, indent=2) + "\n")

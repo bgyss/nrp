@@ -63,9 +63,9 @@ determine the light. Extension work now adds reference-GATHERLIGHT support for
 `nrp/gather_light.py`), including constant-texture and constant-environment reduction
 tests plus closed-form/reference inverse recovery paths (`nrp/environment_fit.py`,
 `nrp/texture_fit.py`). These richer lights are not yet wired into the torch proxy
-architecture; texture-embedding conditioning and the parameter-count proxy-PSNR
-scaling study remain open, so the paper-faithful trained light types remain sphere
-and quad.
+architecture; `out/textured-quad-fit/report.json` now includes a linear held-out
+texture-proxy scaling baseline, but learned texture-embedding conditioning remains
+open, so the paper-faithful trained light types remain sphere and quad.
 
 ## §4 Implementation
 
@@ -242,9 +242,9 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
 - **Extension E9 quality tiers — partially implemented:** `nrp.torch_backend.relight`
   exposes `--quality preview|draft|final`, output metadata sidecars, and cached
   residual correction for approved light configs; `out/quality/report.json` includes
-  toy-scale PSNR/SSIM/FLIP tier metrics. This is pipeline plumbing around the paper's
-  proxy/GATHERLIGHT split, not a paper mechanism, and the full final-frame trust study
-  remains open.
+  toy-scale PSNR/SSIM/FLIP tier metrics plus a toy residual-validity trust verdict.
+  This is pipeline plumbing around the paper's proxy/GATHERLIGHT split, not a paper
+  mechanism, and the production final-frame trust study remains open.
 - **Extension E8 production controls — gather-time fallback and narrow conditioned proxies implemented:**
   `gather_light_controlled` can exclude first-hit-owned pixels for light linking and
   apply a linear-distance artist attenuation curve to sphere-light gathers. This

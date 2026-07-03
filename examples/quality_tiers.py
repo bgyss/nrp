@@ -47,6 +47,47 @@ def quality_metrics(image: np.ndarray, reference: np.ndarray) -> dict:
     }
 
 
+def supervisor_trust_verdict(
+    residual_identity_max_abs: float,
+    residual_decay: list[dict],
+    identity_atol: float = 1e-12,
+    psnr_threshold_db: float = 25.0,
+) -> dict:
+    """Toy-scale trust verdict for the E9 approval-frame ladder.
+
+    The approved frame is trustworthy only if cached residual identity holds. Movement
+    away from that approval point is trustworthy up to the largest measured dx whose
+    residual-corrected image remains above the configured PSNR threshold.
+    """
+    approval_exact = residual_identity_max_abs <= identity_atol
+    trusted_dx = 0.0 if approval_exact else None
+    first_failure = None
+    for row in sorted(residual_decay, key=lambda item: float(item["center_dx"])):
+        value = row["psnr_db_vs_cached_gather"]
+        psnr_db = math.inf if value == "inf" else float(value)
+        dx = float(row["center_dx"])
+        if approval_exact and psnr_db >= psnr_threshold_db:
+            trusted_dx = dx
+        elif first_failure is None:
+            first_failure = {"center_dx": dx, "psnr_db_vs_cached_gather": value}
+    return {
+        "scope": "toy-scale cached-residual trust verdict",
+        "approved_config_exact": bool(approval_exact),
+        "identity_atol": identity_atol,
+        "movement_psnr_threshold_db": psnr_threshold_db,
+        "trusted_center_dx_radius": trusted_dx,
+        "first_untrusted_sample": first_failure,
+        "verdict": (
+            "trust approved frame only; re-bake residual after any measured light move"
+            if trusted_dx == 0.0
+            else "trust within measured residual radius"
+            if trusted_dx is not None
+            else "do not trust approval frame"
+        ),
+        "production_claim": False,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="out/quality/report.json")
@@ -119,14 +160,16 @@ def main() -> None:
             }
         )
 
+    residual_identity = float(np.max(np.abs(residual_image - draft)))
     report = {
         "resolution": [args.width, args.height],
         "cache_spp": args.spp,
         "final_cache_spp": args.final_spp,
         "tiers": tiers,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP",
-        "residual_identity_max_abs_diff": float(np.max(np.abs(residual_image - draft))),
+        "residual_identity_max_abs_diff": residual_identity,
         "residual_decay": decay,
+        "supervisor_trust_verdict": supervisor_trust_verdict(residual_identity, decay),
         "outputs": {
             "preview": "preview.npy",
             "draft": "draft.npy",

@@ -91,7 +91,8 @@ Measured support:
   time-conditioned proxy.
 - E9 in `out/quality/report.json` proves the approval-frame residual identity: proxy
   plus cached residual matches cached GATHERLIGHT at the approved config to max
-  absolute error 5.6e-17.
+  absolute error 5.6e-17. Its toy trust verdict is to trust only the approved frame
+  and re-bake after any measured light move because dx=0.05 drops to 24.67 dB.
 - E5 in `out/out-of-core/report.json` shows streamed fixed-light target construction
   matches monolithic targets to max error 3.33e-16 while loading only 11.1% of cache
   segments and 11.1% of resident segment bytes at once, a 9.0x resident segment-memory
@@ -101,7 +102,7 @@ Blocking evidence:
 
 - E1 animated camera has only an image-space interpolation baseline; the requested
   single neural proxy conditioned on time/camera inputs is not implemented.
-- E9 has no high-spp production-scale cache and no supervisor trust verdict.
+- E9 has no high-spp production-scale cache and no production supervisor trust verdict.
 - E5 has no 512x512 / 128 spp Mitsuba run and no production-scale peak RSS comparison.
 
 Engineering versus structural:
@@ -128,7 +129,9 @@ Measured support:
   richer-light inverse slice is well-conditioned.
 - E4 textured-quad fitting in `out/textured-quad-fit/report.json` recovers 2x2, 4x4,
   and 8x8 RGB textures with <= 2.34e-16 relative texture error on full-rank reference
-  fixtures.
+  fixtures. Its equal-observation linear proxy-scaling baseline shows 2x2/4x4 remain
+  full-rank at 48 observations while 8x8 is underdetermined and drops to 10.66 dB
+  held-out PSNR.
 - E8 in `out/production-controls/report.json` proves exact gather-time light linking
   algebra for the toy layer partition, measures attenuation controls, keeps one
   precomputed binary linking toggle live through a table proxy, and keeps one
@@ -136,8 +139,8 @@ Measured support:
 
 Blocking evidence:
 
-- E4 richer-light proxy conditioning and held-out proxy PSNR scaling by texture size
-  are still missing.
+- E4 richer-light TorchNRP conditioning on learned texture embeddings is still
+  missing.
 - E7 stylized target realization remains physically limited: the report is useful
   precisely because it exposes the gap between an arbitrary image target and a
   physically realizable lighting setup. E7 still has no high-quality proxy run and no
@@ -165,7 +168,7 @@ Engineering versus structural:
 - Finish E1 animated camera/time-conditioned proxy validation.
 - Finish E2 multi-bounce invalidation and warm-started proxy fine-tuning.
 - Finish E3 occluder failure reproduction with at least 3 dB guided-proxy improvement.
-- Finish E4 richer-light proxy conditioning and proxy PSNR scaling by texture size.
+- Finish E4 richer-light TorchNRP conditioning on learned texture embeddings.
 - Finish E5 streamed optimizer training plus 512x512 / 128 spp Mitsuba report.
 - Finish E6 WebGPU 128/256/512 exported-runtime matrix, real MPS timings on an
   MPS-enabled PyTorch build, and GUI slider.
