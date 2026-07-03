@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from nrp.gather_light import gather_lights  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
-from nrp.metrics import psnr  # noqa: E402
+from nrp.metrics import flip, psnr, ssim, tonemap_srgb  # noqa: E402
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.relight import render_quality_tier, write_image_with_metadata  # noqa: E402
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
@@ -35,6 +35,16 @@ def timed(fn):
 
 def finite_or_inf(value: float) -> float | str:
     return value if math.isfinite(value) else "inf"
+
+
+def quality_metrics(image: np.ndarray, reference: np.ndarray) -> dict:
+    image_ldr = tonemap_srgb(image)
+    reference_ldr = tonemap_srgb(reference)
+    return {
+        "psnr_vs_final_db": finite_or_inf(psnr(image, reference)),
+        "ssim_vs_final": ssim(image_ldr, reference_ldr, data_range=1.0),
+        "flip_vs_final": flip(image_ldr, reference_ldr),
+    }
 
 
 def main() -> None:
@@ -58,6 +68,7 @@ def main() -> None:
         encoding={"levels": 2, "features_per_level": 2, "finest_resolution": args.width},
     )
     approved = [SphereLight(center=[0.0, 0.6, 0.0], radius=0.2, rgb=[1.2, 1.0, 0.8])]
+    final_reference = gather_lights(final_cache, approved)
 
     tiers = {}
     for quality in ("preview", "draft", "final"):
@@ -71,7 +82,7 @@ def main() -> None:
         tiers[quality] = {
             "ms": ms,
             "metadata": metadata,
-            "psnr_vs_final_db": finite_or_inf(psnr(image, gather_lights(final_cache, approved))),
+            **quality_metrics(image, final_reference),
         }
 
     residual_image, residual_meta = render_quality_tier(
@@ -113,6 +124,7 @@ def main() -> None:
         "cache_spp": args.spp,
         "final_cache_spp": args.final_spp,
         "tiers": tiers,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP",
         "residual_identity_max_abs_diff": float(np.max(np.abs(residual_image - draft))),
         "residual_decay": decay,
         "outputs": {

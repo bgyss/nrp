@@ -15,6 +15,7 @@ import argparse
 import json
 import math
 import os
+import resource
 import shutil
 import sys
 import time
@@ -41,6 +42,27 @@ def directory_bytes(path: Path) -> int:
     return total
 
 
+def cache_segment_bytes(cache: PathCache) -> int:
+    """Bytes occupied by segment arrays in a resident monolithic cache."""
+    return int(
+        cache.seg_pixel.nbytes
+        + cache.seg_origin.nbytes
+        + cache.seg_dir.nbytes
+        + cache.seg_tmax.nbytes
+        + cache.seg_throughput.nbytes
+    )
+
+
+def current_rss_bytes() -> int:
+    """Best-effort current process resident set size."""
+    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    # macOS reports bytes, Linux reports KiB. Keep this deterministic enough for
+    # coarse reporting without platform-specific dependencies.
+    if sys.platform.startswith("linux"):
+        rss *= 1024
+    return rss
+
+
 def stream_shard_targets(shard_dir: Path, lights: list[SphereLight]) -> tuple[np.ndarray, dict]:
     """Stream tile shards and build per-pixel mean GATHERLIGHT targets for fixed lights.
 
@@ -55,10 +77,15 @@ def stream_shard_targets(shard_dir: Path, lights: list[SphereLight]) -> tuple[np
     sums = np.zeros((height * width, 3), dtype=np.float64)
     n_paths = np.zeros(height * width, dtype=np.int64)
     peak_segments = 0
+    peak_segment_bytes = 0
+    peak_shard_file_bytes = 0
     visited_pixels = 0
+    rss_before = current_rss_bytes()
     t0 = time.perf_counter()
     for shard in manifest["shards"]:
-        z = np.load(shard_dir / shard["path"])
+        shard_path = shard_dir / shard["path"]
+        peak_shard_file_bytes = max(peak_shard_file_bytes, shard_path.stat().st_size)
+        z = np.load(shard_path)
         y0, y1 = int(z["y0"]), int(z["y1"])
         x0, x1 = int(z["x0"]), int(z["x1"])
         tile_paths = z["n_paths"].reshape(-1)
@@ -73,6 +100,16 @@ def stream_shard_targets(shard_dir: Path, lights: list[SphereLight]) -> tuple[np
         seg_tmax = z["seg_tmax"].astype(np.float64)
         seg_throughput = z["seg_throughput"].astype(np.float64)
         peak_segments = max(peak_segments, int(seg_pixel.size))
+        peak_segment_bytes = max(
+            peak_segment_bytes,
+            int(
+                seg_pixel.nbytes
+                + seg_origin.nbytes
+                + seg_dir.nbytes
+                + seg_tmax.nbytes
+                + seg_throughput.nbytes
+            ),
+        )
         for light in lights:
             hits = segment_hits_sphere(seg_origin, seg_dir, seg_tmax, light.center, light.radius)
             if hits.any():
@@ -84,6 +121,10 @@ def stream_shard_targets(shard_dir: Path, lights: list[SphereLight]) -> tuple[np
         "stream_seconds": elapsed,
         "stream_pixels_visited": visited_pixels,
         "stream_peak_segments_loaded": peak_segments,
+        "stream_peak_segment_bytes_loaded": peak_segment_bytes,
+        "stream_peak_shard_file_bytes": peak_shard_file_bytes,
+        "stream_process_rss_before_bytes": rss_before,
+        "stream_process_rss_after_bytes": current_rss_bytes(),
     }
 
 
@@ -146,6 +187,7 @@ def main() -> None:
         "tile_size": args.tile_size,
         "tile_pixels": args.tile_pixels,
         "monolithic_cache_bytes": mono_path.stat().st_size,
+        "monolithic_segment_bytes_resident": cache_segment_bytes(cache),
         "sharded_cache_bytes": directory_bytes(shard_dir),
         "save_sharded_seconds": save_sharded_s,
         "load_sharded_seconds": load_sharded_s,
@@ -168,6 +210,10 @@ def main() -> None:
             **stream_stats,
             "stream_peak_segment_fraction": stream_stats["stream_peak_segments_loaded"]
             / max(cache.segment_count, 1),
+            "stream_peak_segment_byte_fraction": stream_stats["stream_peak_segment_bytes_loaded"]
+            / max(cache_segment_bytes(cache), 1),
+            "estimated_resident_segment_memory_ratio": cache_segment_bytes(cache)
+            / max(stream_stats["stream_peak_segment_bytes_loaded"], 1),
             "max_abs_diff_vs_monolithic": float(np.max(np.abs(streamed_targets - mono_targets))),
             "psnr_db_vs_monolithic": psnr(streamed_targets, mono_targets)
             if math.isfinite(psnr(streamed_targets, mono_targets))

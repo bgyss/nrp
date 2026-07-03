@@ -7,6 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
+from examples.engine_runtime import runtime_resolution_sweep, synthetic_runtime_cache  # noqa: E402
 from nrp.lights import QuadLight, SphereLight  # noqa: E402
 from nrp.torch_backend.engine_runtime import (  # noqa: E402
     export_artifact,
@@ -65,6 +66,37 @@ class EngineRuntimeTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_synthetic_runtime_cache_is_valid_and_segment_free(self):
+        cache = synthetic_runtime_cache(9, 7)
+        self.assertEqual(cache.segment_count, 0)
+        self.assertEqual(cache.n_paths.shape, (63,))
+        cache.validate()
+
+    def test_resolution_sweep_records_device_availability(self):
+        model = TorchNRP(
+            light_type="sphere",
+            hidden_width=4,
+            hidden_layers=1,
+            encoding={"levels": 1, "finest_resolution": 4},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = str(Path(tmp) / "runtime.pt")
+            export_artifact(model, artifact)
+            runtime = load_runtime(artifact)
+            rows = runtime_resolution_sweep(
+                runtime,
+                [SphereLight(center=[0.0, 0.55, 0.0], radius=0.2, rgb=[1.0, 0.8, 0.6])],
+                frames=1,
+                devices=("cpu", "not_real"),
+            )
+        self.assertEqual(len(rows), 6)
+        cpu_rows = [row for row in rows if row["device"] == "cpu"]
+        missing_rows = [row for row in rows if row["device"] == "not_real"]
+        self.assertTrue(all(row["available"] for row in cpu_rows))
+        self.assertTrue(all(row["fps"] is not None for row in cpu_rows))
+        self.assertTrue(all(not row["available"] for row in missing_rows))
+        self.assertTrue(all(row["ms_per_frame"] is None for row in missing_rows))
 
 
 if __name__ == "__main__":

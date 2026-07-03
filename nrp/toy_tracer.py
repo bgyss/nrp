@@ -51,7 +51,10 @@ LAYERS = ("sphere", "box")
 
 
 def _camera_rays(
-    width: int, height: int, jitter: np.ndarray | None
+    width: int,
+    height: int,
+    jitter: np.ndarray | None,
+    camera_pos: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Pinhole rays looking down +z. jitter is (N,2) in [0,1) or None for pixel centers."""
     ys, xs = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
@@ -66,7 +69,8 @@ def _camera_rays(
     v = -((py + jy) / height * 2.0 - 1.0) * half * (height / width)
     dirs = np.stack([u, v, np.ones_like(u)], axis=1)
     dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
-    origins = np.broadcast_to(CAM_POS, dirs.shape).copy()
+    cam_pos = CAM_POS if camera_pos is None else np.asarray(camera_pos, dtype=np.float64)
+    origins = np.broadcast_to(cam_pos, dirs.shape).copy()
     return origins, dirs
 
 
@@ -240,6 +244,7 @@ def trace_path_cache(
     sphere_center: np.ndarray | None = None,
     light_region: dict | None = None,
     guide_probability: float = 0.0,
+    camera_pos: np.ndarray | None = None,
 ) -> PathCache:
     """Trace `spp` light-agnostic paths per pixel and return the full PathCache.
 
@@ -270,7 +275,7 @@ def trace_path_cache(
 
     for _ in range(spp):
         jitter = rng.random((n_pixels, 2))
-        origins, dirs = _camera_rays(width, height, jitter)
+        origins, dirs = _camera_rays(width, height, jitter, camera_pos)
         throughput = np.ones((n_pixels, 3))
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
         keep = np.ones(n_pixels, dtype=bool)
@@ -307,7 +312,7 @@ def trace_path_cache(
     # Auxiliary buffers from deterministic pixel-center primary rays. These stay
     # surface-only even with a medium: albedo/depth/normal are G-buffer features of
     # the first *surface* hit (a scatter vertex has no meaningful normal or albedo).
-    origins0, dirs0 = _camera_rays(width, height, None)
+    origins0, dirs0 = _camera_rays(width, height, None, camera_pos)
     t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0, sphere_center)
     position0 = origins0 + dirs0 * t0[:, None]
 
@@ -353,6 +358,7 @@ def render_reference(
     medium: dict | None = None,
     light_region: dict | None = None,
     guide_probability: float = 0.0,
+    camera_pos: np.ndarray | None = None,
 ) -> np.ndarray:
     """Independent rendered reference: trace fresh paths and evaluate the emissive
     sphere inline (equivalent to GATHERLIGHT over an independent path set)."""
@@ -365,6 +371,7 @@ def render_reference(
         medium=medium,
         light_region=light_region,
         guide_probability=guide_probability,
+        camera_pos=camera_pos,
     )
     return gather_light(cache, light)
 
@@ -408,6 +415,13 @@ def main() -> None:
         default=0.0,
         help="probability of sampling the guide-region cone at eligible surface bounces",
     )
+    parser.add_argument(
+        "--camera-pos",
+        nargs=3,
+        type=float,
+        metavar=("X", "Y", "Z"),
+        help="override the toy pinhole camera origin inside the unit box",
+    )
     args = parser.parse_args()
 
     medium = None
@@ -427,6 +441,7 @@ def main() -> None:
         layer=args.layer,
         light_region=light_region,
         guide_probability=args.guide_probability,
+        camera_pos=np.asarray(args.camera_pos, dtype=np.float64) if args.camera_pos else None,
     )
     cache.save(args.out)
     layer_note = f" (layer: {args.layer})" if args.layer else ""

@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from examples.out_of_core import stream_shard_targets  # noqa: E402
+from examples.out_of_core import cache_segment_bytes, stream_shard_targets  # noqa: E402
 from nrp.gather_light import gather_light  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
@@ -27,6 +27,9 @@ class OutOfCoreTests(unittest.TestCase):
         mono = sum(gather_light(cache, light) for light in lights) / len(lights)
         np.testing.assert_allclose(streamed, mono, atol=1e-12)
         self.assertLess(stats["stream_peak_segments_loaded"], cache.segment_count)
+        self.assertLess(stats["stream_peak_segment_bytes_loaded"], cache_segment_bytes(cache))
+        self.assertGreater(stats["stream_peak_shard_file_bytes"], 0)
+        self.assertGreater(stats["stream_process_rss_after_bytes"], 0)
 
 
 if __name__ == "__main__":

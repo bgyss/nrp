@@ -47,8 +47,8 @@ edits, call the artifact once per light and sum the emission-scaled outputs.
 ## Current Limits
 
 - The committed runtime backend is TorchScript on CPU by default. MPS can be selected
-  where the local PyTorch build supports it, but the current report only claims CPU
-  measurements.
+  where the local PyTorch build supports it; `out/engine-runtime/report.json` includes
+  CPU and MPS rows, with MPS explicitly marked unavailable when the backend is absent.
 - The exported artifact covers sphere and quad TorchNRP models. Textured and
   environment lights currently have reference GATHERLIGHT support only.
 - The headless viewer loop in `mise run viewer` simulates slider positions and writes

@@ -75,6 +75,10 @@ run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt -
 description = "Render an animated-light frame sequence from one resident torch proxy"
 run = "uv run python -m nrp.torch_backend.animate --model out/toy-torch/model.pt --cache out/toy/path_cache.npz --keyframes examples/animated_lights.json --out-dir out/animate --measure-reference"
 
+[tasks.time-camera]
+description = "E1 animated-camera cache-keyframe interpolation baseline"
+run = "uv run python examples/time_conditioned_camera.py --out out/time-camera/report.json"
+
 [tasks.out-of-core]
 description = "E5 foundation: sharded cache round-trip and tiled inference report"
 run = "uv run python examples/out_of_core.py --out out/out-of-core/report.json"
@@ -91,6 +95,10 @@ run = "uv run python examples/production_controls.py --out out/production-contro
 description = "E4 environment SH inverse recovery report"
 run = "uv run python examples/environment_fit.py --out out/environment-fit/report.json"
 
+[tasks.textured-quad-fit]
+description = "E4 textured-quad inverse recovery and texture-resolution report"
+run = "uv run python examples/textured_quad_fit.py --out out/textured-quad-fit/report.json"
+
 [tasks.dynamic-geometry]
 description = "E2 one-bounce dynamic-geometry invalidation and cache-splice report"
 run = "uv run python examples/dynamic_geometry.py --out out/dynamic-geometry/report.json"
@@ -102,6 +110,10 @@ run = "uv run python examples/light_aware_sampling.py --out out/light-aware-samp
 [tasks.light-aware-proxy-ab]
 description = "E3 toy standard-vs-guided proxy A/B report"
 run = "uv run python examples/light_aware_proxy_ab.py --out out/light-aware-proxy-ab/report.json"
+
+[tasks.pipeline-audit]
+description = "E10 audit: verify pipeline feasibility doc references existing out/ artifacts"
+run = "uv run python examples/audit_pipeline_claims.py --doc docs/pipeline-feasibility.md --out out/pipeline-feasibility/audit.json"
 
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"

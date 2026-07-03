@@ -61,10 +61,11 @@ frame is derived deterministically from the normal so (center, normal, w, h) ful
 determine the light. Extension work now adds reference-GATHERLIGHT support for
 `TexturedQuadLight` and degree-2 `EnvironmentLight` (`nrp/lights.py`,
 `nrp/gather_light.py`), including constant-texture and constant-environment reduction
-tests plus a closed-form SH inverse recovery path (`nrp/environment_fit.py`). These
-richer lights are not yet wired into the torch proxy architecture; textured quad
-inverse recovery and the parameter-count PSNR scaling study remain open, so the
-paper-faithful trained light types remain sphere and quad.
+tests plus closed-form/reference inverse recovery paths (`nrp/environment_fit.py`,
+`nrp/texture_fit.py`). These richer lights are not yet wired into the torch proxy
+architecture; texture-embedding conditioning and the parameter-count proxy-PSNR
+scaling study remain open, so the paper-faithful trained light types remain sphere
+and quad.
 
 ## §4 Implementation
 
@@ -215,6 +216,12 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   consistency; `nrp.torch_backend.relight_multiview` applies one light edit across
   all resident view proxies with no path-cache access (latency scales linearly in N;
   numbers in `docs/performance.md`).
+- **Extension E1 animated camera — baseline only**: the toy tracer now accepts a
+  camera-origin override, and `examples/time_conditioned_camera.py` (`mise run
+  time-camera`) traces K camera keyframe caches and evaluates image-space
+  interpolation on held-out intermediate cameras. This measures cache-size-vs-K and
+  provides a baseline for temporal camera interpolation; it is not the paper-style
+  single neural proxy conditioned on time/camera inputs requested by the extension.
 - **§6.1 per-layer compositing NRPs (Fig. 11) — implemented** (toy tracer):
   `nrp.toy_tracer --layer sphere|box` records only paths whose first hit is on the
   layer's geometry (full scene still traced, so the two layer caches partition the
@@ -234,24 +241,31 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   same path the paper uses.
 - **Extension E9 quality tiers — partially implemented:** `nrp.torch_backend.relight`
   exposes `--quality preview|draft|final`, output metadata sidecars, and cached
-  residual correction for approved light configs. This is pipeline plumbing around
-  the paper's proxy/GATHERLIGHT split, not a paper mechanism, and the full final-frame
-  trust study remains open.
-- **Extension E8 production controls — gather-time fallback implemented:**
+  residual correction for approved light configs; `out/quality/report.json` includes
+  toy-scale PSNR/SSIM/FLIP tier metrics. This is pipeline plumbing around the paper's
+  proxy/GATHERLIGHT split, not a paper mechanism, and the full final-frame trust study
+  remains open.
+- **Extension E8 production controls — gather-time fallback and narrow conditioned proxies implemented:**
   `gather_light_controlled` can exclude first-hit-owned pixels for light linking and
   apply a linear-distance artist attenuation curve to sphere-light gathers. This
-  demonstrates that some non-physical controls can be evaluated from the cache, but
-  the live proxy-conditioned version remains open.
+  demonstrates that some non-physical controls can be evaluated from the cache. A
+  tiny binary table proxy keeps one linking toggle live at proxy speed, and a learned
+  linear image proxy keeps a fixed-family continuous attenuation control live for a
+  held-out setting. General learned proxy conditioning for arbitrary masks and
+  arbitrary attenuation curves remains open.
 - **Extension E6 exported runtime — partially implemented:** `nrp.torch_backend.engine_runtime`
   exports sphere and quad `TorchNRP` models to TorchScript artifacts and runs parity-
   tested inference through `torch.jit.load`; `mise run viewer` writes headless slider
-  frame dumps. This covers the exported-artifact path, not the full Metal/WebGPU or
-  GUI integration.
+  frame dumps and a CPU 128/256/512 full-frame inference sweep. This covers the
+  exported-artifact path, not the full Metal/WebGPU or GUI integration.
 - **Extension E7 image-space target loop — partially implemented:** `mise run
   generative-loop` creates a synthesized scribble fixture and a stylized target,
   exercises objective/protect masks through `optimize_lights`, and reports
-  proxy-space plus physical GATHERLIGHT errors. The toy stylized target is explicitly
-  reported as not exactly realizable by one sphere light.
+  proxy-space plus physical GATHERLIGHT errors. `out/generative/provenance.json`
+  records the deterministic fixture recipes and SHA-256 hashes for the generated
+  toy targets. The toy stylized target is explicitly reported as not exactly
+  realizable by one sphere light; a true hand-authored or external generative image
+  fixture remains open.
 
 ## §7 Limitations — shared
 
