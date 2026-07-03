@@ -70,7 +70,9 @@ def _camera_rays(
     return origins, dirs
 
 
-def _intersect_scene(origins: np.ndarray, dirs: np.ndarray):
+def _intersect_scene(
+    origins: np.ndarray, dirs: np.ndarray, sphere_center: np.ndarray | None = None
+):
     """Nearest hit for rays strictly inside the closed box.
 
     Returns (t, normal, albedo, is_sphere) — every ray hits something (the box is
@@ -95,7 +97,8 @@ def _intersect_scene(origins: np.ndarray, dirs: np.ndarray):
                 albedo[valid] = WALL_ALBEDOS[(axis, side)]
 
     # Sphere.
-    oc = origins - SPHERE_CENTER
+    center = SPHERE_CENTER if sphere_center is None else np.asarray(sphere_center, dtype=np.float64)
+    oc = origins - center
     b = np.einsum("ij,ij->i", oc, dirs)
     c = np.einsum("ij,ij->i", oc, oc) - SPHERE_RADIUS**2
     disc = b * b - c
@@ -108,7 +111,7 @@ def _intersect_scene(origins: np.ndarray, dirs: np.ndarray):
     if hit_s.any():
         t_best = np.where(hit_s, t_s, t_best)
         p = origins[hit_s] + dirs[hit_s] * t_s[hit_s, None]
-        nrm = p - SPHERE_CENTER
+        nrm = p - center
         nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
         # Flip toward the incoming ray for interior hits (t1 root).
         flip = np.einsum("ij,ij->i", nrm, dirs[hit_s]) > 0.0
@@ -152,6 +155,78 @@ def _cosine_sample(normal: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return local[:, 0:1] * tangent + local[:, 1:2] * bitangent + local[:, 2:3] * normal
 
 
+def _cosine_pdf(normal: np.ndarray, dirs: np.ndarray) -> np.ndarray:
+    cos = np.maximum(0.0, np.einsum("ij,ij->i", normal, dirs))
+    return cos / np.pi
+
+
+def _sample_cone(axis: np.ndarray, cos_theta_max: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Uniform directions inside a cone around unit `axis`."""
+    n = axis.shape[0]
+    u1 = rng.random(n)
+    u2 = rng.random(n)
+    cos_theta = 1.0 - u1 * (1.0 - cos_theta_max)
+    sin_theta = np.sqrt(np.maximum(0.0, 1.0 - cos_theta * cos_theta))
+    phi = 2.0 * np.pi * u2
+    local = np.stack([sin_theta * np.cos(phi), sin_theta * np.sin(phi), cos_theta], axis=1)
+    helper = np.where(np.abs(axis[:, 0:1]) < 0.9, [[1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]])
+    tangent = np.cross(helper, axis)
+    tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
+    bitangent = np.cross(axis, tangent)
+    dirs = local[:, 0:1] * tangent + local[:, 1:2] * bitangent + local[:, 2:3] * axis
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    return dirs
+
+
+def _guided_surface_sample(
+    points: np.ndarray,
+    normal: np.ndarray,
+    albedo: np.ndarray,
+    rng: np.random.Generator,
+    light_region: dict | None,
+    guide_probability: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample a surface bounce with a cosine/cone mixture and MIS-style weights.
+
+    The guide distribution is a uniform solid-angle cone toward a spherical region.
+    It is only used when that cone lies fully above the surface hemisphere; otherwise
+    the existing cosine estimator is used unchanged for that ray.
+    """
+    if light_region is None or guide_probability <= 0.0:
+        return _cosine_sample(normal, rng), albedo
+    if light_region.get("type", "sphere") != "sphere":
+        raise ValueError("light_region currently supports only type 'sphere'")
+
+    p = float(np.clip(guide_probability, 0.0, 1.0))
+    center = np.asarray(light_region["center"], dtype=np.float64)
+    radius = float(light_region["radius"])
+    if radius <= 0.0:
+        raise ValueError("light_region radius must be positive")
+
+    to_center = center[None, :] - points
+    dist = np.linalg.norm(to_center, axis=1)
+    axis = to_center / np.maximum(dist[:, None], 1e-12)
+    sin_theta_max = np.clip(radius / np.maximum(dist, radius), 0.0, 1.0)
+    cos_theta_max = np.sqrt(np.maximum(0.0, 1.0 - sin_theta_max * sin_theta_max))
+    axis_cos = np.einsum("ij,ij->i", axis, normal)
+    cone_in_hemisphere = axis_cos > sin_theta_max
+    use_guide = cone_in_hemisphere & (rng.random(points.shape[0]) < p)
+
+    dirs = _cosine_sample(normal, rng)
+    if use_guide.any():
+        dirs[use_guide] = _sample_cone(axis[use_guide], cos_theta_max[use_guide], rng)
+
+    cos_pdf = _cosine_pdf(normal, dirs)
+    dir_axis_cos = np.einsum("ij,ij->i", dirs, axis)
+    in_cone = cone_in_hemisphere & (dir_axis_cos >= cos_theta_max - 1e-12)
+    cone_pdf = np.zeros(points.shape[0], dtype=np.float64)
+    solid_angle = 2.0 * np.pi * np.maximum(1.0 - cos_theta_max, 1e-12)
+    cone_pdf[in_cone] = 1.0 / solid_angle[in_cone]
+    mixture_pdf = (1.0 - p) * cos_pdf + p * cone_pdf
+    weight = np.divide(cos_pdf, mixture_pdf, out=np.ones_like(cos_pdf), where=mixture_pdf > 0.0)
+    return dirs, albedo * weight[:, None]
+
+
 def trace_path_cache(
     width: int,
     height: int,
@@ -160,6 +235,9 @@ def trace_path_cache(
     seed: int,
     medium: dict | None = None,
     layer: str | None = None,
+    sphere_center: np.ndarray | None = None,
+    light_region: dict | None = None,
+    guide_probability: float = 0.0,
 ) -> PathCache:
     """Trace `spp` light-agnostic paths per pixel and return the full PathCache.
 
@@ -195,7 +273,7 @@ def trace_path_cache(
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
         keep = np.ones(n_pixels, dtype=bool)
         for _bounce in range(max_bounces):
-            t, normal, albedo, is_sphere = _intersect_scene(origins, dirs)
+            t, normal, albedo, is_sphere = _intersect_scene(origins, dirs, sphere_center)
             if _bounce == 0 and layer is not None:
                 keep = is_sphere if layer == "sphere" else ~is_sphere
             if medium is not None:
@@ -219,14 +297,16 @@ def trace_path_cache(
                 )
             else:
                 origins = hit_p + normal * 1e-4
-                dirs = _cosine_sample(normal, rng)
-                throughput = throughput * albedo  # Lambertian: brdf*cos/pdf = albedo
+                dirs, weight = _guided_surface_sample(
+                    hit_p, normal, albedo, rng, light_region, guide_probability
+                )
+                throughput = throughput * weight  # Lambertian: brdf*cos/pdf under the sampler.
 
     # Auxiliary buffers from deterministic pixel-center primary rays. These stay
     # surface-only even with a medium: albedo/depth/normal are G-buffer features of
     # the first *surface* hit (a scatter vertex has no meaningful normal or albedo).
     origins0, dirs0 = _camera_rays(width, height, None)
-    t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0)
+    t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0, sphere_center)
     position0 = origins0 + dirs0 * t0[:, None]
 
     cache = PathCache(
@@ -269,10 +349,21 @@ def render_reference(
     seed: int,
     light: SphereLight,
     medium: dict | None = None,
+    light_region: dict | None = None,
+    guide_probability: float = 0.0,
 ) -> np.ndarray:
     """Independent rendered reference: trace fresh paths and evaluate the emissive
     sphere inline (equivalent to GATHERLIGHT over an independent path set)."""
-    cache = trace_path_cache(width, height, spp, max_bounces, seed, medium=medium)
+    cache = trace_path_cache(
+        width,
+        height,
+        spp,
+        max_bounces,
+        seed,
+        medium=medium,
+        light_region=light_region,
+        guide_probability=guide_probability,
+    )
     return gather_light(cache, light)
 
 
@@ -302,13 +393,38 @@ def main() -> None:
         default=0.8,
         help="single-scattering albedo sigma_s/sigma_t of the medium",
     )
+    parser.add_argument(
+        "--guide-region-sphere",
+        nargs=4,
+        type=float,
+        metavar=("X", "Y", "Z", "R"),
+        help="E3 light-aware sampling region: sphere center xyz and radius",
+    )
+    parser.add_argument(
+        "--guide-probability",
+        type=float,
+        default=0.0,
+        help="probability of sampling the guide-region cone at eligible surface bounces",
+    )
     args = parser.parse_args()
 
     medium = None
     if args.medium_sigma_t > 0.0:
         medium = {"sigma_t": args.medium_sigma_t, "albedo": args.medium_albedo}
+    light_region = None
+    if args.guide_region_sphere is not None:
+        x, y, z, r = args.guide_region_sphere
+        light_region = {"type": "sphere", "center": [x, y, z], "radius": r}
     cache = trace_path_cache(
-        args.width, args.height, args.spp, args.bounces, args.seed, medium=medium, layer=args.layer
+        args.width,
+        args.height,
+        args.spp,
+        args.bounces,
+        args.seed,
+        medium=medium,
+        layer=args.layer,
+        light_region=light_region,
+        guide_probability=args.guide_probability,
     )
     cache.save(args.out)
     layer_note = f" (layer: {args.layer})" if args.layer else ""

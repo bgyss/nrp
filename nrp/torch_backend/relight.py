@@ -94,7 +94,9 @@ def render_quality_tier(
         return gather_lights(cache, lights), metadata
     if quality == "final":
         source_cache = final_cache if final_cache is not None else cache
-        metadata["source"] = "gatherlight_final_cache" if final_cache is not None else "gatherlight_cached"
+        metadata["source"] = (
+            "gatherlight_final_cache" if final_cache is not None else "gatherlight_cached"
+        )
         metadata["final_cache_resolution"] = [source_cache.width, source_cache.height]
         return gather_lights(source_cache, lights), metadata
 

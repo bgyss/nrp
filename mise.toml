@@ -79,6 +79,34 @@ run = "uv run python -m nrp.torch_backend.animate --model out/toy-torch/model.pt
 description = "E5 foundation: sharded cache round-trip and tiled inference report"
 run = "uv run python examples/out_of_core.py --out out/out-of-core/report.json"
 
+[tasks.quality-tiers]
+description = "E9 quality ladder: preview/draft/final/residual report"
+run = "uv run python examples/quality_tiers.py --out out/quality/report.json"
+
+[tasks.production-controls]
+description = "E8 gather-time light linking and attenuation report"
+run = "uv run python examples/production_controls.py --out out/production-controls/report.json"
+
+[tasks.environment-fit]
+description = "E4 environment SH inverse recovery report"
+run = "uv run python examples/environment_fit.py --out out/environment-fit/report.json"
+
+[tasks.dynamic-geometry]
+description = "E2 one-bounce dynamic-geometry invalidation and cache-splice report"
+run = "uv run python examples/dynamic_geometry.py --out out/dynamic-geometry/report.json"
+
+[tasks.light-aware-sampling]
+description = "E3 light-aware toy-tracer sampling density and consistency report"
+run = "uv run python examples/light_aware_sampling.py --out out/light-aware-sampling/report.json"
+
+[tasks.viewer]
+description = "E6 exported-runtime headless viewer loop and parity report"
+run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"
+
+[tasks.generative-loop]
+description = "E7 scribble/generative target inverse-lighting report"
+run = "uv run python examples/generative_loop.py --out out/generative/report.json"
+
 [tasks.inverse-grid]
 description = "Table-3-style grid: N in {1,3,5} lights x pixel fractions, 5 runs/cell (Mitsuba cornell)"
 run = "uv run python examples/inverse_grid.py --model out/mitsuba-torch/model.pt --cache out/mitsuba/path_cache.npz --out out/inverse-grid/report.json"

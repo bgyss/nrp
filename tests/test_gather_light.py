@@ -11,7 +11,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from nrp.gather_light import (  # noqa: E402
+    GatherControls,
     gather_light,
+    gather_light_controlled,
     gather_throughput,
     undersampled_mask,
 )
@@ -159,6 +161,31 @@ class GatherLightTests(unittest.TestCase):
         image = gather_light(cache, EnvironmentLight(coeffs))
         np.testing.assert_allclose(image[0, 0], [0.3, 0.4, 0.3], atol=TOL)
         np.testing.assert_allclose(image[0, 1], 0.0, atol=TOL)
+
+    def test_gather_time_linking_excludes_owned_pixels(self):
+        pixel1 = dict(SEG, pixel=1, throughput=[0.1, 0.2, 0.3])
+        cache = make_cache([SEG, pixel1], n_paths=[1, 1])
+        mask = np.array([[True, False]])
+        linked = gather_light_controlled(
+            cache,
+            LIGHT_ON_X,
+            GatherControls(exclude_pixel_mask=mask),
+        )
+        np.testing.assert_allclose(linked[0, 0], 0.0, atol=TOL)
+        np.testing.assert_allclose(linked[0, 1], [0.1, 0.2, 0.3], atol=TOL)
+
+    def test_linear_distance_attenuation_fixture(self):
+        cache = make_cache([SEG], n_paths=[1, 1])
+        # Segment origin is distance 5 from LIGHT_ON_X. intercept 2 + slope -0.2
+        # gives a 1.0 multiplier, while intercept 1 + slope -0.1 gives 0.5.
+        half = gather_light_controlled(
+            cache,
+            LIGHT_ON_X,
+            GatherControls(
+                attenuation={"type": "linear_distance", "intercept": 1.0, "slope": -0.1}
+            ),
+        )
+        np.testing.assert_allclose(half[0, 0], np.array([0.5, 0.4, 0.3]) * 0.5, atol=TOL)
 
 
 if __name__ == "__main__":

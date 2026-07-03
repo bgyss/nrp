@@ -573,3 +573,168 @@ manifest overhead; that is expected and is not a production-scale memory claim. 
 slice proves exact cache reconstruction and chunked inference, but it does **not** yet
 satisfy E5's full completion criteria: there is no streamed training loader, no peak
 RSS comparison, and no 512² / 128 spp Mitsuba end-to-end run.
+
+## Dynamic geometry cache invalidation (extensions E2, one-bounce slice)
+
+`nrp.dynamic_geometry` identifies pixels whose first-hit G-buffer changes after the
+toy sphere moves and splices fresh segments for only those pixels into the old cache.
+This is the primary-visibility slice of E2: it proves cache-level invalidation and
+segment replacement for one-bounce paths, not secondary-bounce transport updates or
+proxy fine-tuning.
+
+Measured by `mise run dynamic-geometry` (report:
+`out/dynamic-geometry/report.json`) on a 32×32 / 8 spp / 10-frame toy sequence with
+the sphere moving +0.16 along x:
+
+| check | result |
+|---|---:|
+| mean full retrace | 4.26 ms/frame |
+| mean splice pass | 0.77 ms/frame |
+| mean invalid pixels | 29.7% |
+| mean retraced segment fraction | 29.7% |
+| full retrace share of 16 ms frame | 26.6% |
+| splice-only share of 16 ms frame | 4.8% |
+| outside invalidation mask max diff | 0.0 |
+| incremental splice vs full retrace | exact (`inf` PSNR, 0 max abs) |
+| stale cache PSNR at final frame | 10.76 dB |
+
+For this constrained one-bounce setup, keeping the cache alive costs a small fraction
+of a 16 ms game frame for the splice operation itself, and the stale-cache baseline
+falls quickly as the sphere moves. The important caveat is structural: once secondary
+bounces are enabled, unchanged first-hit pixels can still see changed indirect
+transport. The full E2 criterion therefore remains open until multi-bounce
+invalidation and warm-started proxy fine-tuning are implemented and measured.
+
+## Quality-tier relight ladder (extensions E9, CLI plumbing slice)
+
+`nrp.torch_backend.relight` now accepts `--quality preview|draft|final` and writes a
+metadata sidecar next to every `.npy` output. `preview` is the proxy output, `draft`
+is GATHERLIGHT from the current cache, and `final` is GATHERLIGHT from `--final-cache`
+when supplied. `--residual-light` applies the E9 cached residual
+`GATHERLIGHT(approved) - proxy(approved)` to preview output.
+
+Measured by `mise run quality-tiers` (report: `out/quality/report.json`) on a
+16×16 toy cache, using an 8-spp draft cache and a 32-spp final cache:
+
+| tier | source | ms | PSNR vs final |
+|---|---|---:|---:|
+| preview | proxy | 0.98 | -15.23 dB |
+| draft | cached GATHERLIGHT | 0.13 | 10.81 dB |
+| final | high-spp GATHERLIGHT | 0.69 | inf |
+
+The proxy in this report is intentionally untrained; the measurement is for the
+quality-tier plumbing, sidecar metadata, and residual identity rather than visual
+quality. At the approved light config, proxy plus cached residual matches cached
+GATHERLIGHT to max absolute error **5.6e-17**. Moving the light by dx =
+{0.05, 0.10, 0.20} drops residual-corrected PSNR vs cached GATHERLIGHT to
+{24.66, 23.72, 20.38} dB, which is the expected residual-validity decay. This does
+**not** yet satisfy E9's full final-frame study: no SSIM/FLIP tier table, no fresh
+high-spp production-scale cache, and no supervisor-trust verdict.
+
+## Gather-time production controls (extensions E8, cache fallback slice)
+
+`gather_light_controlled` adds post-hoc controls at GATHERLIGHT time: per-pixel
+first-hit exclusion for light linking, and a simple linear-distance artist
+attenuation curve for sphere lights. This is the cache fallback path E8 asks us to
+test; proxy-conditioned live controls are not implemented yet.
+
+Measured by `mise run production-controls` (report:
+`out/production-controls/report.json`) on a 32×32 / 12 spp toy cache with 24,576
+segments:
+
+| check | result |
+|---|---:|
+| full gather vs sphere+box layers max diff | 0.0 |
+| exclude-sphere gather vs box-layer gather max diff | 0.0 |
+| exclude-sphere gather vs box-layer PSNR | inf |
+| full gather | 0.63 ms |
+| linked gather | 0.91 ms |
+| attenuated gather | 1.15 ms |
+| attenuated/default mean-radiance ratio | 0.918 |
+
+The linking algebra is exact for the toy layer partition: excluding the sphere-owned
+pixels from the full cache leaves the box-layer contribution for that light. The
+attenuation curve used here is `max(0, 1 - 0.1 * distance(origin, light_center))`,
+validated by a closed-form unit fixture. The result is intentionally a negative
+boundary for proxy speed: these controls survive the decoupling at gather time, but
+they still require cache access until a conditioned proxy is trained and validated.
+
+## Exported engine-shaped runtime (extensions E6, TorchScript slice)
+
+`nrp.torch_backend.engine_runtime` exports a `TorchNRP` to a TorchScript artifact plus
+JSON metadata and renders by loading that artifact through `torch.jit.load`, without
+loading the training checkpoint in the frame loop. `docs/engine-integration.md`
+documents the current input/output contract.
+
+Measured by `mise run viewer` (report: `out/engine-runtime/report.json`) on a 32×32
+toy cache and a small sphere-light proxy:
+
+| check | result |
+|---|---:|
+| artifact size | 38,763 bytes |
+| module vs exported runtime max diff | 0.0 |
+| exported runtime allclose rtol 1e-4 | true |
+| exported runtime latency | 0.43 ms/frame |
+| exported runtime rate | 2,326 fps |
+| headless slider loop mean | 1.14 ms/frame |
+| headless slider loop max | 7.26 ms/frame |
+
+This proves the exported-artifact inference path and records a frame-dump "viewer"
+loop under `out/engine-runtime/viewer_frames/`. It does **not** yet satisfy the full
+E6 benchmark matrix: no 128²/256²/512² sweep, no MPS measurement, and no GUI slider.
+
+## Environment-light inverse recovery (extensions E4, SH slice)
+
+`EnvironmentLight` uses degree-2 spherical harmonics over escaped segments
+(`seg_tmax = inf`). Because reference GATHERLIGHT is linear in the 9 RGB coefficient
+triples, `nrp.environment_fit` builds an explicit design matrix and solves the
+inverse problem with least squares.
+
+Measured by `mise run environment-fit` (report: `out/environment-fit/report.json`) on
+a deterministic 48-pixel escaped-ray fixture:
+
+| check | result |
+|---|---:|
+| equations / unknowns | 144 / 27 |
+| least-squares rank | 27 |
+| relative coefficient error | 1.26e-15 |
+| reconstruction max abs error | 1.67e-15 |
+| reconstruction PSNR | 305.22 dB |
+
+This satisfies the E4 inverse-recovery criterion for the SH environment slice
+(< 10% relative error) and gives future torch inverse/proxy work a closed-form
+reference. It does **not** yet satisfy the full richer-light study: textured quad
+inverse recovery, proxy conditioning on richer light parameters, and held-out proxy
+PSNR vs texture resolution {2×2, 4×4, 8×8} are still open.
+
+## Image-space target to physical lights (extensions E7, toy demo slice)
+
+`mise run generative-loop` runs two toy-scale inverse-lighting workflows through the
+existing `optimize_lights` mask/protect machinery and writes
+`out/generative/report.json` plus target, mask, and realized-GATHERLIGHT images.
+
+The synthesized scribble fixture is initialized at the known hidden light and exists
+to verify the mask/protect accounting path:
+
+| scribble check | result |
+|---|---:|
+| masked-region PSNR | 155.01 dB |
+| protected-region MSE vs base | 1.5e-17 |
+| passes E7 thresholds | true |
+| wall-clock | 740 ms |
+
+The stylized/generative target is a deliberately non-physical edit optimized from
+three restarts at pixel fraction 0.25 for 20 steps each:
+
+| restart | proxy loss first | proxy loss last | GATHERLIGHT PSNR vs target |
+|---:|---:|---:|---:|
+| 0 | 1.323 | 0.710 | 14.13 dB |
+| 1 | 1.750 | 1.123 | 13.28 dB |
+| 2 | 1.799 | 1.376 | 12.19 dB |
+
+Best physical re-render PSNR is **14.13 dB** and the protected-region MSE is
+**0.0051**. The raw stylized image cannot be exactly realized by one physical sphere
+light at this budget; that physical-realization gap is the useful finding for this
+slice. This does **not** yet satisfy the full E7 product demo: no trained high-quality
+proxy, no committed hand-authored/generative image provenance, and no latency sweep
+over pixel fractions {1.0, 0.25, 0.05}.
