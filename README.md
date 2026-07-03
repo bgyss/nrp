@@ -141,6 +141,7 @@ uv run ruff check .                            # or: mise run lint
 | §5.3 logit/inv-softplus reparameterization, Adam lr 0.05 × 500 | **Implemented** | `ReparamSphereLights` / `ReparamQuadLights` (quad normal: unconstrained 3-vector normalized in `quad_params`, gradient-tested) |
 | §5.3 mini-batch pixel-fraction SGD (Table 3) | **Implemented** + grid replication | `--pixel-fraction`; `examples/inverse_grid.py` runs the N×α grid (out/inverse-grid/) |
 | Fig. 6 image-based baseline comparison | **Implemented** (result diverges, documented) | `examples/image_based_baseline.py`; at toy scale the fixed-image regime *wins* by 1.8 dB — analysis in `docs/performance.md` |
+| §5.2 component ablation (Table 2) + spp sweep (Fig. 7), SMAPE/PSNR/SSIM/FLIP | **Implemented** | `examples/ablation.py` (`mise run ablation`) → `out/ablation/report.json`; SSIM + LDR-FLIP in `nrp/metrics.py` (FLIP verified against NVIDIA's `flip-evaluator`); direction-vs-paper analysis in `docs/performance.md` |
 | §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
 | §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
 | §6.1 multi-view / compositing-layer NRPs | Not implemented | single fixed camera, single layer |
@@ -199,6 +200,16 @@ runs on an Apple Silicon laptop CPU, single process; none are quoted from the pa
   to GATHERLIGHT**: free-flight sampling makes transmittance implicit in segment
   lengths (slab-fixture falloff matches analytic exp(−σ_t·d) within 5%,
   `tests/test_volume.py`; measurements in `out/volume-report.json`).
+- **Component ablation + SSIM/FLIP metrics (roadmap item 10):** numpy SSIM and
+  LDR-FLIP in `nrp/metrics.py` (FLIP verified against NVIDIA's `flip-evaluator`:
+  <1e-4 on uniform fixtures); `mise run ablation` runs the Table-2 component sets
+  {None, Aux, Aux+Den, Aux+Enc, Aux+Enc+Den} × spp {8,16,32} on the cornell box
+  with identical budgets/seeds, scored on a common held-out set vs a 128-spp
+  reference cache. Paper directions reproduce where expected: **aux features
+  dominate perceptually** (SSIM +0.10–0.14 at every spp), **encoding alone hurts
+  on raw noisy targets**, and **encoding+denoising wins at 8 spp** (+2.35 dB, best
+  in all four metrics); at 16–32 spp the denoised-target advantage erodes —
+  flagged and analyzed, not smoothed over, in `docs/performance.md`.
 - **Real academic scene (Mitsuba gallery "Country Kitchen"):** 3.27 M segments
   exported at 128×128 / 64 spp in **4.0 s** (129 MB cache); torch proxy (106,085
   params, 430 KB) trains in **126 s** to held-out **PSNR 25.24 dB vs raw
@@ -237,18 +248,22 @@ Documented substitutions, not silent approximations:
 - **numpy backend diverges further by design** (sinusoidal encoding, target-normalized
   loss, extra derived geometric inputs) — it is the readable finite-difference-checked
   reference, not the paper replica; the torch backend is the paper replica.
+- **FLIP uses edge-replicate convolution padding** instead of the reference
+  implementation's zero-fill, so constant images are preserved at borders (matters at
+  this repo's tiny resolutions); agreement with NVIDIA's `flip-evaluator` is <1e-4 on
+  uniform fixtures and ~0.1% on natural pairs.
 
 ## Next steps
 
-Roadmap items 1–6 and 9 are done — vectorized Mitsuba export + a real academic
+Roadmap items 1–6, 9, and 10 are done — vectorized Mitsuba export + a real academic
 scene, volumetric path export (schema v2), batched device GATHERLIGHT + MPS
 training, quad/multi-light inverse optimization with the Table-3 grid, the §4.2
 packed cache layout (fp16 + rgb9e5), paper-scale training (8×256 / 50k iterations
-with cosine LR + checkpoint/resume), and the Fig. 6 image-based baseline (whose
-paper claim does *not* reproduce at toy scale — see `docs/performance.md`) — all
+with cosine LR + checkpoint/resume), the Fig. 6 image-based baseline (whose
+paper claim does *not* reproduce at toy scale — see `docs/performance.md`), and the
+Table 2 / Fig. 7 component ablation with SSIM/FLIP metrics — all
 measured in `docs/performance.md`. Remaining candidate improvements —
-multi-view and per-layer NRPs (§6.1) and the
-Table 2 ablation suite with SSIM/FLIP — are written up as ready-to-run goal prompts
+multi-view and per-layer NRPs (§6.1) — are written up as ready-to-run goal prompts
 (each with verification and performance-testing requirements) in
 [docs/roadmap.md](docs/roadmap.md).
 

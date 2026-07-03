@@ -215,6 +215,8 @@ def train(cfg: dict, resume: bool = False) -> dict:
         hidden_width=cfg["model"].get("hidden_width", 128),
         hidden_layers=cfg["model"].get("hidden_layers", 4),
         encoding=cfg["model"].get("encoding"),
+        use_encoding=cfg["model"].get("use_encoding", True),
+        use_aux=cfg["model"].get("use_aux", True),
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.get("lr", 1e-2))
     iters = cfg["iters"]

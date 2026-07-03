@@ -93,6 +93,44 @@ class ModelTests(unittest.TestCase):
             loaded = TorchNRP.load(path)
         torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
 
+    def test_ablation_switches_shapes_and_input_dims(self):
+        # Roadmap item 10: {None, Aux, Aux+Enc, ...} variants toggle the aux features
+        # and the hashgrid encoding; forward keeps its signature in every variant.
+        enc = {"levels": 2, "table_size_log2": 8, "finest_resolution": 8}
+        cases = [
+            (False, False, 2 + 4),  # "None": raw px + light params
+            (True, False, 2 + 7 + 4),  # "Aux"
+            (False, True, 4 + 4),  # encoding only
+            (True, True, 4 + 7 + 4),  # "Aux+Enc"
+        ]
+        xy, aux, lp = torch.rand(9, 2), torch.rand(9, 7), torch.rand(9, 4)
+        for use_aux, use_encoding, in_dim in cases:
+            model = TorchNRP(
+                hidden_width=16,
+                hidden_layers=2,
+                encoding=enc,
+                use_aux=use_aux,
+                use_encoding=use_encoding,
+            )
+            self.assertEqual(model.mlp[0].in_features, in_dim)
+            self.assertEqual(model(xy, aux, lp).shape, (9, 3))
+
+    def test_disabled_inputs_are_ignored(self):
+        model = TorchNRP(hidden_width=16, hidden_layers=2, use_aux=False, use_encoding=False)
+        xy, lp = torch.rand(5, 2), torch.rand(5, 4)
+        torch.testing.assert_close(model(xy, torch.rand(5, 7), lp), model(xy, torch.rand(5, 7), lp))
+
+    def test_ablation_save_load_roundtrip(self):
+        model = TorchNRP(hidden_width=16, hidden_layers=2, use_aux=False, use_encoding=False)
+        xy, aux, lp = torch.rand(5, 2), torch.rand(5, 7), torch.rand(5, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertFalse(loaded.use_aux)
+        self.assertFalse(loaded.use_encoding)
+        torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
+
     def test_param_broadcast_helpers(self):
         sp = sphere_params(torch.tensor([1.0, 2.0, 3.0]), torch.tensor(0.5), 4)
         self.assertEqual(sp.shape, (4, 4))

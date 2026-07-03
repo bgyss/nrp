@@ -135,8 +135,13 @@ PSNR-vs-iteration convergence curve is in `docs/performance.md`.
 
 ## §5 Evaluation
 
-**Metrics:** PSNR and SMAPE are implemented (`nrp/metrics.py`). SSIM and FLIP (paper
-Tables 1–2) are not; adding them is a roadmap item under the ablation suite.
+**Metrics:** PSNR, SMAPE, SSIM (Wang et al. 2004), and LDR-FLIP (Andersson et al.
+2020) are all implemented in numpy (`nrp/metrics.py`). The FLIP implementation is
+verified against NVIDIA's official `flip-evaluator` (uniform fixtures agree to
+<1e-4; a random noisy pair to 0.07%, the residual being border padding — this
+implementation uses edge-replicate padding instead of zero-fill, documented in the
+module docstring). SSIM/FLIP are display-referred: HDR radiance goes through
+`tonemap_srgb` (Reinhard + sRGB encode) first.
 
 **§5.1 image-based baseline comparison (Fig. 6) — replicated in structure; the
 paper's conclusion does not transfer to toy scale.** `examples/image_based_baseline.py`
@@ -151,8 +156,15 @@ isolates only the sampling schedule, and the 64-slot rolling pool's light
 diversity — not data efficiency — is the binding constraint (pool 256 recovers
 +1.0 dB of the gap).
 
-**§5.2 ablations (Table 2, Figs. 7–8) — not replicated.** An experiment suite over
-the existing machinery; roadmap item 10.
+**§5.2 ablations (Table 2, Fig. 7) — replicated in structure at toy scale.**
+`examples/ablation.py` (`mise run ablation`) trains the five component sets
+{None, Aux, Aux+Den, Aux+Enc, Aux+Enc+Den} × spp {8, 16, 32} on the Mitsuba cornell
+box with identical budget and seeds — the two model switches are
+`model.use_aux` / `model.use_encoding` (`torch_backend/model.py`), denoising is the
+existing pool flag. Every cell is scored on one common held-out light set against a
+separate high-spp reference cache, with all four paper metrics. The report
+(`out/ablation/report.json`) embeds each cell's full config; direction-by-direction
+comparison against the paper's Table 2 and Fig. 7 is in `docs/performance.md`.
 
 ## §5.3 Light optimization — faithful
 

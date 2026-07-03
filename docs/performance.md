@@ -11,7 +11,9 @@
 - **Quality:** PSNR (dB) and SMAPE against held-out light configurations that were
   never used in training (fresh random draws). Torch runs report quality against both
   the raw GATHERLIGHT estimate (physically grounded) and the denoised one (what the
-  network was supervised with).
+  network was supervised with). The ablation suite additionally reports SSIM and
+  LDR-FLIP (`nrp/metrics.py`, numpy implementations; FLIP verified against NVIDIA's
+  `flip-evaluator`) on Reinhard-tonemapped sRGB images.
 - **Reproduction:** `mise run train` / `train-torch` / `export-mitsuba` /
   `train-mitsuba` / `bench`; every run writes a JSON report next to its model.
 - **Comparability warning:** the paper's numbers are RTX 5090 numbers on 680²–960×402
@@ -321,6 +323,77 @@ rather than smoothing over it:
   R=64 → 256 → 1024 climbs 23.6 → 27.2 → 29.4 dB with supervision time scaling
   linearly — data diversity is decisive; only the claim that a rolling pool beats
   an equally *large and equally cheap* fixed set fails to transfer to toy scale.
+
+## Component ablation × spp sweep (roadmap item 10, Table 2 / Fig. 7)
+
+`mise run ablation` → `out/ablation/report.json` (deterministic on CPU: metric
+fields are bit-identical across runs; every cell's full config is embedded in the
+report). Mitsuba cornell box at 64×64, five component sets × spp ∈ {8, 16, 32},
+every cell the identical budget and seeds: 3,000 iterations, batch 4096, pool 64
+(replace 2 every 5), lr 5×10⁻³, 4×128 MLP; hashgrid 2¹²/8-level encoding and OIDN
+target denoising toggled per variant (`none` = raw pixel coords + light params
+only). All 15 cells are scored on one common 16-light held-out set (dedicated RNG)
+against a separate 128-spp reference cache (independent seed, 1.47 M segments), so
+the spp axis measures training-cache quality against a fixed clean target. SMAPE
+and PSNR are on linear radiance; SSIM and FLIP on Reinhard-tonemapped sRGB
+(`nrp/metrics.py`; FLIP verified against NVIDIA's `flip-evaluator`).
+
+| spp | variant | PSNR (dB) | SSIM ↑ | FLIP ↓ | SMAPE ↓ | train s |
+|---|---|---|---|---|---|---|
+| 8 | none | 23.92 ± 4.20 | 0.433 | 0.165 | 0.737 | 17.8 |
+| 8 | aux | 24.08 ± 5.38 | 0.537 | 0.148 | 0.609 | 17.5 |
+| 8 | aux+den | 24.14 ± 4.06 | 0.541 | 0.135 | 0.626 | 21.1 |
+| 8 | aux+enc | 24.86 ± 4.82 | 0.514 | 0.142 | 0.635 | 36.5 |
+| 8 | aux+enc+den | **26.43 ± 5.48** | **0.544** | **0.131** | 0.630 | 39.0 |
+| 16 | none | 25.84 ± 5.69 | 0.455 | 0.158 | 0.723 | 20.3 |
+| 16 | aux | **26.32 ± 3.83** | **0.553** | **0.132** | **0.591** | 20.5 |
+| 16 | aux+den | 24.96 ± 4.07 | 0.547 | 0.141 | 0.623 | 22.7 |
+| 16 | aux+enc | 24.22 ± 3.76 | 0.534 | 0.153 | 0.690 | 38.2 |
+| 16 | aux+enc+den | 25.85 ± 5.13 | 0.548 | 0.138 | 0.608 | 41.2 |
+| 32 | none | 23.80 ± 4.84 | 0.433 | 0.177 | 0.735 | 25.5 |
+| 32 | aux | **25.47 ± 4.51** | **0.575** | **0.124** | **0.591** | 25.8 |
+| 32 | aux+den | 25.15 ± 5.01 | 0.561 | 0.138 | 0.622 | 28.1 |
+| 32 | aux+enc | 24.48 ± 5.04 | 0.557 | 0.144 | 0.620 | 43.8 |
+| 32 | aux+enc+den | 24.67 ± 4.60 | 0.548 | 0.135 | 0.629 | 46.1 |
+
+Statistical context first: per-light PSNR σ is 4–6 dB over 16 lights (standard
+error of the mean ≈ 1.1–1.4 dB), so single-cell PSNR gaps below ~1.5 dB are
+within noise; the perceptual metrics are much tighter (FLIP σ ≈ 0.05) and the
+readings below lean on directions that hold at *every* spp, not single cells.
+
+Directions vs the paper's Table 2:
+
+- **Aux features dominate — matches the paper.** `none` → `aux` improves SSIM by
+  +0.10–0.14, FLIP by 0.017–0.053, and SMAPE by ~0.13 at every spp, at zero extra
+  training cost. Notably `none` looks almost competitive on PSNR alone (23.8–25.8
+  dB) — it renders a plausible low-frequency lighting wash — and only the
+  structural/perceptual metrics unmask it, which is exactly why the paper reports
+  SSIM/FLIP and why this item added them.
+- **Encoding alone on raw targets hurts — matches the paper's noisy-target
+  caveat.** `aux` → `aux+enc` degrades PSNR/SSIM/FLIP at 16 and 32 spp (−2.1 and
+  −1.0 dB, FLIP +0.021/+0.020) and trades metrics at 8 spp: the hashgrid's extra
+  per-pixel capacity fits Monte-Carlo noise in the raw GATHERLIGHT targets. It
+  also costs ~1.8× wall-clock at this scale.
+- **Encoding + denoising wins at 8 spp — matches; the win does not persist at
+  higher spp — divergence, flagged.** At 8 spp `aux+enc+den` is best in all four
+  metrics (+2.35 dB, best SSIM/FLIP), the paper's headline combination behaving
+  as advertised where targets are noisiest. But at 16–32 spp plain `aux` edges
+  out the full stack (within PSNR noise, though consistent across SSIM/FLIP at 32
+  spp). Two local causes rather than one paper contradiction: (a) OIDN's residual
+  smoothing costs more than the noise it removes once targets are fairly clean —
+  the same effect measured on the 64-spp kitchen run above — and (b) at 3k
+  iterations / 64² the hashgrid's capacity advantage hasn't paid off yet (the
+  paper-scale section shows encoding capacity needs iterations: the 8×256/50k run
+  gains +8.7 dB). The paper trains 100k iterations on production scenes at 512
+  spp with a much stronger denoiser-to-noise ratio.
+- **spp trend vs Fig. 7 — matches on perceptual metrics for the raw-target
+  variants, inverts for the denoised ones.** For `aux`, SSIM climbs monotonically
+  (0.537 → 0.553 → 0.575) and FLIP falls monotonically (0.148 → 0.132 → 0.124)
+  with spp, the Fig. 7 shape. PSNR is not monotone anywhere (see the noise floor
+  above). For `aux+enc+den` the trend *inverts* on PSNR (26.43 → 25.85 → 24.67):
+  its low-spp advantage is precisely the denoiser's, so cleaning the targets
+  erodes it — flagged as the expected complement of divergence (b), not smoothed
+  over.
 
 ## Packed cache layout (roadmap item 5, §4.2: fp16 + rgb9e5)
 

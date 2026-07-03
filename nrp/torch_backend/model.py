@@ -10,6 +10,11 @@ positive (the paper does not specify its head; this is the one deviation here).
 Light shape parameters (emission E(v) is factored out, Eq. 1):
   sphere: center (3) + radius (1) = 4
   quad:   center (3) + normal (3) + width + height = 8
+
+Ablation switches (roadmap item 10, paper Table 2): `use_aux=False` drops the 7D
+G-buffer features and `use_encoding=False` feeds the raw 2D pixel coordinates instead
+of the hashgrid encoding. `forward` keeps its (xy, aux, params) signature either way
+so training/relighting/inverse code is variant-agnostic; disabled inputs are ignored.
 """
 
 from __future__ import annotations
@@ -36,19 +41,26 @@ class TorchNRP(nn.Module):
         hidden_width: int = 128,
         hidden_layers: int = 4,
         encoding: dict | None = None,
+        use_encoding: bool = True,
+        use_aux: bool = True,
     ):
         super().__init__()
         if light_type not in LIGHT_PARAM_DIMS:
             raise ValueError(f"light_type must be one of {sorted(LIGHT_PARAM_DIMS)}")
         self.light_type = light_type
+        self.use_encoding = use_encoding
+        self.use_aux = use_aux
         self.config = {
             "light_type": light_type,
             "hidden_width": hidden_width,
             "hidden_layers": hidden_layers,
             "encoding": encoding or {},
+            "use_encoding": use_encoding,
+            "use_aux": use_aux,
         }
-        self.encoding = HashEncoding2D(**(encoding or {}))
-        in_dim = self.encoding.output_dim + 7 + LIGHT_PARAM_DIMS[light_type]
+        self.encoding = HashEncoding2D(**(encoding or {})) if use_encoding else None
+        px_dim = self.encoding.output_dim if use_encoding else 2
+        in_dim = px_dim + (7 if use_aux else 0) + LIGHT_PARAM_DIMS[light_type]
         layers: list[nn.Module] = []
         for i in range(hidden_layers):
             layers.append(nn.Linear(in_dim if i == 0 else hidden_width, hidden_width))
@@ -64,8 +76,9 @@ class TorchNRP(nn.Module):
         self, pixel_xy: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
     ) -> torch.Tensor:
         """pixel_xy (N,2) in [0,1]^2, aux (N,7), light_params (N, 4 or 8) -> (N,3)."""
-        x = torch.cat([self.encoding(pixel_xy), aux, light_params], dim=1)
-        return F.softplus(self.mlp(x))
+        px = self.encoding(pixel_xy) if self.encoding is not None else pixel_xy
+        parts = [px, aux, light_params] if self.use_aux else [px, light_params]
+        return F.softplus(self.mlp(torch.cat(parts, dim=1)))
 
     def save(self, path: str) -> None:
         torch.save({"config": self.config, "state_dict": self.state_dict()}, path)

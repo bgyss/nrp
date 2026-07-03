@@ -79,6 +79,10 @@ run = "uv run python examples/inverse_grid.py --model out/mitsuba-torch/model.pt
 description = "Train a toy quad proxy and verify 1-light quad recovery (center error < 0.05)"
 run = "uv run python examples/inverse_grid.py --quad-check --out out/inverse-grid/quad_check.json"
 
+[tasks.ablation]
+description = "Table-2/Fig.-7 component ablation x spp sweep on the Mitsuba cornell box"
+run = "uv run python examples/ablation.py --out out/ablation/report.json"
+
 [tasks.bench-gather]
 description = "Benchmark GATHERLIGHT: numpy vs batched torch (cpu/mps) on three cache sizes"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --resolutions 48 --gather-caches out/toy/path_cache.npz out/mitsuba/path_cache_128.npz out/mitsuba/path_cache_256.npz --out out/gather-bench.json"
