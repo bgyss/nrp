@@ -156,6 +156,11 @@ on.
   logit/inverse-softplus reparameterization, pixel-fraction mini-batch SGD, restarts,
   objective/protect masks, and a mandatory GATHERLIGHT re-render so proxy-space and
   physical errors are reported separately.
+- `relight_multiview.py` — §6.1 multi-view NRPs: loads N (model, cache) view pairs
+  from a `views.json` manifest, applies one light edit across all resident proxies
+  (no cache access at edit time), one image per view; `examples/multiview.py`
+  (`mise run multiview`) exports the views (exporter `--sensor-index` /
+  `--cam-origin` camera override), trains them, and measures latency vs N.
 - `bench.py` — cross-device (cpu/mps/cuda) full-frame inference benchmark with warmup
   and proper synchronization.
 

@@ -79,6 +79,10 @@ run = "uv run python examples/inverse_grid.py --model out/mitsuba-torch/model.pt
 description = "Train a toy quad proxy and verify 1-light quad recovery (center error < 0.05)"
 run = "uv run python examples/inverse_grid.py --quad-check --out out/inverse-grid/quad_check.json"
 
+[tasks.multiview]
+description = "Multi-view NRPs (§6.1): export 3 cornell-box views, train per-view proxies, measure edit latency"
+run = "uv run python examples/multiview.py --out out/multiview/report.json"
+
 [tasks.ablation]
 description = "Table-2/Fig.-7 component ablation x spp sweep on the Mitsuba cornell box"
 run = "uv run python examples/ablation.py --out out/ablation/report.json"

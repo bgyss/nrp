@@ -198,8 +198,15 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
 ## §6 Applications
 
 - **§6.1 interactive relighting — implemented** (both backends; benchmarked in
-  `docs/performance.md`). Multi-view and per-layer compositing NRPs — not implemented
-  (roadmap items).
+  `docs/performance.md`).
+- **§6.1 multi-view NRPs — implemented**: the Mitsuba exporter takes
+  `--sensor-index` or a per-view camera override (`--cam-origin` / `--cam-target` /
+  `--cam-up` / `--fov`); `examples/multiview.py` (`mise run multiview`) exports
+  3 cornell-box views, trains one proxy per view, and verifies cross-view
+  consistency; `nrp.torch_backend.relight_multiview` applies one light edit across
+  all resident view proxies with no path-cache access (latency scales linearly in N;
+  numbers in `docs/performance.md`). Per-layer compositing NRPs — not implemented
+  (roadmap item 8).
 - **§6.2 art-directed edits — implemented**: `examples/make_art_target.py` builds a
   painted objective + emphasis mask + protected region; `--mask` / `--protect` /
   `--protect-base` / `--protect-lambda` implement weighted objectives and

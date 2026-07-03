@@ -88,6 +88,40 @@ def _load_mitsuba(mode: str = "scalar"):
     return mi
 
 
+def build_sensor(
+    mi,
+    width: int,
+    height: int,
+    origin,
+    target,
+    up=(0.0, 1.0, 0.0),
+    fov: float = 39.3077,
+):
+    """Build a standalone perspective sensor for a per-view camera override (§6.1).
+
+    The export loops only need the sensor for `sample_ray` and its sampler, so a
+    detached sensor (not part of the scene) works with any loaded scene — this is what
+    lets one scene be exported from N camera poses for multi-view NRPs. Must be called
+    after `_load_mitsuba` so it is created under the active variant.
+    """
+    look_at = mi.ScalarTransform4f.look_at(origin=list(origin), target=list(target), up=list(up))
+    return mi.load_dict(
+        {
+            "type": "perspective",
+            "fov": fov,
+            "to_world": look_at,
+            "film": {
+                "type": "hdrfilm",
+                "width": width,
+                "height": height,
+                "rfilter": {"type": "box"},
+                "pixel_format": "rgb",
+            },
+            "sampler": {"type": "independent", "sample_count": 4},
+        }
+    )
+
+
 def _load_scene(mi, spec: str, width: int, height: int):
     """Load an XML scene or the built-in cornell box, forcing the film resolution."""
     if spec == "builtin:cornell-box":
@@ -110,9 +144,12 @@ def export_path_cache(
     seed: int = 0,
     russian_roulette: bool = True,
     rr_start: int = 2,
+    sensor_index: int = 0,
+    sensor=None,
 ) -> PathCache:
     rng = np.random.default_rng(seed)
-    sensor = scene.sensors()[0]
+    if sensor is None:
+        sensor = scene.sensors()[sensor_index]
     sampler = sensor.sampler().clone()
     sampler.seed(seed, 1)
 
@@ -213,6 +250,8 @@ def export_path_cache_wavefront(
     russian_roulette: bool = True,
     rr_start: int = 2,
     max_wavefront: int = 1 << 20,
+    sensor_index: int = 0,
+    sensor=None,
 ) -> PathCache:
     """drjit-vectorized SAMPLEPATHS: same semantics as `export_path_cache`.
 
@@ -222,7 +261,8 @@ def export_path_cache_wavefront(
     """
     import drjit as dr
 
-    sensor = scene.sensors()[0]
+    if sensor is None:
+        sensor = scene.sensors()[sensor_index]
     n_px = width * height
     spp_chunk = max(1, min(spp, max_wavefront // n_px))
 
@@ -349,6 +389,43 @@ def main() -> None:
     parser.add_argument("--bounces", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--sensor-index",
+        type=int,
+        default=0,
+        help="which of the scene's sensors to trace from (multi-sensor XML scenes)",
+    )
+    parser.add_argument(
+        "--cam-origin",
+        type=float,
+        nargs=3,
+        metavar=("X", "Y", "Z"),
+        help="per-view camera override: build a perspective sensor at this origin "
+        "instead of using the scene's sensor (see also --cam-target/--cam-up/--fov)",
+    )
+    parser.add_argument(
+        "--cam-target",
+        type=float,
+        nargs=3,
+        default=[0.0, 0.0, 0.0],
+        metavar=("X", "Y", "Z"),
+        help="look-at target for --cam-origin (default: scene origin)",
+    )
+    parser.add_argument(
+        "--cam-up",
+        type=float,
+        nargs=3,
+        default=[0.0, 1.0, 0.0],
+        metavar=("X", "Y", "Z"),
+        help="up vector for --cam-origin",
+    )
+    parser.add_argument(
+        "--fov",
+        type=float,
+        default=39.3077,
+        help="vertical field of view in degrees for --cam-origin "
+        "(default matches the builtin cornell box)",
+    )
+    parser.add_argument(
         "--no-russian-roulette",
         action="store_true",
         help="disable throughput-based RR (paper uses RR; disable for deterministic path counts)",
@@ -368,6 +445,11 @@ def main() -> None:
         mode = "wavefront" if pick_jit_variant(_import_mitsuba()) else "scalar"
     mi = _load_mitsuba(mode)
     scene = _load_scene(mi, args.scene, args.width, args.height)
+    sensor = None
+    if args.cam_origin is not None:
+        sensor = build_sensor(
+            mi, args.width, args.height, args.cam_origin, args.cam_target, args.cam_up, args.fov
+        )
     export = export_path_cache_wavefront if mode == "wavefront" else export_path_cache
     t0 = time.perf_counter()
     cache = export(
@@ -379,6 +461,8 @@ def main() -> None:
         args.bounces,
         seed=args.seed,
         russian_roulette=not args.no_russian_roulette,
+        sensor_index=args.sensor_index,
+        sensor=sensor,
     )
     seconds = time.perf_counter() - t0
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)

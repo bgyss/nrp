@@ -395,6 +395,49 @@ Directions vs the paper's Table 2:
   erodes it — flagged as the expected complement of divergence (b), not smoothed
   over.
 
+## Multi-view NRPs (roadmap item 7, §6.1)
+
+Three views of the Mitsuba cornell box (48×48 @ 16 spp, 4 bounces, wavefront
+exporter with the per-view camera override), cameras on a ±20° arc at the default
+distance 3.9 with ±0.3 height offsets, all aimed at the box center. One proxy per
+view, each trained exactly like the single-view Mitsuba config (62,923 params, 3k
+iterations, pool 64, OIDN targets) with per-view seeds 0/1/2. Produced by
+`mise run multiview` (report: `out/multiview/report.json`; view manifest:
+`out/multiview/views.json`).
+
+| view | camera origin | segments | train (s) | held-out PSNR (dB) | per-light range (dB) | SMAPE |
+|---|---|---|---|---|---|---|
+| view0 | (−1.33, 0.00, 3.66) | 93,011 | 35.9 | 25.41 | [15.7, 37.8] | 0.699 |
+| view1 | (0.00, 0.30, 3.90) | 102,686 | 34.2 | 24.82 | [14.8, 32.4] | 0.952 |
+| view2 | (1.33, −0.30, 3.66) | 92,503 | 33.9 | 21.20 | [14.4, 26.0] | 0.909 |
+
+All three views exceed the 20 dB requirement. Cross-view consistency for one fixed
+light (sphere at (0.2, 0.35, −0.1), r = 0.25): each view's proxy vs its *own*
+GATHERLIGHT reference gives 27.95 / 24.71 / 24.19 dB — every view inside its
+validation range, max spread **3.76 dB** (< 4 dB required, but with little margin:
+view2, the most oblique camera, is consistently the weakest view).
+
+**Edit latency** (one light change re-rendered in all N views,
+`nrp.torch_backend.relight_multiview`, 20 synchronized edits, 3 warmup). Each view's
+pixel inputs are precomputed at load; an edit performs N full-frame network forwards
+and touches no path-cache data:
+
+| N views | CPU ms/edit | MPS ms/edit |
+|---|---|---|
+| 1 | 4.02 | 7.04 |
+| 2 | 7.97 | 8.30 |
+| 3 | 12.30 | 12.67 |
+
+CPU latency is N × single-view inference to within 2% (4.02 → 12.30 ms ≈ 3.06×), the
+expected no-cache-access scaling; MPS is dispatch-overhead-dominated at 48² (its
+per-view increment, ~2.8 ms, is below its 1-view latency), so it only catches up to
+CPU at this tiny frame size and would win at paper-scale resolutions (see the
+inference table above).
+
+**Memory (the compactness argument):** 251,692 bytes of fp32 parameters per resident
+view proxy — **0.76 MB total for all 3 views**, vs 3 path caches of 3.3–3.7 MB
+`.npz` each (10.5 MB total) that are *not* needed at edit time.
+
 ## Packed cache layout (roadmap item 5, §4.2: fp16 + rgb9e5)
 
 `PathCache.save(path, compressed=True)` writes segment geometry and G-buffer aux as
