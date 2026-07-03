@@ -231,3 +231,29 @@ All of the paper's stated limitations apply here too: fixed transport after cach
 parameter-count-driven difficulty for complex light types, and in-memory path data.
 This implementation adds its own: toy scale, no fused kernels, and Monte Carlo noise
 floors at 16–24 spp that dominate SMAPE on near-zero pixels.
+
+## Known deviations summary
+
+Documented substitutions, not silent approximations — each is discussed in context
+above; this is the flat list:
+
+- **CPU (or MPS) PyTorch, no tiny-cuda-nn, no Triton kernel** — architecture is
+  faithful, absolute performance is not.
+- **OIDN is optional** — used when the `oidn` extra is installed
+  (`"denoise": {"method": "oidn"}`); the dependency-free default is the aux-guided
+  joint bilateral filter (same guidance signal, weaker prior).
+- **Softplus output head** — the paper doesn't specify its head; softplus keeps
+  contributions positive.
+- **The Mitsuba exporter records paths from Python, not inside the renderer** — the
+  default drjit wavefront loop (`llvm_ad_rgb`/`metal_ad_rgb`, auto-detected) advances
+  all paths one bounce per kernel launch and pulls per-bounce results to numpy; a pure
+  scalar loop (`--mode scalar`, no JIT requirements) remains the fallback and
+  semantics reference. No volumes are exported (surface interactions only).
+- **numpy backend diverges further by design** (sinusoidal encoding,
+  target-normalized loss, extra derived geometric inputs) — it is the readable
+  finite-difference-checked reference, not the paper replica; the torch backend is
+  the paper replica.
+- **FLIP uses edge-replicate convolution padding** instead of the reference
+  implementation's zero-fill, so constant images are preserved at borders (matters at
+  this repo's tiny resolutions); agreement with NVIDIA's `flip-evaluator` is <1e-4 on
+  uniform fixtures and ~0.1% on natural pairs.

@@ -21,9 +21,9 @@ Two backends share one path-cache/GATHERLIGHT vocabulary:
   Eq. 4), pool-of-denoised-images training (§4.4), and the paper's inverse-optimization
   formulation (§5.3).
 
-Full docs live in `docs/`: `architecture.md` (pipeline diagram + module-by-module
-notes), `paper-mapping.md` (section-by-section paper coverage table), `performance.md`,
-`report-2026-07-01.md`, `roadmap.md`.
+Full docs live in `docs/`: `quickstart.md` (every CLI), `architecture.md` (pipeline
+diagram + module-by-module notes), `paper-mapping.md` (section-by-section paper
+coverage table), `performance.md`, `status/` (dated status reports), `roadmap.md`.
 
 ## Toolchain and commands
 

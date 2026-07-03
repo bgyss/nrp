@@ -2,8 +2,8 @@
 
 A small, CPU-runnable reimplementation of Sancho et al., *"Neural Render Proxies for
 Interactive and Differentiable Lighting"* (Computer Graphics Forum 45(4), EGSR 2026),
-written as an educational re-implementation sample, not a production renderer. Every
-piece runs end to end on a laptop in minutes, with no GPU required.
+written as an educational sample, not a production renderer. Every piece runs end to
+end on a laptop in minutes, with no GPU required.
 
 The paper's core idea: path tracing decouples into a **light-agnostic path pass**
 (SAMPLEPATHS — expensive, needs the scene, done once) and an **emission pass**
@@ -17,18 +17,22 @@ Two backends share one path-cache/GATHERLIGHT vocabulary:
 - **`nrp/` (numpy)** — the dependency-light reference: hand-rolled,
   finite-difference-checked autodiff, sinusoidal positional encoding. Good for reading.
 - **`nrp/torch_backend/` (PyTorch)** — the paper's architecture (§4): 2D
-  multiresolution hash encoding [MESK22], the paper's exact input set (encoded pixel
-  coords + albedo/depth/normal + light shape parameters), the paper's exact loss
-  (relative MSE with stop-gradient denominator, ε = 0.01, Eq. 4), pool-of-denoised-images
-  training (§4.4), and the paper's inverse-optimization formulation (§5.3: Eq. 5 light
-  sum, Reinhard-tonemapped MSE of Eq. 6, logit/inverse-softplus reparameterization,
-  mini-batch pixel-fraction SGD of Table 3).
+  multiresolution hash encoding [MESK22], the paper's exact input set and loss
+  (relative MSE, Eq. 4), pool-of-denoised-images training (§4.4), and the paper's
+  inverse-optimization formulation (§5.3).
 
-Full documentation lives in [docs/](docs/): [architecture](docs/architecture.md),
-[section-by-section paper mapping](docs/paper-mapping.md),
-[performance methodology + all measured results](docs/performance.md),
-[status report](docs/report-2026-07-01.md), and a
-[roadmap of ten goal-prompt-ready improvements](docs/roadmap.md).
+## Documentation
+
+Full docs live in [docs/](docs/):
+
+| doc | what's there |
+|---|---|
+| [quickstart.md](docs/quickstart.md) | every CLI, copy-pasteable, from `uv sync` to inverse lighting |
+| [architecture.md](docs/architecture.md) | pipeline diagram, path-cache schema, module-by-module notes, training-config reference |
+| [paper-mapping.md](docs/paper-mapping.md) | section-by-section paper coverage, faithful vs. substituted vs. out of scope, and the known-deviations list |
+| [performance.md](docs/performance.md) | benchmark methodology and every measured result |
+| [roadmap.md](docs/roadmap.md) | the ten-item improvement roadmap, written as ready-to-run goal prompts |
+| [status/](docs/status/) | dated status reports tracking roadmap progress |
 
 ## Toolchain (nix + mise + uv)
 
@@ -49,224 +53,52 @@ Full documentation lives in [docs/](docs/): [architecture](docs/architecture.md)
 ```sh
 uv sync
 
-# --- numpy reference backend ---
-# Trace the toy Cornell-style scene and train (~4 min CPU). Outputs in out/toy/.
+# numpy reference backend: trace the toy scene and train (~4 min CPU)
 uv run python -m nrp.train --config examples/toy_sphere.json
 
-# --- torch backend (paper architecture) ---
-# Reuses the same path cache; trains hashgrid MLP with the denoised image pool.
+# torch backend (paper architecture): reuses the same path cache
 uv run python -m nrp.torch_backend.train --config examples/toy_sphere_torch.json
 
-# --- Mitsuba 3 scene (needs: uv sync --extra mitsuba --extra oidn) ---
-# Export a real Mitsuba scene into the path-cache schema (§4.1), then train on it
-# with OIDN-denoised targets (paper-exact §4.4 pipeline).
-uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box \
-  --width 48 --height 48 --spp 16 --bounces 4 --out out/mitsuba/path_cache.npz
-uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_torch.json
-
-# Paper-scale run (8x256 net, 50k iterations, pool 128, cosine LR, checkpoint every
-# 1000 with --resume support): export at 128x128 / 64 spp, then train (~25 min MPS).
-uv run python -m nrp.mitsuba_exporter --width 128 --height 128 --spp 64 --bounces 4 \
-  --out out/mitsuba/path_cache_128_64spp.npz
-uv run python -m nrp.torch_backend.train --config examples/mitsuba_cornell_128_torch.json \
-  --gather-backend torch --device mps   # add --resume to continue an interrupted run
-
-# Real academic scene (Mitsuba 3 gallery "Country Kitchen"): download (assets are
-# never vendored), export with the drjit wavefront loop, train. Or: mise run
-# export-kitchen && mise run train-kitchen.
-uv run python examples/scenes/download_scene.py kitchen
-uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml \
-  --width 128 --height 128 --spp 64 --bounces 4 --out out/kitchen/path_cache.npz
-uv run python -m nrp.torch_backend.train --config examples/kitchen_torch.json
-
-# Benchmark proxy inference across resolutions on every available device (cpu/mps/cuda).
-uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt \
-  --resolutions 48 128 256 512 1024 --out out/bench.json
-
-# Consistency check: GATHERLIGHT over the cache vs an independent re-trace.
-uv run python -m nrp.compare_reference --cache out/toy/path_cache.npz \
-  --light '{"center": [0.5, 0.75, 0.5], "radius": 0.15, "rgb": [15, 14, 12]}' \
-  --out out/toy/compare_report.json
-
-# Interactive relighting through the torch proxy (sphere or quad models; lists sum per Eq. 3).
-uv run python -m nrp.torch_backend.relight --model out/toy-torch/model.pt \
-  --cache out/toy/path_cache.npz \
-  --light '{"center": [0.3, 0.6, 0.4], "radius": 0.1, "rgb": [12, 12, 14]}' \
-  --out out/toy-torch/relit.npy --bench 100
-
-# Inverse lighting (paper §5.3): recover a hidden light from its rendered image.
-uv run python -m nrp.torch_backend.optimize_lights --model out/toy-torch/model.pt \
-  --cache out/toy/path_cache.npz \
-  --target-light '{"center": [0.6, 0.7, 0.5], "radius": 0.12, "rgb": [10, 9, 8]}' \
-  --restarts 4 --pixel-fraction 0.25 --out-dir out/toy-torch/inverse
-
-# Art-directed inverse lighting: paint an objective, then optimize toward it.
-uv run python examples/make_art_target.py --cache out/toy/path_cache.npz \
-  --out-dir out/toy/art
-uv run python -m nrp.torch_backend.optimize_lights --model out/toy-torch/model.pt \
-  --cache out/toy/path_cache.npz --target out/toy/art/art_target.npy \
-  --mask out/toy/art/art_mask.npy --out-dir out/toy-torch/art-opt
-```
-
-The numpy backend keeps its own `nrp.relight` / `nrp.optimize_lights` CLIs with the
-same flags (single sphere light, non-tonemapped loss — see deviations below).
-
-Tests and lint:
-
-```sh
+# tests / lint
 uv run python -m unittest discover -s tests    # or: mise run test
 uv run ruff check .                            # or: mise run lint
 ```
 
-## Paper coverage
+Mitsuba scenes, paper-scale training, real gallery scenes, benchmarking, relighting,
+and inverse lighting are all in **[docs/quickstart.md](docs/quickstart.md)**.
 
-| Paper section | Status | Where |
-|---|---|---|
-| §3.1 SAMPLEPATHS / GATHERLIGHT decoupling | **Implemented** | `nrp/path_cache.py`, `nrp/gather_light.py`, traced by `nrp/toy_tracer.py` |
-| §3.1 BSDF sampling w/o NEE, throughput Russian roulette | **Implemented** (toy scale) | `nrp/toy_tracer.py` — cosine-weighted Lambertian, no NEE |
-| §3.1 volumes / free-flight sampling | **Implemented** (toy scale) | homogeneous medium in `nrp/toy_tracer.py` (free-flight sampling, isotropic phase); GATHERLIGHT unchanged by design — transmittance is implicit in segment lengths; cache schema v2 carries medium metadata |
-| §3.2 per-light-type networks, E(v) factored out (Eq. 1–3) | **Implemented** | `torch_backend/model.py` (`light_type` = sphere/quad), `gather_lights` |
-| §3.2 sphere lights (4 params) | **Implemented** | `nrp/lights.py` |
-| §3.2 / Fig. 13 quad lights (8 params) | **Implemented** | `nrp/lights.py::QuadLight`, `gather_throughput_quad`, quad-conditioned proxy |
-| §4 PyTorch implementation | **Implemented** | `nrp/torch_backend/` |
-| §4 tiny-cuda-nn + fused Triton GATHERLIGHT kernel | Substituted | plain-PyTorch hashgrid; batched torch gather runs on MPS/CUDA (`torch_backend/gather.py`, all segments in one op — the paper's fused-gather idea at torch-op granularity); numpy gather stays the authoritative reference (`gather_backend` config) |
-| §4.2 fp16 / rgb9e5 compressed cache layout | **Implemented** (opt-in) | `PathCache.save(path, compressed=True)` — fp16 geometry + rgb9e5 throughput (`nrp/rgb9e5.py`), auto-detected on load; measured in `docs/performance.md` |
-| §4.3 inputs: hashgrid(px) + albedo/depth/normal + light params | **Implemented** | `torch_backend/encoding.py` (multiresolution hash [MESK22]), `model.py` |
-| §4.4 per-pixel random lights + denoised target pool (300 / 2-every-5) | **Implemented** (pool size configurable) | `torch_backend/train.py::ImagePool` |
-| §4.4 OIDN denoiser | **Implemented** (optional extra) | `torch_backend/denoise.py::oidn_denoise` (RT filter, HDR, albedo+normal guides); aux-guided joint bilateral as the dependency-free fallback |
-| §4.4 segment-based light-position sampling + bbox fallback | **Implemented** | `torch_backend/sampling.py` |
-| §4.4 loss: relative MSE, sg(prediction)²+ε denominator, ε=0.01 (Eq. 4) | **Implemented** (torch) | `torch_backend/model.py::relative_mse_loss`, gradient unit-tested |
-| §4 paper-scale training (8×256, ≥50k iters, pool ≥128) | **Implemented** | `examples/mitsuba_cornell_128_torch.json`; cosine LR decay + full-state checkpoint/`--resume` (bit-exact on CPU, unit-tested) in `torch_backend/train.py` |
-| §5.3 inverse: Eq. 5 multi-light sum, Reinhard MSE (Eq. 6) | **Implemented** (sphere + quad, joint multi-light) | `torch_backend/optimize_lights.py` |
-| §5.3 logit/inv-softplus reparameterization, Adam lr 0.05 × 500 | **Implemented** | `ReparamSphereLights` / `ReparamQuadLights` (quad normal: unconstrained 3-vector normalized in `quad_params`, gradient-tested) |
-| §5.3 mini-batch pixel-fraction SGD (Table 3) | **Implemented** + grid replication | `--pixel-fraction`; `examples/inverse_grid.py` runs the N×α grid (out/inverse-grid/) |
-| Fig. 6 image-based baseline comparison | **Implemented** (result diverges, documented) | `examples/image_based_baseline.py`; at toy scale the fixed-image regime *wins* by 1.8 dB — analysis in `docs/performance.md` |
-| §5.2 component ablation (Table 2) + spp sweep (Fig. 7), SMAPE/PSNR/SSIM/FLIP | **Implemented** | `examples/ablation.py` (`mise run ablation`) → `out/ablation/report.json`; SSIM + LDR-FLIP in `nrp/metrics.py` (FLIP verified against NVIDIA's `flip-evaluator`); direction-vs-paper analysis in `docs/performance.md` |
-| §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
-| §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
-| §6.1 multi-view NRPs | **Implemented** | per-view camera override in the exporter (`--sensor-index`, `--cam-origin/-target/-up`, `--fov`); `examples/multiview.py` (`mise run multiview`) trains one proxy per view; `nrp.torch_backend.relight_multiview` applies one light edit across all views with no cache access |
-| §6.1 compositing-layer NRPs | **Implemented** (toy tracer) | `nrp.toy_tracer --layer sphere\|box` splits paths by first-hit owner (layer gathers sum *exactly* to the full-scene gather); `examples/layers.py` (`mise run layers`) trains per-layer proxies; `nrp.torch_backend.composite` relights one layer while holding the other's image fixed |
-| §4.1 Mitsuba 3 path-data pass (academic scenes) | **Implemented** (optional extra) | `nrp/mitsuba_exporter.py`: BSDF sampling, no NEE, throughput RR, aux G-buffer; drjit wavefront loop (39–59× over the scalar fallback); XML scenes (gallery scenes via `examples/scenes/download_scene.py`) or builtin cornell box |
-| §5 production scenes (Hyperion, 512 spp, RTX 5090) | Out of scope | Hyperion is Disney-internal; any Mitsuba XML scene works via the exporter |
+## Status
 
-## Measured results (toy scene, laptop CPU)
+All ten roadmap items are complete — see [docs/status/2026-07-02.md](docs/status/2026-07-02.md)
+for the full before/after picture and [docs/paper-mapping.md](docs/paper-mapping.md)
+for section-by-section coverage. Headline numbers (toy scene, laptop CPU, none
+quoted from the paper — see [docs/performance.md](docs/performance.md) for
+methodology and every measured result):
 
-Scene: hard-coded Cornell-style box + diffuse sphere, fixed pinhole camera, 48×48,
-24 spp, 3 bounces (165,888 cached segments, 6.7 MiB compressed). All numbers from real
-runs on an Apple Silicon laptop CPU, single process; none are quoted from the paper.
-
-- **GATHERLIGHT consistency (backend-independent):** gathering over the 24-spp cache vs
-  an independently re-traced 96-spp reference with inline emission agrees to
-  **PSNR 29.3 dB, 0.03% mean radiance**. Both sides are Monte Carlo estimates over
-  independent path sets, so this validates the §3.1 decoupling, not a tautology.
-- **numpy backend:** 21,635 params, 219 s train, held-out **PSNR 19.97 dB** /
-  SMAPE 0.91 (12 fresh lights), 1.6 ms/frame (629 Hz) at 48×48.
-- **torch backend (paper architecture):** 62,923 params (hashgrid + 4×128 MLP), **60 s
-  train** (3,000 iterations, pool 64 / replace 2 every 5), loss 0.786 → 0.072, held-out
-  **PSNR 19.17 dB vs raw GATHERLIGHT** (18.86 dB vs denoised), 10.7 ms/frame (93 Hz)
-  at 48×48. Same quality as the numpy backend in 3.6× less training wall-clock.
-- **torch inverse recovery (paper §5.3 formulation):** hidden sphere light recovered
-  with **center error 0.013, radius error 0.020** (scene is a unit box), rgb within
-  ~10% (uniformly low — proxy amplitude bias), 500 steps × 4 restarts at pixel
-  fraction 0.25. The paper's reparameterization + tonemapped loss dramatically
-  outperforms the numpy backend's naive clipped-Adam recovery (center error 0.44 on
-  the same task).
-- **Mitsuba cornell box + OIDN (paper-exact data pipeline):** 103,680 segments exported
-  in 1.6 s (48×48, 16 spp, 4 bounces, RR); torch proxy trained on OIDN-denoised pool
-  targets reaches held-out **PSNR 25.87 dB vs raw GATHERLIGHT** (26.48 dB vs denoised)
-  in 48 s — the best-conditioned scene in the repo.
-- **Exporter vectorization (roadmap item 1):** the drjit wavefront loop reaches
-  **2.4 M seg/s at 48² (39×)** and **3.5 M seg/s at 128² (59×)** over the scalar
-  loop (`out/export-bench.json`; both loops statistically equivalent by a fixed-seed
-  GATHERLIGHT test).
-- **Quad + multi-light inverse optimization (roadmap item 4):** §5.3 now recovers
-  sphere *and* quad lights, jointly for N lights. The Table-3-style grid
-  (`mise run inverse-grid`, N ∈ {1,3,5} × α ∈ {1.0…0.01}, 5 runs/cell) reproduces
-  the paper's trend: re-rendered PSNR is flat in pixel fraction (≤0.3 dB drop at
-  α=0.01) while time falls ~5×. Quad recovery is proxy-fidelity-bound (diagnosed,
-  not assumed — see `docs/performance.md`); with a 96-spp/10k-iter proxy and
-  physical re-ranking of restarts it reaches **center error 0.039 < 0.05**
-  (`mise run quad-check`).
-- **Batched device GATHERLIGHT (roadmap item 3):** `torch_backend/gather.py` gathers
-  a light over all cached segments in one weight-and-scatter op — **8.1 ms/image on
-  MPS vs 58.6 ms numpy-CPU (7.2×) on a 2.9 M-segment 256² cache** — matching numpy
-  at rtol 1e-5 (50 sphere + 50 quad lights, toy + Mitsuba caches). Training runs
-  fully device-resident (`device: mps`, `--gather-backend torch`) with held-out PSNR
-  within 0.5 dB of the CPU run at equal seed; at toy scale MPS wall-clock is still
-  ~15–30% slower (63k-param model under-fills the GPU — documented honestly in
-  `docs/performance.md`).
-- **Volumetric export (roadmap item 2):** the toy box filled with a homogeneous
-  medium (σ_t 2.0, albedo 0.8) trains the same torch architecture to **18.84 dB**
-  held-out PSNR — within 0.33 dB of the surface-only baseline — with **zero changes
-  to GATHERLIGHT**: free-flight sampling makes transmittance implicit in segment
-  lengths (slab-fixture falloff matches analytic exp(−σ_t·d) within 5%,
-  `tests/test_volume.py`; measurements in `out/volume-report.json`).
-- **Component ablation + SSIM/FLIP metrics (roadmap item 10):** numpy SSIM and
-  LDR-FLIP in `nrp/metrics.py` (FLIP verified against NVIDIA's `flip-evaluator`:
-  <1e-4 on uniform fixtures); `mise run ablation` runs the Table-2 component sets
-  {None, Aux, Aux+Den, Aux+Enc, Aux+Enc+Den} × spp {8,16,32} on the cornell box
-  with identical budgets/seeds, scored on a common held-out set vs a 128-spp
-  reference cache. Paper directions reproduce where expected: **aux features
-  dominate perceptually** (SSIM +0.10–0.14 at every spp), **encoding alone hurts
-  on raw noisy targets**, and **encoding+denoising wins at 8 spp** (+2.35 dB, best
-  in all four metrics); at 16–32 spp the denoised-target advantage erodes —
-  flagged and analyzed, not smoothed over, in `docs/performance.md`.
-- **Real academic scene (Mitsuba gallery "Country Kitchen"):** 3.27 M segments
-  exported at 128×128 / 64 spp in **4.0 s** (129 MB cache); torch proxy (106,085
-  params, 430 KB) trains in **126 s** to held-out **PSNR 25.24 dB vs raw
-  GATHERLIGHT**, full-frame CPU inference 12 ms (84 Hz) at 128².
-- **Inference benchmark** (62,923-param sphere model, `out/bench.json`; Apple Silicon):
-
-  | device | 48² | 128² | 256² | 512² | 1024² |
-  |---|---|---|---|---|---|
-  | cpu | 170 Hz | 71 Hz | 21 Hz | 9.0 Hz | 2.8 Hz |
-  | mps | 481 Hz | 359 Hz | **117 Hz** | **37 Hz** | 8.6 Hz |
-
-  On this laptop's GPU (MPS) the proxy holds the paper's ~30–60 Hz interactive range
-  up to 512×512. The paper's RTX 5090 numbers at production resolution remain out of
-  reach without CUDA + tiny-cuda-nn, as documented.
-- **Interactive-rate statement:** proxy inference is linear in pixel count and
-  independent of scene complexity, as the paper argues — but the paper's 30–60 Hz is
-  measured on an RTX 5090 at production resolutions. On this CPU the same statement
-  holds only up to a few hundred pixels squared. Do not compare the absolute numbers.
+- **Decoupling validated:** GATHERLIGHT over the cache agrees with an independently
+  re-traced reference to PSNR 29.3 dB / 0.03% mean radiance.
+- **Paper-scale quality ceiling:** 8×256 hashgrid MLP, 50k iterations →
+  **35.19 dB** held-out PSNR on the Mitsuba cornell box (up from 25.87 dB at 3k
+  iterations).
+- **GPU path is real:** batched torch GATHERLIGHT is 5–7× faster than numpy on MPS
+  at ≥128²; inference sustains the paper's ~30–60 Hz interactive range up to 512×512
+  on this laptop's GPU.
+- **Compactness, demonstrated three ways:** packed fp16/rgb9e5 caches (3.2–4.2×
+  smaller), multi-view proxies (0.76 MB for 3 views vs 10.5 MB of caches), and
+  per-layer compositing proxies (latency-neutral vs. a full-scene relight).
+- **One honest negative result:** the paper's data-efficiency claim (Fig. 6) does
+  *not* reproduce at toy scale — a fixed image dataset beats the rolling training
+  pool by 1.8 dB at matched budget, traced to pool-size-limited light diversity
+  rather than smoothed over.
 
 ## Known deviations from the paper
 
-Documented substitutions, not silent approximations:
-
-- **CPU (or MPS) PyTorch, no tiny-cuda-nn, no Triton kernel** — architecture is
-  faithful, absolute performance is not.
-- **OIDN is optional** — the paper's denoiser is used when the `oidn` extra is
-  installed (`"denoise": {"method": "oidn"}`); the dependency-free default remains the
-  aux-guided joint bilateral filter (same guidance signal, weaker prior).
-- **Softplus output head** — the paper doesn't specify its head; softplus keeps
-  contributions positive.
-- **The Mitsuba exporter records paths from Python, not inside the renderer** — the
-  default drjit wavefront loop (`llvm_ad_rgb`/`metal_ad_rgb`, auto-detected) advances
-  all paths one bounce per kernel launch and pulls per-bounce results to numpy; a pure
-  scalar loop (`--mode scalar`, no JIT requirements) remains the fallback and
-  semantics reference. No volumes are exported (surface interactions only).
-- **numpy backend diverges further by design** (sinusoidal encoding, target-normalized
-  loss, extra derived geometric inputs) — it is the readable finite-difference-checked
-  reference, not the paper replica; the torch backend is the paper replica.
-- **FLIP uses edge-replicate convolution padding** instead of the reference
-  implementation's zero-fill, so constant images are preserved at borders (matters at
-  this repo's tiny resolutions); agreement with NVIDIA's `flip-evaluator` is <1e-4 on
-  uniform fixtures and ~0.1% on natural pairs.
-
-## Next steps
-
-Roadmap items 1–6, 9, and 10 are done — vectorized Mitsuba export + a real academic
-scene, volumetric path export (schema v2), batched device GATHERLIGHT + MPS
-training, quad/multi-light inverse optimization with the Table-3 grid, the §4.2
-packed cache layout (fp16 + rgb9e5), paper-scale training (8×256 / 50k iterations
-with cosine LR + checkpoint/resume), the Fig. 6 image-based baseline (whose
-paper claim does *not* reproduce at toy scale — see `docs/performance.md`), and the
-Table 2 / Fig. 7 component ablation with SSIM/FLIP metrics — all
-measured in `docs/performance.md`. Remaining candidate improvements —
-multi-view and per-layer NRPs (§6.1) — are written up as ready-to-run goal prompts
-(each with verification and performance-testing requirements) in
-[docs/roadmap.md](docs/roadmap.md).
+Documented substitutions, not silent approximations — full list with rationale in
+[docs/paper-mapping.md](docs/paper-mapping.md#known-deviations-summary): CPU/MPS
+PyTorch only (no tiny-cuda-nn/Triton), OIDN optional (bilateral filter is the
+dependency-free default), a softplus output head, Python-side path recording in the
+Mitsuba exporter, and a numpy backend that diverges further by design for
+readability.
 
 ## Layout
 
@@ -277,8 +109,8 @@ nrp/export_bench.py  exporter throughput benchmark (scalar vs wavefront)
 nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
 examples/            training configs + art-directed target builder
 examples/scenes/     gallery-scene download script (assets never committed)
-tests/               95 unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
-docs/                architecture, paper mapping, performance, status report, roadmap
+tests/               unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
+docs/                architecture, paper mapping, performance, status reports, roadmap
 flake.nix / mise.toml / .envrc   toolchain
 ```
 
