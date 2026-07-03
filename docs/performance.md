@@ -517,3 +517,59 @@ OIDN (RT, HDR, albedo+normal guides) on a flat-2.0 HDR signal with σ=0.5 noise:
 MSE 0.248 → 0.0054 (**46×**), mean 1.98 (HDR preserved). The bilateral fallback on
 the same fixture achieves ~2× (it is a much weaker prior — expected). Pool build cost
 with OIDN at 48×48: 0.35 s for 64 images (~5 ms/image).
+
+## Animated-light temporal NRP harness (extensions E1, static-camera slice)
+
+`nrp.torch_backend.animate` renders a keyframed light sequence from one resident
+torch proxy. During frame rendering the path cache is used only for pixel coordinates
+and G-buffer auxiliary tensors; no GATHERLIGHT segment traversal occurs. The committed
+demo command is `mise run animate`, using `examples/animated_lights.json`,
+`out/toy-torch/model.pt`, and `out/toy/path_cache.npz`. Outputs are
+`out/animate/frame_*.npy` plus `out/animate/report.json`.
+
+Measured on the standard 48×48 toy torch proxy (62,923 params, 3k iterations, CPU):
+
+| frame count | proxy ms/frame |
+|---:|---:|
+| 1 | 4.46 |
+| 8 | 4.72 |
+| 24 | 4.79 |
+| 48 | 4.76 |
+
+The near-flat per-frame latency is the expected static-scene/animated-light result:
+one cache-backed proxy can be evaluated frame by frame without retracing or gathering.
+The 24-frame output sequence took 0.116 s total (**4.81 ms/frame**, 208 fps equivalent)
+at 48×48.
+
+Temporal stability was measured as mean absolute per-pixel frame-to-frame delta under
+the smooth light path. The proxy delta was **0.0698** vs **0.0665** for the
+GATHERLIGHT reference sequence, a **1.05×** ratio. The reference sequence is computed
+only for this metric pass (`--measure-reference`); it is not part of the animation
+runtime path. The animated-camera/time-conditioned half of E1 is not implemented yet,
+so no held-out intermediate-camera PSNR or time-conditioned cache-size-vs-K result is
+claimed here.
+
+## Out-of-core foundation (extensions E5, sharded cache + tiled inference slice)
+
+`PathCache.save_sharded` writes a tile-sharded cache directory with a manifest and one
+compressed `.npz` per pixel tile; `PathCache.load_sharded` reconstructs the monolithic
+cache while restoring original segment order. `nrp.torch_backend.relight --tile-pixels`
+and `relight_tiled` render proxy outputs in bounded pixel chunks.
+
+Measured by `mise run out-of-core` (report: `out/out-of-core/report.json`) on a
+24×24 / 8 spp toy cache with 9,216 segments:
+
+| check | result |
+|---|---:|
+| monolithic cache size | 381,005 bytes |
+| sharded cache directory size | 423,777 bytes |
+| save sharded | 0.025 s |
+| load sharded | 0.011 s |
+| sharded vs monolithic GATHERLIGHT max diff | 0.0 |
+| tiled vs untiled proxy max diff | 0.0 |
+
+The sharded layout is larger at this tiny scale because each tile pays `.npz` and
+manifest overhead; that is expected and is not a production-scale memory claim. This
+slice proves exact cache reconstruction and chunked inference, but it does **not** yet
+satisfy E5's full completion criteria: there is no streamed training loader, no peak
+RSS comparison, and no 512² / 128 spp Mitsuba end-to-end run.

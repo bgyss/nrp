@@ -54,8 +54,11 @@ emission-weighted sum over lights (`gather_lights`, `torch_backend/relight.py`).
 
 **Sphere lights (4 params) and quad lights (8 params) — faithful.** Quad tangent
 frame is derived deterministically from the normal so (center, normal, w, h) fully
-determine the light. Textured / arbitrary-shape area lights: future work in the paper
-too.
+determine the light. Extension work now adds reference-GATHERLIGHT support for
+`TexturedQuadLight` and degree-2 `EnvironmentLight` (`nrp/lights.py`,
+`nrp/gather_light.py`), including constant-texture and constant-environment reduction
+tests. These richer lights are not yet wired into the torch proxy architecture or
+inverse optimizer, so the paper-faithful trained light types remain sphere and quad.
 
 ## §4 Implementation
 
@@ -229,8 +232,12 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
 All of the paper's stated limitations apply here too: fixed transport after caching
 (no post-hoc attenuation/exclusivity edits), undersampled-region artifacts,
 parameter-count-driven difficulty for complex light types, and in-memory path data.
-This implementation adds its own: toy scale, no fused kernels, and Monte Carlo noise
-floors at 16–24 spp that dominate SMAPE on near-zero pixels.
+Extension work has started chipping at the last item with a tile-sharded cache
+round-trip and tiled proxy inference (`PathCache.save_sharded`,
+`nrp.torch_backend.relight --tile-pixels`), but streamed training and a production-
+resolution run are not implemented yet. This implementation adds its own: toy scale,
+no fused kernels, and Monte Carlo noise floors at 16–24 spp that dominate SMAPE on
+near-zero pixels.
 
 ## Known deviations summary
 

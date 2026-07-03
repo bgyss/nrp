@@ -30,11 +30,15 @@ import json
 import numpy as np
 
 from .lights import (
+    EnvironmentLight,
     QuadLight,
     SphereLight,
+    TexturedQuadLight,
     light_from_dict,
     segment_hits_quad,
     segment_hits_sphere,
+    segment_quad_uv,
+    sh_basis_degree2,
 )
 from .path_cache import PathCache
 
@@ -68,14 +72,60 @@ def gather_throughput_quad(
     return _accumulate_hits(cache, hits)
 
 
-def gather_light(cache: PathCache, light: SphereLight | QuadLight) -> np.ndarray:
+def gather_textured_quad(cache: PathCache, light: TexturedQuadLight) -> np.ndarray:
+    """GATHER for a textured quad: segment throughput multiplied by hit texel RGB."""
+    if not cache.segment_count:
+        return np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    hits, uv = segment_quad_uv(
+        cache.seg_origin,
+        cache.seg_dir,
+        cache.seg_tmax,
+        light.center,
+        light.normal,
+        light.width,
+        light.height,
+    )
+    contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
+    if hits.any():
+        tex_h, tex_w = light.texture.shape[:2]
+        ij = np.floor(uv[hits] * np.array([tex_w, tex_h])).astype(np.int64)
+        ij[:, 0] = np.clip(ij[:, 0], 0, tex_w - 1)
+        ij[:, 1] = np.clip(ij[:, 1], 0, tex_h - 1)
+        texels = light.texture[ij[:, 1], ij[:, 0]]
+        np.add.at(contrib, cache.seg_pixel[hits], cache.seg_throughput[hits] * texels)
+    denom = np.maximum(cache.n_paths, 1).astype(np.float64)
+    contrib /= denom[:, None]
+    return contrib.reshape(cache.height, cache.width, 3)
+
+
+def gather_environment(cache: PathCache, light: EnvironmentLight) -> np.ndarray:
+    """Environment contribution for escaped path segments (`seg_tmax == inf`)."""
+    if not cache.segment_count:
+        return np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    escaped = np.isinf(cache.seg_tmax)
+    contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
+    if escaped.any():
+        radiance = sh_basis_degree2(cache.seg_dir[escaped]) @ light.coeffs
+        np.add.at(contrib, cache.seg_pixel[escaped], cache.seg_throughput[escaped] * radiance)
+    denom = np.maximum(cache.n_paths, 1).astype(np.float64)
+    contrib /= denom[:, None]
+    return contrib.reshape(cache.height, cache.width, 3)
+
+
+def gather_light(
+    cache: PathCache, light: SphereLight | QuadLight | TexturedQuadLight | EnvironmentLight
+) -> np.ndarray:
     """Full per-pixel contribution of one light: GATHERtype scaled by emission rgb."""
     if isinstance(light, SphereLight):
         return gather_throughput(cache, light.center, light.radius) * light.rgb
-    return (
+    if isinstance(light, QuadLight):
+        return (
         gather_throughput_quad(cache, light.center, light.normal, light.width, light.height)
         * light.rgb
-    )
+        )
+    if isinstance(light, TexturedQuadLight):
+        return gather_textured_quad(cache, light)
+    return gather_environment(cache, light)
 
 
 def gather_lights(cache: PathCache, lights: list) -> np.ndarray:

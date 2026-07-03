@@ -9,7 +9,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from nrp.gather_light import gather_light  # noqa: E402
+from nrp.gather_light import gather_light, gather_lights  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.torch_backend.denoise import joint_bilateral_denoise  # noqa: E402
 from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
@@ -23,6 +23,12 @@ from nrp.torch_backend.optimize_lights import (  # noqa: E402
     ReparamSphereLights,
     optimize,
     reinhard,
+)
+from nrp.torch_backend.relight import (  # noqa: E402
+    relight,
+    relight_tiled,
+    render_quality_tier,
+    write_image_with_metadata,
 )
 from nrp.torch_backend.sampling import sample_light, sample_positions  # noqa: E402
 from nrp.torch_backend.train import light_param_vector, load_config, train  # noqa: E402
@@ -139,6 +145,53 @@ class ModelTests(unittest.TestCase):
         )
         self.assertEqual(qp.shape, (4, 8))
         torch.testing.assert_close(qp[0, 3:6], torch.tensor([0.0, 0.0, 1.0]))
+
+    def test_tiled_relight_matches_untiled(self):
+        cache = trace_path_cache(5, 4, 2, 1, seed=9)
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "finest_resolution": 5},
+        )
+        lights = [SphereLight(center=[0.0, 0.5, 0.0], radius=0.2, rgb=[1.0, 0.5, 2.0])]
+        np.testing.assert_allclose(
+            relight_tiled(model, cache, lights, tile_pixels=3),
+            relight(model, cache, lights),
+            rtol=0.0,
+            atol=1e-6,
+        )
+
+    def test_residual_quality_tier_is_exact_at_approval_light(self):
+        cache = trace_path_cache(5, 4, 2, 1, seed=10)
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "finest_resolution": 5},
+        )
+        lights = [SphereLight(center=[0.0, 0.5, 0.0], radius=0.2, rgb=[1.0, 0.5, 2.0])]
+        image, metadata = render_quality_tier(
+            model,
+            cache,
+            lights,
+            quality="preview",
+            residual_lights=lights,
+        )
+        np.testing.assert_allclose(image, gather_lights(cache, lights), rtol=0.0, atol=1e-12)
+        self.assertEqual(metadata["quality"], "preview")
+        self.assertTrue(metadata["residual_applied"])
+        self.assertEqual(metadata["source"], "proxy_plus_cached_residual")
+
+    def test_relight_metadata_sidecar_is_written(self):
+        image = np.zeros((2, 2, 3))
+        metadata = {"quality": "draft", "source": "gatherlight_cached"}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "image.npy")
+            write_image_with_metadata(path, image, metadata)
+            np.testing.assert_array_equal(np.load(path), image)
+            with open(f"{path}.json") as f:
+                written = json.load(f)
+        self.assertEqual(written["quality"], "draft")
+        self.assertEqual(written["source"], "gatherlight_cached")
 
 
 class DenoiseTests(unittest.TestCase):
