@@ -43,6 +43,12 @@ SPHERE_ALBEDO = np.array([0.55, 0.55, 0.70])
 CAM_POS = np.array([0.5, 0.5, 0.08])
 CAM_FOV_DEG = 68.0  # horizontal
 
+#: Compositing layers (§6.1, Fig. 11): the scene decomposes into the foreground
+#: sphere and the background box by *first-hit* ownership. A layer's paths still
+#: bounce off the full scene geometry; the layer only owns the paths (and pixels)
+#: whose first hit lands on its object.
+LAYERS = ("sphere", "box")
+
 
 def _camera_rays(
     width: int, height: int, jitter: np.ndarray | None
@@ -67,7 +73,8 @@ def _camera_rays(
 def _intersect_scene(origins: np.ndarray, dirs: np.ndarray):
     """Nearest hit for rays strictly inside the closed box.
 
-    Returns (t, normal, albedo) — every ray hits something (the box is closed)."""
+    Returns (t, normal, albedo, is_sphere) — every ray hits something (the box is
+    closed); `is_sphere` marks rays whose nearest hit is the sphere (layer id)."""
     n = origins.shape[0]
     t_best = np.full(n, np.inf)
     normal = np.zeros((n, 3))
@@ -108,7 +115,7 @@ def _intersect_scene(origins: np.ndarray, dirs: np.ndarray):
         nrm[flip] *= -1.0
         normal[hit_s] = nrm
         albedo[hit_s] = SPHERE_ALBEDO
-    return t_best, normal, albedo
+    return t_best, normal, albedo, hit_s
 
 
 def sample_free_flight(rng: np.random.Generator, sigma_t: float, n: int) -> np.ndarray:
@@ -152,6 +159,7 @@ def trace_path_cache(
     max_bounces: int,
     seed: int,
     medium: dict | None = None,
+    layer: str | None = None,
 ) -> PathCache:
     """Trace `spp` light-agnostic paths per pixel and return the full PathCache.
 
@@ -161,7 +169,21 @@ def trace_path_cache(
     flight distance); the scatter event multiplies throughput by the single-scattering
     albedo sigma_s/sigma_t and the path continues in a uniformly sampled direction.
     A bounce is consumed per event, surface or volume.
+
+    `layer`, if given ("sphere" or "box"), records only the paths whose *first hit*
+    is on that layer's geometry (§6.1 compositing). The full scene is still traced —
+    same rng stream, same bounces off all geometry — so for a fixed seed the two
+    layer caches partition the full cache's segments exactly, and their GATHERLIGHT
+    images sum to the full-scene image *per segment* (`n_paths` stays the full spp
+    so each layer keeps the full-estimator denominator). The G-buffer aux stays the
+    full scene's (it describes the camera's first hit, shared by both layers).
     """
+    if layer is not None and layer not in LAYERS:
+        raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
+    if layer is not None and medium is not None:
+        raise ValueError(
+            "layered export is surface-only (no medium): scatter vertices have no first-hit owner"
+        )
     rng = np.random.default_rng(seed)
     n_pixels = width * height
     seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput = [], [], [], [], []
@@ -171,17 +193,20 @@ def trace_path_cache(
         origins, dirs = _camera_rays(width, height, jitter)
         throughput = np.ones((n_pixels, 3))
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
+        keep = np.ones(n_pixels, dtype=bool)
         for _bounce in range(max_bounces):
-            t, normal, albedo = _intersect_scene(origins, dirs)
+            t, normal, albedo, is_sphere = _intersect_scene(origins, dirs)
+            if _bounce == 0 and layer is not None:
+                keep = is_sphere if layer == "sphere" else ~is_sphere
             if medium is not None:
                 d_flight = sample_free_flight(rng, float(medium["sigma_t"]), origins.shape[0])
                 scatter = d_flight < t
                 t = np.where(scatter, d_flight, t)
-            seg_pixel.append(pixel_ids.copy())
-            seg_origin.append(origins.copy())
-            seg_dir.append(dirs.copy())
-            seg_tmax.append(t.copy())
-            seg_throughput.append(throughput.copy())
+            seg_pixel.append(pixel_ids[keep].copy())
+            seg_origin.append(origins[keep].copy())
+            seg_dir.append(dirs[keep].copy())
+            seg_tmax.append(t[keep].copy())
+            seg_throughput.append(throughput[keep].copy())
             hit_p = origins + dirs * t[:, None]
             if medium is not None:
                 iso = _isotropic_sample(rng, origins.shape[0])
@@ -201,7 +226,7 @@ def trace_path_cache(
     # surface-only even with a medium: albedo/depth/normal are G-buffer features of
     # the first *surface* hit (a scatter vertex has no meaningful normal or albedo).
     origins0, dirs0 = _camera_rays(width, height, None)
-    t0, normal0, albedo0 = _intersect_scene(origins0, dirs0)
+    t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0)
     position0 = origins0 + dirs0 * t0[:, None]
 
     cache = PathCache(
@@ -221,6 +246,19 @@ def trace_path_cache(
     )
     cache.validate()
     return cache
+
+
+def layer_ownership_mask(width: int, height: int, layer: str) -> np.ndarray:
+    """(H, W) bool mask of the pixels a layer owns: where the deterministic
+    pixel-center primary ray's first hit lands on the layer's geometry — the same
+    convention as the aux G-buffer. The two layers' masks are disjoint and cover
+    every pixel (the box is closed, so every primary ray hits something)."""
+    if layer not in LAYERS:
+        raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
+    origins0, dirs0 = _camera_rays(width, height, None)
+    _, _, _, is_sphere = _intersect_scene(origins0, dirs0)
+    mask = is_sphere if layer == "sphere" else ~is_sphere
+    return mask.reshape(height, width)
 
 
 def render_reference(
@@ -247,6 +285,12 @@ def main() -> None:
     parser.add_argument("--bounces", type=int, default=3)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument(
+        "--layer",
+        choices=LAYERS,
+        default=None,
+        help="record only paths whose first hit is on this layer (compositing, §6.1)",
+    )
+    parser.add_argument(
         "--medium-sigma-t",
         type=float,
         default=0.0,
@@ -264,12 +308,13 @@ def main() -> None:
     if args.medium_sigma_t > 0.0:
         medium = {"sigma_t": args.medium_sigma_t, "albedo": args.medium_albedo}
     cache = trace_path_cache(
-        args.width, args.height, args.spp, args.bounces, args.seed, medium=medium
+        args.width, args.height, args.spp, args.bounces, args.seed, medium=medium, layer=args.layer
     )
     cache.save(args.out)
+    layer_note = f" (layer: {args.layer})" if args.layer else ""
     print(
         f"traced {args.spp} spp x {args.bounces} bounces at {args.width}x{args.height}: "
-        f"{cache.segment_count} segments -> {args.out}"
+        f"{cache.segment_count} segments{layer_note} -> {args.out}"
     )
 
 

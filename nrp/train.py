@@ -46,7 +46,13 @@ def ensure_cache(cfg: dict) -> PathCache:
     t = cfg["trace"]
     print(f"cache missing; tracing {t['width']}x{t['height']} @ {t['spp']} spp ...")
     cache = trace_path_cache(
-        t["width"], t["height"], t["spp"], t["bounces"], t["seed"], medium=t.get("medium")
+        t["width"],
+        t["height"],
+        t["spp"],
+        t["bounces"],
+        t["seed"],
+        medium=t.get("medium"),
+        layer=t.get("layer"),
     )
     os.makedirs(os.path.dirname(cfg["cache"]), exist_ok=True)
     cache.save(cfg["cache"])

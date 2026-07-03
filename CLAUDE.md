@@ -122,7 +122,12 @@ that also renders the *independent* emissive-inline reference used by
 with a homogeneous medium (`--medium-sigma-t`, `--medium-albedo`): free-flight-sampled
 scatter vertices end segments early (isotropic phase, single-scattering-albedo
 throughput factor), so lights inside the medium work through plain GATHERLIGHT —
-transmittance is implicit in the segment-length distribution.
+transmittance is implicit in the segment-length distribution. `--layer sphere|box`
+(§6.1 compositing) records only paths whose first hit is on that layer's geometry
+while still tracing the full scene, so the two layer caches partition the full
+cache's segments and their gathers sum exactly to the full-scene gather
+(`layer_ownership_mask` gives per-layer pixel ownership; also available as
+`trace.layer` in training configs).
 `nrp/mitsuba_exporter.py` (extra: `mitsuba`) drives Mitsuba 3 over any scene XML or
 `builtin:cornell-box`; emitters in the scene are ignored since this is the
 light-agnostic pass. Default is a drjit wavefront loop (`llvm_ad_rgb`/`metal_ad_rgb`,
@@ -161,6 +166,9 @@ on.
   (no cache access at edit time), one image per view; `examples/multiview.py`
   (`mise run multiview`) exports the views (exporter `--sensor-index` /
   `--cam-origin` camera override), trains them, and measures latency vs N.
+- `composite.py` — §6.1 per-layer compositing: relight one layer's proxy under a new
+  light and add the other layer's fixed image (`examples/layers.py` / `mise run
+  layers` builds the layer caches, trains per-layer proxies, and writes the demo).
 - `bench.py` — cross-device (cpu/mps/cuda) full-frame inference benchmark with warmup
   and proper synchronization.
 

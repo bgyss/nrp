@@ -205,8 +205,17 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   3 cornell-box views, trains one proxy per view, and verifies cross-view
   consistency; `nrp.torch_backend.relight_multiview` applies one light edit across
   all resident view proxies with no path-cache access (latency scales linearly in N;
-  numbers in `docs/performance.md`). Per-layer compositing NRPs — not implemented
-  (roadmap item 8).
+  numbers in `docs/performance.md`).
+- **§6.1 per-layer compositing NRPs (Fig. 11) — implemented** (toy tracer):
+  `nrp.toy_tracer --layer sphere|box` records only paths whose first hit is on the
+  layer's geometry (full scene still traced, so the two layer caches partition the
+  full cache's segments and their GATHERLIGHT images sum to the full-scene image
+  exactly — the linearity property compositing relies on, unit-tested);
+  `layer_ownership_mask` gives per-layer pixel ownership; `examples/layers.py`
+  (`mise run layers`) trains one proxy per layer plus a full-scene control and
+  writes the composited-edit demo; `nrp.torch_backend.composite` is the CLI that
+  relights one layer while holding the other layer's image fixed. Numbers in
+  `docs/performance.md`.
 - **§6.2 art-directed edits — implemented**: `examples/make_art_target.py` builds a
   painted objective + emphasis mask + protected region; `--mask` / `--protect` /
   `--protect-base` / `--protect-lambda` implement weighted objectives and

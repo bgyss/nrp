@@ -438,6 +438,45 @@ inference table above).
 view proxy — **0.76 MB total for all 3 views**, vs 3 path caches of 3.3–3.7 MB
 `.npz` each (10.5 MB total) that are *not* needed at edit time.
 
+## Per-layer compositing NRPs (roadmap item 8, §6.1 / Fig. 11)
+
+The toy scene split into first-hit layers — foreground sphere vs background box
+(`nrp.toy_tracer --layer`) — at 48×48 / 24 spp / 3 bounces, seed 1. Layer paths
+still bounce off the full scene; a layer records only the paths whose *first hit*
+is on its geometry, keeping the full-spp estimator denominator. Produced by
+`mise run layers` (report: `out/layers/report.json`; composited demo image:
+`out/layers/composite_demo.npy` — box layer held fixed under a warm light, sphere
+layer relit by its proxy under a cool one).
+
+**Linearity (the property compositing relies on):** the two layer caches partition
+the full cache's 165,888 segments exactly (43,701 sphere + 122,187 box), so over 12
+validation lights the sum of the layer GATHERLIGHT images reproduces the full-scene
+image to `np.allclose` — min PSNR 338 dB, i.e. float round-off, comfortably past the
+30 dB requirement.
+
+**Per-layer proxies** (identical configs: 62,923 params, 3k iterations, pool 64,
+bilateral denoise, seed 0):
+
+| proxy | segments | train (s) | held-out PSNR (dB) | SMAPE |
+|---|---|---|---|---|
+| full scene | 165,888 | 39.5 | 21.78 | 0.844 |
+| sphere layer | 43,701 | 36.1 | 24.57 | 0.346 |
+| box layer | 122,187 | 38.3 | 24.81 | 0.692 |
+
+**Owned-pixel quality:** on each layer's own pixels (proxy vs its own GATHERLIGHT
+reference, shared peak), the layer proxies don't just match the full-scene proxy —
+they beat it: sphere-owned pixels (609 px) 22.15 dB vs 17.47 dB (**+4.68 dB**),
+box-owned pixels (1,695 px) 21.01 dB vs 17.48 dB (**+3.53 dB**). The roadmap asked
+whether layer proxies stay within 1 dB of the full proxy; at this budget the result
+is well outside that band *in the layers' favor* — each layer's radiance is a simpler
+function (one object's first-hit transport instead of a mixture), so specialization
+wins at equal capacity and iterations.
+
+**Composite edit latency:** relighting the sphere layer and adding the fixed box
+image costs **3.95 ms** vs **4.01 ms** for a full-scene proxy relight (CPU, 48×48,
+30 frames) — compositing is latency-neutral at equal network size; its value is the
+artistic control (hold one layer's lighting fixed) plus the per-layer quality above.
+
 ## Packed cache layout (roadmap item 5, §4.2: fp16 + rgb9e5)
 
 `PathCache.save(path, compressed=True)` writes segment geometry and G-buffer aux as

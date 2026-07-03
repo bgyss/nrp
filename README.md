@@ -145,7 +145,7 @@ uv run ruff check .                            # or: mise run lint
 | §6.2 art-directed edits with constraint masks | **Implemented** | `--mask`, `--protect`; `examples/make_art_target.py` |
 | §6.3 generative targets (Qwen-Image-Edit) | Out of scope | any (H,W,3) `.npy` works as `--target` |
 | §6.1 multi-view NRPs | **Implemented** | per-view camera override in the exporter (`--sensor-index`, `--cam-origin/-target/-up`, `--fov`); `examples/multiview.py` (`mise run multiview`) trains one proxy per view; `nrp.torch_backend.relight_multiview` applies one light edit across all views with no cache access |
-| §6.1 compositing-layer NRPs | Not implemented | single layer (roadmap item 8) |
+| §6.1 compositing-layer NRPs | **Implemented** (toy tracer) | `nrp.toy_tracer --layer sphere\|box` splits paths by first-hit owner (layer gathers sum *exactly* to the full-scene gather); `examples/layers.py` (`mise run layers`) trains per-layer proxies; `nrp.torch_backend.composite` relights one layer while holding the other's image fixed |
 | §4.1 Mitsuba 3 path-data pass (academic scenes) | **Implemented** (optional extra) | `nrp/mitsuba_exporter.py`: BSDF sampling, no NEE, throughput RR, aux G-buffer; drjit wavefront loop (39–59× over the scalar fallback); XML scenes (gallery scenes via `examples/scenes/download_scene.py`) or builtin cornell box |
 | §5 production scenes (Hyperion, 512 spp, RTX 5090) | Out of scope | Hyperion is Disney-internal; any Mitsuba XML scene works via the exporter |
 
