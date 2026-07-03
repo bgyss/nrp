@@ -1,8 +1,7 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
-
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
@@ -11,6 +10,7 @@ from nrp.gather_light import gather_light  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
 from nrp.toy_tracer import render_reference, trace_path_cache  # noqa: E402
+from nrp.train import ensure_cache  # noqa: E402
 
 
 class LightAwareSamplingTests(unittest.TestCase):
@@ -56,6 +56,29 @@ class LightAwareSamplingTests(unittest.TestCase):
             guide_probability=0.5,
         )
         self.assertGreater(psnr(gather_light(cache, light), reference), 18.0)
+
+    def test_trace_config_forwards_guide_region(self):
+        region = {"type": "sphere", "center": [0.45, 0.75, 0.45], "radius": 0.12}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_cfg = {
+                "cache": str(root / "standard.npz"),
+                "trace": {"width": 14, "height": 14, "spp": 4, "bounces": 3, "seed": 9},
+            }
+            guided_cfg = {
+                "cache": str(root / "guided.npz"),
+                "trace": {
+                    **base_cfg["trace"],
+                    "light_region": region,
+                    "guide_probability": 0.5,
+                },
+            }
+            standard = ensure_cache(base_cfg)
+            guided = ensure_cache(guided_cfg)
+        self.assertGreater(
+            region_density(guided, region)["region_hit_fraction"],
+            2.0 * region_density(standard, region)["region_hit_fraction"],
+        )
 
 
 if __name__ == "__main__":

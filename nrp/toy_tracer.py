@@ -160,7 +160,9 @@ def _cosine_pdf(normal: np.ndarray, dirs: np.ndarray) -> np.ndarray:
     return cos / np.pi
 
 
-def _sample_cone(axis: np.ndarray, cos_theta_max: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+def _sample_cone(
+    axis: np.ndarray, cos_theta_max: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
     """Uniform directions inside a cone around unit `axis`."""
     n = axis.shape[0]
     u1 = rng.random(n)

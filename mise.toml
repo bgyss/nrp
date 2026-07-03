@@ -99,6 +99,10 @@ run = "uv run python examples/dynamic_geometry.py --out out/dynamic-geometry/rep
 description = "E3 light-aware toy-tracer sampling density and consistency report"
 run = "uv run python examples/light_aware_sampling.py --out out/light-aware-sampling/report.json"
 
+[tasks.light-aware-proxy-ab]
+description = "E3 toy standard-vs-guided proxy A/B report"
+run = "uv run python examples/light_aware_proxy_ab.py --out out/light-aware-proxy-ab/report.json"
+
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"
 run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"

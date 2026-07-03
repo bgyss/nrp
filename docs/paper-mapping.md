@@ -21,7 +21,11 @@ GATHERLIGHT verbatim: every segment crossing the light accumulates
 **Importance sampling constraints — faithful.** Both producers use BSDF sampling with
 no next-event estimation (NEE would bake light knowledge into the paths). The Mitsuba
 exporter applies throughput-based Russian roulette as the paper describes; the toy
-tracer uses a fixed bounce count.
+tracer uses a fixed bounce count. Extension E3 adds an optional toy-tracer sampler
+that mixes cosine BSDF sampling with a cone toward a declared spherical light-placement
+region, using mixture-pdf throughput weights. This is an experiment around the
+paper's undersampled-region limitation, not a replacement for the paper-faithful
+default path-data pass.
 
 **Consistency validation (ours, not the paper's):** `nrp/compare_reference.py`
 re-traces the toy scene with an independent seed and evaluates the emissive light
@@ -254,13 +258,15 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
 All of the paper's stated limitations apply here too: fixed transport after caching
 (no post-hoc attenuation/exclusivity edits), undersampled-region artifacts,
 parameter-count-driven difficulty for complex light types, and in-memory path data.
-Extension work has started chipping at these limits with one-bounce dynamic-geometry
-cache splicing (`nrp.dynamic_geometry`), a tile-sharded cache round-trip and tiled
-proxy inference (`PathCache.save_sharded`, `nrp.torch_backend.relight --tile-pixels`),
-but multi-bounce invalidation, proxy fine-tuning, streamed training, and a production-
-resolution run are not implemented yet. This implementation adds its own: toy scale,
-no fused kernels, and Monte Carlo noise floors at 16–24 spp that dominate SMAPE on
-near-zero pixels.
+Extension work has started chipping at these limits with light-aware toy-tracer
+sampling for declared placement regions, one-bounce dynamic-geometry cache splicing
+(`nrp.dynamic_geometry`), a tile-sharded cache round-trip, streamed fixed-light target
+construction, and tiled proxy inference (`PathCache.save_sharded`,
+`nrp.torch_backend.relight --tile-pixels`), but occluder failure reproduction, the
+target E3 proxy margin, multi-bounce invalidation, proxy fine-tuning, streamed
+optimizer training, and a production-resolution run are not implemented yet. This
+implementation adds its own: toy scale, no fused kernels, and Monte Carlo noise floors
+at 16–24 spp that dominate SMAPE on near-zero pixels.
 
 ## Known deviations summary
 

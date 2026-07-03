@@ -549,12 +549,14 @@ runtime path. The animated-camera/time-conditioned half of E1 is not implemented
 so no held-out intermediate-camera PSNR or time-conditioned cache-size-vs-K result is
 claimed here.
 
-## Out-of-core foundation (extensions E5, sharded cache + tiled inference slice)
+## Out-of-core foundation (extensions E5, sharded cache + streamed-target slice)
 
 `PathCache.save_sharded` writes a tile-sharded cache directory with a manifest and one
 compressed `.npz` per pixel tile; `PathCache.load_sharded` reconstructs the monolithic
 cache while restoring original segment order. `nrp.torch_backend.relight --tile-pixels`
-and `relight_tiled` render proxy outputs in bounded pixel chunks.
+and `relight_tiled` render proxy outputs in bounded pixel chunks. The out-of-core
+report also streams shard files directly to build a fixed-light supervised target
+table, without reconstructing the full segment arrays.
 
 Measured by `mise run out-of-core` (report: `out/out-of-core/report.json`) on a
 24×24 / 8 spp toy cache with 9,216 segments:
@@ -563,16 +565,21 @@ Measured by `mise run out-of-core` (report: `out/out-of-core/report.json`) on a
 |---|---:|
 | monolithic cache size | 381,005 bytes |
 | sharded cache directory size | 423,777 bytes |
-| save sharded | 0.025 s |
-| load sharded | 0.011 s |
+| save sharded | 0.026 s |
+| load sharded | 0.013 s |
 | sharded vs monolithic GATHERLIGHT max diff | 0.0 |
+| streamed target max diff vs monolithic | 3.33e-16 |
+| streamed target PSNR vs monolithic | 334.67 dB |
+| streamed peak loaded segments | 1,024 (11.1% of cache) |
+| streamed target pass | 0.0076 s |
 | tiled vs untiled proxy max diff | 0.0 |
 
 The sharded layout is larger at this tiny scale because each tile pays `.npz` and
 manifest overhead; that is expected and is not a production-scale memory claim. This
-slice proves exact cache reconstruction and chunked inference, but it does **not** yet
-satisfy E5's full completion criteria: there is no streamed training loader, no peak
-RSS comparison, and no 512² / 128 spp Mitsuba end-to-end run.
+slice now proves exact cache reconstruction, streamed target construction at toy
+scale, and chunked inference, but it does **not** yet satisfy E5's full completion
+criteria: the actual torch optimizer still trains from monolithic caches, there is no
+peak RSS process measurement, and there is no 512² / 128 spp Mitsuba end-to-end run.
 
 ## Dynamic geometry cache invalidation (extensions E2, one-bounce slice)
 
@@ -604,6 +611,53 @@ falls quickly as the sphere moves. The important caveat is structural: once seco
 bounces are enabled, unchanged first-hit pixels can still see changed indirect
 transport. The full E2 criterion therefore remains open until multi-bounce
 invalidation and warm-started proxy fine-tuning are implemented and measured.
+
+## Light-aware path sampling (extensions E3, spherical guide-region slice)
+
+`trace_path_cache` now accepts a spherical light-placement region and a guide
+probability. At eligible surface bounces, the sampler mixes the existing
+cosine-weighted Lambertian direction with a uniform solid-angle cone toward the
+declared region, using `brdf * cos / mixture_pdf` throughput weights. If the guide
+cone is not fully above the surface hemisphere, that ray falls back to cosine
+sampling.
+
+Measured by `mise run light-aware-sampling` (report:
+`out/light-aware-sampling/report.json`) on a 32×32 / 12 spp / 3-bounce toy cache with
+guide probability 0.5:
+
+| check | standard | guided |
+|---|---:|---:|
+| segments | 36,864 | 36,864 |
+| region-hit fraction | 5.18% | 35.03% |
+| trace time | 65.28 ms | 28.04 ms |
+| PSNR vs independent guided reference | 28.68 dB | 32.98 dB |
+| SMAPE vs independent guided reference | 1.183 | 0.270 |
+
+The equal-segment cache puts **6.76×** more segments through the declared placement
+region and improves the direct GATHERLIGHT estimate for a light in that region by
+**4.29 dB** in this toy setup. Cache size is unchanged because the sampler changes
+directions, not path count. This satisfies the low-level E3 sampling-density and
+unbiasedness-consistency slice, but not the full E3 criterion by itself: it does not
+train proxies or reproduce the occluder/lamp-shade failure.
+
+`mise run light-aware-proxy-ab` adds a toy standard-vs-guided proxy A/B on the same
+placement region (report: `out/light-aware-proxy-ab/report.json`). Both runs use
+20×20 / 8 spp caches, identical segment budgets, the same 2,743-parameter sphere
+proxy, and 350 CPU training iterations:
+
+| check | standard | guided |
+|---|---:|---:|
+| region-hit fraction | 4.98% | 34.57% |
+| mean held-out validation PSNR | 13.68 dB | 14.83 dB |
+| fixed in-region light PSNR | 10.24 dB | 11.88 dB |
+| fixed open-region light PSNR | 4.70 dB | 14.46 dB |
+| train time | 0.41 s | 0.40 s |
+
+The guided proxy improves the fixed in-region light by **1.64 dB** and the open-region
+fixture by **9.77 dB** at equal cache size. This is positive evidence that the guided
+cache can help proxy training at toy scale, but it still misses E3's target
+improvement of at least 3 dB for the occluded-region reproduction. A larger or more
+targeted occluder fixture is still required before E3 can be marked complete.
 
 ## Quality-tier relight ladder (extensions E9, CLI plumbing slice)
 
