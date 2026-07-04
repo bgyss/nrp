@@ -1,0 +1,4 @@
+interface:
+  display_name: "NRP Torch Proxy Workflow"
+  short_description: "Work on torch proxy training and inverse lighting"
+  default_prompt: "Use $nrp-torch-proxy-workflow to modify torch proxy training, relighting, or inverse optimization."

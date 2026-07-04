@@ -25,6 +25,19 @@ Full docs live in `docs/`: `quickstart.md` (every CLI), `architecture.md` (pipel
 diagram + module-by-module notes), `paper-mapping.md` (section-by-section paper
 coverage table), `performance.md`, `status/` (dated status reports), `roadmap.md`.
 
+## Repo-local skills
+
+For repeated development workflows, use the repo-local skills under `skills/`:
+
+- `skills/nrp-path-cache-and-gather/SKILL.md` for path-cache schema, producers,
+  lights, numpy GATHERLIGHT, torch gather parity, packed caches, and volume segment
+  semantics.
+- `skills/nrp-torch-proxy-workflow/SKILL.md` for the PyTorch hashgrid proxy, pool
+  training, checkpoints, relighting CLIs, device handling, and inverse optimization.
+- `skills/nrp-experiment-reporting/SKILL.md` for benchmarks, roadmap experiments,
+  JSON evidence under `out/`, and updates to `docs/performance.md` /
+  `docs/paper-mapping.md`.
+
 ## Toolchain and commands
 
 Managed by nix (tool source of truth) + mise (task runner) + uv (Python/venv).

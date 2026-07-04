@@ -1,0 +1,4 @@
+interface:
+  display_name: "NRP Path Cache and Gather"
+  short_description: "Change path-cache and GATHERLIGHT semantics"
+  default_prompt: "Use $nrp-path-cache-and-gather to update path-cache or GATHERLIGHT behavior in this repo."

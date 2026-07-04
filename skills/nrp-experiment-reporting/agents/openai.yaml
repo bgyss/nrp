@@ -1,0 +1,4 @@
+interface:
+  display_name: "NRP Experiment Reporting"
+  short_description: "Run experiments and update evidence docs"
+  default_prompt: "Use $nrp-experiment-reporting to run an NRP experiment and update JSON reports plus performance docs."
