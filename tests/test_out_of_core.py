@@ -7,7 +7,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from examples.out_of_core import cache_segment_bytes, stream_shard_targets  # noqa: E402
+from examples.out_of_core import (  # noqa: E402
+    cache_segment_bytes,
+    stream_shard_targets,
+    train_image_proxy_monolithic,
+    train_image_proxy_streamed,
+)
 from nrp.gather_light import gather_light  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
@@ -24,10 +29,19 @@ class OutOfCoreTests(unittest.TestCase):
             shard_dir = Path(tmp) / "shards"
             cache.save_sharded(str(shard_dir), tile_size=4)
             streamed, stats = stream_shard_targets(shard_dir, lights)
+            mono_proxy, _ = train_image_proxy_monolithic(streamed, epochs=3, lr=0.5)
+            streamed_proxy, opt_stats = train_image_proxy_streamed(
+                shard_dir, lights, epochs=3, lr=0.5
+            )
         mono = sum(gather_light(cache, light) for light in lights) / len(lights)
         np.testing.assert_allclose(streamed, mono, atol=1e-12)
+        np.testing.assert_allclose(streamed_proxy, mono_proxy, atol=1e-12)
         self.assertLess(stats["stream_peak_segments_loaded"], cache.segment_count)
         self.assertLess(stats["stream_peak_segment_bytes_loaded"], cache_segment_bytes(cache))
+        self.assertLess(opt_stats["streamed_optimizer_peak_segments_loaded"], cache.segment_count)
+        self.assertLess(
+            opt_stats["streamed_optimizer_peak_segment_bytes_loaded"], cache_segment_bytes(cache)
+        )
         self.assertGreater(stats["stream_peak_shard_file_bytes"], 0)
         self.assertGreater(stats["stream_process_rss_after_bytes"], 0)
 

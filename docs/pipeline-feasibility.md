@@ -99,14 +99,17 @@ Measured support:
 - E5 in `out/out-of-core/report.json` shows streamed fixed-light target construction
   matches monolithic targets to max error 3.33e-16 while loading only 11.1% of cache
   segments and 11.1% of resident segment bytes at once, a 9.0x resident segment-memory
-  reduction estimate at toy scale.
+  reduction estimate at toy scale. The same report now trains a tiny streamed
+  per-pixel image-proxy optimizer to the same result as the monolithic optimizer
+  (max diff 3.33e-16).
 
 Blocking evidence:
 
 - E1 animated camera has only an image-space interpolation baseline; the requested
   single neural proxy conditioned on time/camera inputs is not implemented.
 - E9 has no high-spp production-scale cache and no production supervisor trust verdict.
-- E5 has no 512x512 / 128 spp Mitsuba run and no production-scale peak RSS comparison.
+- E5 has no 512x512 / 128 spp Mitsuba run, no production-scale peak RSS comparison,
+  and no streamed TorchNRP optimizer yet.
 
 Engineering versus structural:
 
@@ -134,7 +137,10 @@ Measured support:
   and 8x8 RGB textures with <= 2.34e-16 relative texture error on full-rank reference
   fixtures. Its equal-observation linear proxy-scaling baseline shows 2x2/4x4 remain
   full-rank at 48 observations while 8x8 is underdetermined and drops to 10.66 dB
-  held-out PSNR.
+  held-out PSNR. The same report now includes a compact learned texture-embedding
+  torch proxy with mean held-out PSNR of 20.08, 21.19, and 22.27 dB for 2x2, 4x4,
+  and 8x8 textures, plus a first-class `textured_quad` TorchNRP train/relight smoke
+  with 20 light parameters and 12.31 dB held-out relight PSNR for a 2x2 texture.
 - E8 in `out/production-controls/report.json` proves exact gather-time light linking
   algebra for the toy layer partition, measures attenuation controls, keeps one
   precomputed binary linking toggle live through a table proxy, and keeps one
@@ -142,8 +148,8 @@ Measured support:
 
 Blocking evidence:
 
-- E4 richer-light TorchNRP conditioning on learned texture embeddings is still
-  missing.
+- E4 is now complete at toy scale, but the first-class TorchNRP smoke only covers
+  2x2 textures; higher-resolution first-class runs remain a scale/quality follow-up.
 - E7 stylized target realization remains physically limited: the report is useful
   precisely because it exposes the gap between an arbitrary image target and a
   physically realizable lighting setup. E7 still has no high-quality proxy run and no
@@ -170,8 +176,8 @@ Engineering versus structural:
 
 - Finish E1 animated camera/time-conditioned proxy validation.
 - Finish E2 multi-bounce invalidation and warm-started TorchNRP weight fine-tuning.
-- Finish E4 richer-light TorchNRP conditioning on learned texture embeddings.
-- Finish E5 streamed optimizer training plus 512x512 / 128 spp Mitsuba report.
+- Finish E5 streamed TorchNRP optimizer training plus 512x512 / 128 spp Mitsuba
+  report.
 - Finish E6 WebGPU 128/256/512 exported-runtime matrix, real MPS timings on an
   MPS-enabled PyTorch build, and GUI slider.
 - Finish E7 high-quality proxy run and a true hand-authored or external generative

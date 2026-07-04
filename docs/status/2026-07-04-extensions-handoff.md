@@ -132,12 +132,22 @@ What exists:
 - Textured-quad reference inverse recovery through 8x8.
 - Linear texture-proxy scaling baseline showing the equal-observation 8x8 case is
   underdetermined and collapses on held-out samples.
+- Compact learned texture-embedding proxy scaling for 2x2, 4x4, and 8x8 textures.
+- First-class `textured_quad` support in the main TorchNRP train/relight path for a
+  small 2x2 texture smoke.
 
-Remaining E4 criterion:
+Key learned-proxy numbers:
 
-- TorchNRP must be conditioned on learned texture embeddings.
-- The proxy held-out quality study should use that learned TorchNRP conditioning,
-  not only the reference linear baseline.
+- Mean held-out PSNR: 20.08 dB for 2x2, 21.19 dB for 4x4, and 22.27 dB for 8x8.
+- First-class TorchNRP textured-quad smoke: 20 light parameters, 2,005 model
+  parameters, 13.27 dB validation PSNR, 12.31 dB held-out relight PSNR.
+
+Status:
+
+- E4 is complete at toy scale against the explicit extension criteria.
+- Remaining follow-up is quality/scale, not basic API coverage: the first-class
+  TorchNRP smoke covers 2x2 textures, while the broader 8x8 result is in the
+  learned texture-proxy experiment harness.
 
 ### E5 Out-of-Core
 
@@ -147,13 +157,14 @@ What exists:
 
 - Sharded cache foundation.
 - Streamed fixed-light target table.
+- Streamed per-pixel image-proxy optimizer that matches the monolithic optimizer.
 - Tiled inference.
 - Reported resident segment-byte ratio: 9.0x lower peak streamed segment bytes
   than the monolithic resident segment bytes for the current toy run.
 
 Remaining E5 criterion:
 
-- Streamed optimizer training.
+- Streamed TorchNRP optimizer training.
 - 512x512 / 128 spp Mitsuba report with peak RSS, throughput, and held-out PSNR.
 
 ### E6 Engine-Shaped Runtime
@@ -244,28 +255,27 @@ Remaining E1 criterion:
 
 ## Suggested Next Work
 
-Recommended next slice: E4 learned texture conditioning.
+Recommended next slice: E5 streamed optimizer training.
 
-Reason: E3 is now materially advanced, E2's remaining work is larger and touches
-training dynamics, and E4 has a clear boundary: add a learned or compact texture
-conditioning path to the TorchNRP workflow and report held-out PSNR vs texture
-resolution. Start by reading:
-
-- `skills/nrp-torch-proxy-workflow/SKILL.md`
-- `nrp/torch_backend/model.py`
-- `nrp/torch_backend/train.py`
-- `nrp/texture_fit.py`
-- `examples/textured_quad_fit.py`
-- `tests/test_texture_fit.py`
-
-Alternative next slice: E5 streamed optimizer training.
-
-Reason: E5 is a direct production-scale blocker. Start by reading:
+Reason: E3 and E4 now have toy-scale completion evidence, while E2's remaining work
+is larger and touches dynamic training. E5 has the clearest production blocker:
+stream optimizer batches from sharded caches instead of only building streamed target
+tables. Start by reading:
 
 - `skills/nrp-path-cache-and-gather/SKILL.md`
 - `examples/out_of_core.py`
 - `nrp/path_cache.py`
 - `nrp/torch_backend/train.py`
+
+Alternative next slice: E2 multi-bounce invalidation plus TorchNRP fine-tuning.
+
+Reason: E2 is the highest structural-risk game-pipeline item, but it is a larger
+change than the E5 streaming path. Start by reading:
+
+- `examples/dynamic_geometry.py`
+- `nrp/dynamic_geometry.py`
+- `nrp/torch_backend/train.py`
+- `tests/test_dynamic_geometry.py`
 
 ## Reporting Rules To Preserve
 

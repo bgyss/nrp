@@ -128,6 +128,106 @@ def stream_shard_targets(shard_dir: Path, lights: list[SphereLight]) -> tuple[np
     }
 
 
+def _shard_target(
+    z,
+    width: int,
+    lights: list[SphereLight],
+) -> tuple[np.ndarray, np.ndarray, int]:
+    y0, y1 = int(z["y0"]), int(z["y1"])
+    x0, x1 = int(z["x0"]), int(z["x1"])
+    tile_paths = z["n_paths"].reshape(-1)
+    pixel_ids = (np.arange(y0, y1)[:, None] * width + np.arange(x0, x1)[None, :]).reshape(-1)
+    local = {int(pid): idx for idx, pid in enumerate(pixel_ids)}
+    sums = np.zeros((pixel_ids.size, 3), dtype=np.float64)
+    seg_pixel = z["seg_pixel"].astype(np.int64)
+    seg_origin = z["seg_origin"].astype(np.float64)
+    seg_dir = z["seg_dir"].astype(np.float64)
+    seg_tmax = z["seg_tmax"].astype(np.float64)
+    seg_throughput = z["seg_throughput"].astype(np.float64)
+    for light in lights:
+        hits = segment_hits_sphere(seg_origin, seg_dir, seg_tmax, light.center, light.radius)
+        if hits.any():
+            local_ids = np.fromiter((local[int(pid)] for pid in seg_pixel[hits]), dtype=np.int64)
+            np.add.at(sums, local_ids, seg_throughput[hits] * light.rgb)
+    denom = np.maximum(tile_paths, 1).astype(np.float64)
+    return pixel_ids, sums / denom[:, None] / max(len(lights), 1), int(seg_pixel.size)
+
+
+def train_image_proxy_monolithic(
+    target: np.ndarray,
+    epochs: int = 8,
+    lr: float = 0.5,
+) -> tuple[np.ndarray, list[float]]:
+    """Reference in-memory optimizer for the E5 streamed-optimizer comparison."""
+    pred = np.zeros_like(target, dtype=np.float64)
+    losses = []
+    for _ in range(epochs):
+        diff = pred - target
+        losses.append(float(np.mean(diff * diff)))
+        pred -= lr * diff
+    losses.append(float(np.mean((pred - target) ** 2)))
+    return pred, losses
+
+
+def train_image_proxy_streamed(
+    shard_dir: Path,
+    lights: list[SphereLight],
+    epochs: int = 8,
+    lr: float = 0.5,
+) -> tuple[np.ndarray, dict]:
+    """Train a per-pixel image proxy by visiting sharded cache tiles.
+
+    This is a minimal optimizer proof for E5: gradients are evaluated from one shard's
+    GATHERLIGHT target at a time, and only that tile's pixels are updated.
+    """
+    with open(shard_dir / "manifest.json") as f:
+        manifest = json.load(f)
+    width = int(manifest["width"])
+    height = int(manifest["height"])
+    pred = np.zeros((height * width, 3), dtype=np.float64)
+    losses = []
+    peak_segments = 0
+    peak_segment_bytes = 0
+    t0 = time.perf_counter()
+    for _ in range(epochs):
+        epoch_loss_sum = 0.0
+        epoch_rows = 0
+        for shard in manifest["shards"]:
+            z = np.load(shard_dir / shard["path"])
+            pixel_ids, target, seg_count = _shard_target(z, width, lights)
+            peak_segments = max(peak_segments, seg_count)
+            peak_segment_bytes = max(
+                peak_segment_bytes,
+                int(
+                    z["seg_pixel"].nbytes
+                    + z["seg_origin"].nbytes
+                    + z["seg_dir"].nbytes
+                    + z["seg_tmax"].nbytes
+                    + z["seg_throughput"].nbytes
+                ),
+            )
+            diff = pred[pixel_ids] - target
+            epoch_loss_sum += float(np.sum(diff * diff))
+            epoch_rows += int(diff.size)
+            pred[pixel_ids] -= lr * diff
+        losses.append(epoch_loss_sum / max(epoch_rows, 1))
+    final_loss_sum = 0.0
+    final_rows = 0
+    for shard in manifest["shards"]:
+        z = np.load(shard_dir / shard["path"])
+        pixel_ids, target, _ = _shard_target(z, width, lights)
+        diff = pred[pixel_ids] - target
+        final_loss_sum += float(np.sum(diff * diff))
+        final_rows += int(diff.size)
+    losses.append(final_loss_sum / max(final_rows, 1))
+    return pred.reshape(height, width, 3), {
+        "streamed_optimizer_seconds": time.perf_counter() - t0,
+        "streamed_optimizer_loss_curve": losses,
+        "streamed_optimizer_peak_segments_loaded": peak_segments,
+        "streamed_optimizer_peak_segment_bytes_loaded": peak_segment_bytes,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="out/out-of-core/report.json")
@@ -171,6 +271,8 @@ def main() -> None:
     )
     mono_target_s = time.perf_counter() - t0
     streamed_targets, stream_stats = stream_shard_targets(shard_dir, train_lights)
+    mono_proxy, mono_loss = train_image_proxy_monolithic(mono_targets)
+    streamed_proxy, streamed_opt_stats = train_image_proxy_streamed(shard_dir, train_lights)
 
     model = TorchNRP(
         hidden_width=16,
@@ -221,6 +323,31 @@ def main() -> None:
             "matches_monolithic_atol_1e_12": bool(
                 np.allclose(streamed_targets, mono_targets, rtol=0.0, atol=1e-12)
             ),
+        },
+        "streamed_optimizer": {
+            "kind": "per-pixel image proxy gradient descent",
+            "epochs": 8,
+            "lr": 0.5,
+            "monolithic_loss_first": mono_loss[0],
+            "monolithic_loss_last": mono_loss[-1],
+            **streamed_opt_stats,
+            "max_abs_diff_vs_monolithic_optimizer": float(
+                np.max(np.abs(streamed_proxy - mono_proxy))
+            ),
+            "psnr_db_vs_monolithic_optimizer": psnr(streamed_proxy, mono_proxy)
+            if math.isfinite(psnr(streamed_proxy, mono_proxy))
+            else "inf",
+            "matches_monolithic_optimizer_atol_1e_12": bool(
+                np.allclose(streamed_proxy, mono_proxy, rtol=0.0, atol=1e-12)
+            ),
+            "stream_peak_segment_fraction": streamed_opt_stats[
+                "streamed_optimizer_peak_segments_loaded"
+            ]
+            / max(cache.segment_count, 1),
+            "stream_peak_segment_byte_fraction": streamed_opt_stats[
+                "streamed_optimizer_peak_segment_bytes_loaded"
+            ]
+            / max(cache_segment_bytes(cache), 1),
         },
         "tiled_relight_max_abs_diff": float(np.max(np.abs(tiled - full))),
         "tiled_relight_allclose_atol_1e_6": bool(np.allclose(tiled, full, rtol=0.0, atol=1e-6)),

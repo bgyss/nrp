@@ -10,7 +10,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from nrp.gather_light import gather_light, gather_lights  # noqa: E402
-from nrp.lights import SphereLight  # noqa: E402
+from nrp.lights import SphereLight, TexturedQuadLight  # noqa: E402
 from nrp.torch_backend.denoise import joint_bilateral_denoise  # noqa: E402
 from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
 from nrp.torch_backend.model import (  # noqa: E402
@@ -90,6 +90,17 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(out.shape, (9, 3))
             self.assertTrue(bool((out >= 0).all()), "softplus head must be non-negative")
 
+    def test_forward_shape_textured_quad_with_configured_param_dim(self):
+        model = TorchNRP(
+            light_type="textured_quad",
+            light_param_dim=20,
+            hidden_width=16,
+            hidden_layers=2,
+        )
+        out = model(torch.rand(9, 2), torch.rand(9, 7), torch.rand(9, 20))
+        self.assertEqual(out.shape, (9, 3))
+        self.assertEqual(model.light_param_dim, 20)
+
     def test_save_load_roundtrip(self):
         model = TorchNRP(hidden_width=16, hidden_layers=2)
         xy, aux, lp = torch.rand(5, 2), torch.rand(5, 7), torch.rand(5, 4)
@@ -97,6 +108,22 @@ class ModelTests(unittest.TestCase):
             path = str(Path(tmp) / "model.pt")
             model.save(path)
             loaded = TorchNRP.load(path)
+        torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
+
+    def test_textured_quad_save_load_roundtrip(self):
+        model = TorchNRP(
+            light_type="textured_quad",
+            light_param_dim=20,
+            hidden_width=16,
+            hidden_layers=2,
+        )
+        xy, aux, lp = torch.rand(5, 2), torch.rand(5, 7), torch.rand(5, 20)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.light_type, "textured_quad")
+        self.assertEqual(loaded.light_param_dim, 20)
         torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
 
     def test_ablation_switches_shapes_and_input_dims(self):
@@ -238,10 +265,24 @@ class SamplingTests(unittest.TestCase):
         rng = np.random.default_rng(2)
         s = sample_light(self.cache, rng, "sphere", {"radius_min": 0.1, "radius_max": 0.2})
         q = sample_light(self.cache, rng, "quad", {"size_min": 0.1, "size_max": 0.3})
+        tq = sample_light(
+            self.cache,
+            rng,
+            "textured_quad",
+            {
+                "center": [0.0, 0.0, 1.0],
+                "normal": [0.0, 0.0, -1.0],
+                "width": 2.0,
+                "height": 2.0,
+                "texture_size": [2, 2],
+            },
+        )
         self.assertTrue(0.1 <= s.radius <= 0.2)
         self.assertTrue(0.1 <= q.width <= 0.3 and 0.1 <= q.height <= 0.3)
+        self.assertIsInstance(tq, TexturedQuadLight)
         self.assertEqual(len(light_param_vector(s)), 4)
         self.assertEqual(len(light_param_vector(q)), 8)
+        self.assertEqual(len(light_param_vector(tq)), 20)
 
 
 class TrainingSmokeTests(unittest.TestCase):
@@ -301,6 +342,41 @@ class TrainingSmokeTests(unittest.TestCase):
             cfg_path = Path(tmp) / "cfg.json"
             cfg_path.write_text(json.dumps(cfg))
             report = train(load_config(str(cfg_path)))
+            self.assertIn("val_psnr_db_vs_raw_mean", report)
+
+    def test_textured_quad_training_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 10, "height": 10, "spp": 4, "bounces": 2, "seed": 2},
+                "light_type": "textured_quad",
+                "light_bounds": {
+                    "center": [0.0, 0.0, 1.0],
+                    "normal": [0.0, 0.0, -1.0],
+                    "width": 2.0,
+                    "height": 2.0,
+                    "texture_size": [2, 2],
+                    "texture_min": 0.1,
+                    "texture_max": 1.0,
+                },
+                "pool": {"size": 6, "replace_every": 10, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 20,
+                "batch_pixels": 128,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "encoding": {"levels": 2, "table_size_log2": 8, "finest_resolution": 10},
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+            }
+            cfg_path = Path(tmp) / "cfg.json"
+            cfg_path.write_text(json.dumps(cfg))
+            report = train(load_config(str(cfg_path)))
+            self.assertEqual(report["config"]["light_type"], "textured_quad")
             self.assertIn("val_psnr_db_vs_raw_mean", report)
 
 

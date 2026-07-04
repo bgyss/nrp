@@ -15,7 +15,9 @@ from examples.textured_quad_fit import (  # noqa: E402
     make_full_rank_cache,
     make_random_uv_cache,
     make_reference_texture,
+    run_learned_texture_proxy_case,
     run_proxy_scaling_case,
+    texture_targets,
 )
 from nrp.gather_light import gather_light  # noqa: E402
 from nrp.lights import TexturedQuadLight  # noqa: E402
@@ -66,6 +68,35 @@ class TextureFitTests(unittest.TestCase):
         self.assertEqual(case["texture_parameter_count"], 192)
         self.assertTrue(case["underdetermined"])
         self.assertLess(max(case["rank_per_channel"]), case["unknowns_per_channel"])
+
+    def test_texture_targets_batch_matches_gather(self):
+        cache = make_random_uv_cache(2, 8, seed=12)
+        texture = make_reference_texture(2)[None, :, :, :].astype(np.float32)
+        targets = texture_targets(cache, texture)
+        light = TexturedQuadLight(
+            center=CENTER,
+            normal=NORMAL,
+            width=WIDTH,
+            height=HEIGHT,
+            texture=texture[0],
+        )
+        np.testing.assert_allclose(targets[0], gather_light(cache, light).reshape(-1, 3))
+
+    def test_learned_texture_proxy_case_reports_heldout_quality(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            case = run_learned_texture_proxy_case(
+                2,
+                Path(tmp),
+                train_textures=4,
+                heldout_textures=2,
+                observations=16,
+                steps=5,
+                embedding_dim=4,
+            )
+        self.assertEqual(case["texture_parameter_count"], 12)
+        self.assertEqual(case["embedding_dim"], 4)
+        self.assertLess(case["loss_last"], case["loss_first"])
+        self.assertTrue(np.isfinite(case["heldout_psnr_db_mean"]))
 
 
 if __name__ == "__main__":

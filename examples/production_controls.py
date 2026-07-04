@@ -17,7 +17,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from nrp.gather_light import GatherControls, gather_light, gather_light_controlled  # noqa: E402
+from nrp.gather_light import (  # noqa: E402
+    GatherControls,
+    gather_light,
+    gather_light_controlled,
+    segment_hits_sphere,
+)
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
 from nrp.toy_tracer import layer_ownership_mask, trace_path_cache  # noqa: E402
@@ -82,6 +87,73 @@ class LinearAttenuationProxy:
     def predict(self, intercept: float, slope: float) -> np.ndarray:
         features = np.array([intercept, slope], dtype=np.float64)
         return (features @ self.coeffs).reshape(self.image_shape)
+
+
+class BasisControlProxy:
+    """Least-squares proxy for arbitrary masks and polynomial attenuation curves."""
+
+    def __init__(self, coeffs: np.ndarray, image_shape: tuple[int, int, int]):
+        self.coeffs = np.asarray(coeffs, dtype=np.float64)
+        self.image_shape = image_shape
+
+    @property
+    def parameter_count(self) -> int:
+        return int(self.coeffs.size)
+
+    @classmethod
+    def fit(cls, features: np.ndarray, images: list[np.ndarray]) -> BasisControlProxy:
+        features = np.asarray(features, dtype=np.float64)
+        image_shape = images[0].shape
+        y = np.stack([np.asarray(image, dtype=np.float64).reshape(-1) for image in images], axis=0)
+        coeffs, _, _, _ = np.linalg.lstsq(features, y, rcond=None)
+        return cls(coeffs, image_shape)
+
+    def predict(self, features: np.ndarray) -> np.ndarray:
+        return (np.asarray(features, dtype=np.float64) @ self.coeffs).reshape(self.image_shape)
+
+
+def mask_basis(width: int, height: int) -> list[np.ndarray]:
+    ys, xs = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
+    return [
+        np.ones((height, width), dtype=np.float64),
+        (xs >= width // 2).astype(np.float64),
+        (ys >= height // 2).astype(np.float64),
+        (((xs - width / 2.0) ** 2 + (ys - height / 2.0) ** 2) <= (min(width, height) / 4.0) ** 2)
+        .astype(np.float64),
+    ]
+
+
+def mask_from_weights(basis: list[np.ndarray], weights: np.ndarray) -> np.ndarray:
+    raw = sum(float(w) * b for w, b in zip(weights, basis, strict=True))
+    return np.clip(raw, 0.0, 1.0)
+
+
+def apply_soft_link_mask(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    return image * (1.0 - mask[..., None])
+
+
+def polynomial_attenuated_gather(cache, light: SphereLight, coeffs: np.ndarray) -> np.ndarray:
+    distance = np.linalg.norm(cache.seg_origin - light.center[None, :], axis=1)
+    weights = np.maximum(
+        0.0,
+        sum(float(c) * distance**power for power, c in enumerate(coeffs)),
+    )
+    hits = segment_hits_sphere(
+        cache.seg_origin,
+        cache.seg_dir,
+        cache.seg_tmax,
+        light.center,
+        light.radius,
+    )
+    contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
+    if hits.any():
+        np.add.at(
+            contrib,
+            cache.seg_pixel[hits],
+            cache.seg_throughput[hits] * weights[hits, None] * light.rgb,
+        )
+    denom = np.maximum(cache.n_paths, 1).astype(np.float64)
+    return (contrib / denom[:, None]).reshape(cache.height, cache.width, 3)
 
 
 def timed(fn):

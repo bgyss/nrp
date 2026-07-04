@@ -62,10 +62,11 @@ determine the light. Extension work now adds reference-GATHERLIGHT support for
 `TexturedQuadLight` and degree-2 `EnvironmentLight` (`nrp/lights.py`,
 `nrp/gather_light.py`), including constant-texture and constant-environment reduction
 tests plus closed-form/reference inverse recovery paths (`nrp/environment_fit.py`,
-`nrp/texture_fit.py`). These richer lights are not yet wired into the torch proxy
-architecture; `out/textured-quad-fit/report.json` now includes a linear held-out
-texture-proxy scaling baseline, but learned texture-embedding conditioning remains
-open, so the paper-faithful trained light types remain sphere and quad.
+`nrp/texture_fit.py`). `out/textured-quad-fit/report.json` now includes both a linear
+held-out texture-proxy scaling baseline and a compact learned texture-embedding torch
+proxy baseline; the main `TorchNRP` train/relight path also accepts a fixed-size
+`textured_quad` parameter vector for a small 2×2 texture smoke. The paper-faithful
+production-trained light types remain sphere and quad.
 
 ## §4 Implementation
 

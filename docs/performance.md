@@ -561,14 +561,15 @@ measures camera-cache K scaling and establishes a held-out interpolation baselin
 The requested single neural proxy conditioned on normalized time/camera inputs, with
 held-out intermediate-camera PSNR within 3 dB of training-keyframe PSNR, remains open.
 
-## Out-of-core foundation (extensions E5, sharded cache + streamed-target slice)
+## Out-of-core foundation (extensions E5, sharded cache + streamed-optimizer slice)
 
 `PathCache.save_sharded` writes a tile-sharded cache directory with a manifest and one
 compressed `.npz` per pixel tile; `PathCache.load_sharded` reconstructs the monolithic
 cache while restoring original segment order. `nrp.torch_backend.relight --tile-pixels`
 and `relight_tiled` render proxy outputs in bounded pixel chunks. The out-of-core
 report also streams shard files directly to build a fixed-light supervised target
-table, without reconstructing the full segment arrays.
+table and to train a tiny per-pixel image proxy optimizer without reconstructing the
+full segment arrays.
 
 Measured by `mise run out-of-core` (report: `out/out-of-core/report.json`) on a
 24×24 / 8 spp toy cache with 9,216 segments:
@@ -577,23 +578,27 @@ Measured by `mise run out-of-core` (report: `out/out-of-core/report.json`) on a
 |---|---:|
 | monolithic cache size | 381,005 bytes |
 | sharded cache directory size | 423,777 bytes |
-| save sharded | 0.026 s |
-| load sharded | 0.013 s |
+| save sharded | 0.023 s |
+| load sharded | 0.010 s |
 | sharded vs monolithic GATHERLIGHT max diff | 0.0 |
 | streamed target max diff vs monolithic | 3.33e-16 |
 | streamed target PSNR vs monolithic | 334.67 dB |
 | streamed peak loaded segments | 1,024 (11.1% of cache) |
 | streamed peak loaded segment bytes | 90,112 (11.1% of resident segment bytes) |
 | estimated resident segment-memory ratio | 9.0× |
-| process RSS before/after stream | 208,879,616 / 208,912,384 bytes |
-| streamed target pass | 0.0065 s |
+| process RSS before/after stream | 209,829,888 / 209,829,888 bytes |
+| streamed target pass | 0.0063 s |
+| streamed optimizer loss | 8.11e-3 → 1.24e-7 |
+| streamed optimizer max diff vs monolithic optimizer | 3.33e-16 |
+| streamed optimizer PSNR vs monolithic optimizer | 333.14 dB |
 | tiled vs untiled proxy max diff | 0.0 |
 
 The sharded layout is larger at this tiny scale because each tile pays `.npz` and
 manifest overhead; that is expected and is not a production-scale memory claim. This
 slice now proves exact cache reconstruction, streamed target construction at toy
-scale, and chunked inference, but it does **not** yet satisfy E5's full completion
-criteria: the actual torch optimizer still trains from monolithic caches, there is no
+scale, a streamed optimizer loop with the same result as its monolithic counterpart,
+and chunked inference. It does **not** yet satisfy E5's full completion criteria: the
+actual TorchNRP optimizer still trains from monolithic caches, there is no
 production-scale peak RSS comparison, and there is no 512² / 128 spp Mitsuba
 end-to-end run.
 
@@ -854,9 +859,41 @@ behind the paper's warning that richer light parameterizations hurt convergence.
 | 8×8 | 192 | 48 | 32 / 64 | 10.66 dB |
 
 The 8×8 case becomes underdetermined at equal observation budget and collapses on
-held-out samples. This satisfies a reference proxy-scaling measurement for texture
-resolution, but it does **not** yet satisfy the full richer-light proxy study: the
-torch proxy is still not conditioned on learned texture embeddings.
+held-out samples.
+
+The report now adds a compact learned texture-embedding proxy: a torch MLP encodes
+each flattened RGB texture into an 8D embedding, then predicts textured-quad
+GATHERLIGHT observations from UV, segment throughput, and that embedding. Each row
+uses 24 training textures, 6 held-out textures, 96 observations per training texture,
+256 held-out observations, and 600 CPU optimization steps:
+
+| texture | RGB params | proxy params | mean held-out PSNR | min held-out PSNR |
+|---:|---:|---:|---:|---:|
+| 2×2 | 12 | 4,187 | 20.08 dB | 19.05 dB |
+| 4×4 | 48 | 5,915 | 21.19 dB | 20.07 dB |
+| 8×8 | 192 | 12,827 | 22.27 dB | 17.62 dB |
+
+This satisfies a learned texture-embedding proxy-scaling slice for E4 and shows that
+the learned proxy avoids the catastrophic 8×8 collapse of the equal-observation
+linear baseline on this synthetic texture bank.
+
+The same run also verifies first-class `TexturedQuadLight` support in the main
+`TorchNRP` train/relight path for a small 2×2 texture parameterization:
+
+| check | result |
+|---|---:|
+| light type | `textured_quad` |
+| light parameter dimension | 20 |
+| model parameters | 2,005 |
+| iterations | 120 |
+| validation PSNR vs raw | 13.27 dB |
+| held-out relight PSNR | 12.31 dB |
+
+This completes the E4 toy-scale evidence loop: reference inverse recovery, a
+texture-resolution proxy scaling table, and a first-class TorchNRP train/relight path
+for textured-quad lights. The remaining caveat is quality and scale rather than API
+coverage: the first-class TorchNRP smoke uses 2×2 textures, while the broader learned
+scaling table remains an experiment harness rather than a production model.
 
 ## Image-space target to physical lights (extensions E7, toy demo slice)
 
