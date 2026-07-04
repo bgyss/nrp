@@ -603,7 +603,9 @@ end-to-end run.
 toy sphere moves and splices fresh segments for only those pixels into the old cache.
 This is the primary-visibility slice of E2: it proves cache-level invalidation and
 segment replacement for one-bounce paths, not secondary-bounce transport updates or
-proxy fine-tuning.
+TorchNRP weight fine-tuning. It also includes a deliberately narrow image-space
+warm-start proxy to measure whether incremental cache targets can repair stale
+pixels quickly.
 
 Measured by `mise run dynamic-geometry` (report:
 `out/dynamic-geometry/report.json`) on a 32×32 / 8 spp / 10-frame toy sequence with
@@ -611,22 +613,28 @@ the sphere moving +0.16 along x:
 
 | check | result |
 |---|---:|
-| mean full retrace | 4.26 ms/frame |
-| mean splice pass | 0.77 ms/frame |
+| mean full retrace | 4.45 ms/frame |
+| mean splice pass | 0.71 ms/frame |
+| mean image-proxy fine-tune | 0.30 ms/frame |
 | mean invalid pixels | 29.7% |
 | mean retraced segment fraction | 29.7% |
-| full retrace share of 16 ms frame | 26.6% |
-| splice-only share of 16 ms frame | 4.8% |
+| full retrace share of 16 ms frame | 27.8% |
+| splice-only share of 16 ms frame | 4.4% |
+| splice + image-proxy share of 16 ms frame | 6.3% |
 | outside invalidation mask max diff | 0.0 |
 | incremental splice vs full retrace | exact (`inf` PSNR, 0 max abs) |
 | stale cache PSNR at final frame | 10.76 dB |
+| image-proxy PSNR after fine-tune vs full | 65.86 dB min / 69.69 dB mean |
 
 For this constrained one-bounce setup, keeping the cache alive costs a small fraction
-of a 16 ms game frame for the splice operation itself, and the stale-cache baseline
-falls quickly as the sphere moves. The important caveat is structural: once secondary
-bounces are enabled, unchanged first-hit pixels can still see changed indirect
-transport. The full E2 criterion therefore remains open until multi-bounce
-invalidation and warm-started proxy fine-tuning are implemented and measured.
+of a 16 ms game frame for splice plus a tiny warm-start repair baseline, and the
+stale-cache baseline falls quickly as the sphere moves. The proxy measurement is not
+the paper proxy: it stores one RGB value per pixel and updates only invalidated
+pixels, so it is evidence about incremental target availability rather than neural
+transport generalization. The important caveat is structural: once secondary bounces
+are enabled, unchanged first-hit pixels can still see changed indirect transport.
+The full E2 criterion therefore remains open until multi-bounce invalidation and
+warm-started TorchNRP weight fine-tuning are implemented and measured.
 
 ## Light-aware path sampling (extensions E3, spherical guide-region slice)
 
@@ -656,24 +664,29 @@ directions, not path count. This satisfies the low-level E3 sampling-density and
 unbiasedness-consistency slice, but not the full E3 criterion by itself: it does not
 train proxies or reproduce the occluder/lamp-shade failure.
 
-`mise run light-aware-proxy-ab` adds a toy standard-vs-guided proxy A/B on the same
-placement region (report: `out/light-aware-proxy-ab/report.json`). Both runs use
-20×20 / 8 spp caches, identical segment budgets, the same 2,743-parameter sphere
-proxy, and 350 CPU training iterations:
+`mise run light-aware-proxy-ab` adds a toy standard-vs-guided proxy A/B with a small
+geometric open-top-box occluder around the declared light-placement region (report:
+`out/light-aware-proxy-ab/report.json`). Both runs use 20×20 / 8 spp caches,
+identical segment budgets, the same 2,743-parameter sphere proxy, and 350 CPU
+training iterations:
 
 | check | standard | guided |
 |---|---:|---:|
-| region-hit fraction | 4.98% | 34.57% |
-| mean held-out validation PSNR | 13.68 dB | 14.83 dB |
-| fixed in-region light PSNR | 10.24 dB | 11.88 dB |
-| fixed open-region light PSNR | 4.70 dB | 14.46 dB |
-| train time | 0.41 s | 0.40 s |
+| region-hit fraction | 0.47% | 15.73% |
+| mean held-out validation PSNR | 9.71 dB | 9.59 dB |
+| fixed in-region light PSNR | -6.72 dB | 3.38 dB |
+| fixed open-region light PSNR | 7.35 dB | 16.44 dB |
+| train time | 0.44 s | 0.51 s |
+| in-region target met | false | true |
+| open-region regression within 0.5 dB | false | true |
 
-The guided proxy improves the fixed in-region light by **1.64 dB** and the open-region
-fixture by **9.77 dB** at equal cache size. This is positive evidence that the guided
-cache can help proxy training at toy scale, but it still misses E3's target
-improvement of at least 3 dB for the occluded-region reproduction. A larger or more
-targeted occluder fixture is still required before E3 can be marked complete.
+The guided proxy improves the fixed in-region light by **10.10 dB** and the
+open-region fixture by **9.09 dB** at equal cache size. This satisfies E3's proxy A/B
+margin target on a deterministic open-top-box occluder fixture: standard sampling puts
+only 0.47% of segments through the declared region, while guided sampling puts 15.73%
+there. The remaining caveat is scale and realism, not the existence of the failure
+reproduction: the fixture is a toy geometric box, not a full lampshade asset or
+production lighting scene.
 
 ## Quality-tier relight ladder (extensions E9, CLI plumbing slice)
 

@@ -52,13 +52,15 @@ Measured support:
   48x48, with proxy frame-to-frame delta 1.05x the GATHERLIGHT reference. Static-scene
   animated lights are aligned with a game-style live lighting edit.
 - E2 in `out/dynamic-geometry/report.json` reports one-bounce cache splicing at
-  0.77 ms/frame, 4.8% of a 16 ms frame, with exact recovery versus full retrace for
-  that constrained case.
+  0.71 ms/frame, plus a warm-start image-proxy repair at 0.30 ms/frame. Together
+  they use 6.3% of a 16 ms frame, recover exactly versus full retrace for the
+  spliced cache, and leave the image proxy at 65.86 dB minimum PSNR versus full
+  retrace for that constrained case.
 
 Blocking evidence:
 
 - The same E2 report is explicitly one-bounce and primary-visibility only. It does not
-  prove secondary transport invalidation or proxy fine-tuning.
+  prove secondary transport invalidation or TorchNRP weight fine-tuning.
 - E8 in `out/production-controls/report.json` shows production controls survive at
   gather time, that one binary linking toggle can be precomputed into a table proxy,
   and that a learned linear image proxy can predict a held-out attenuation setting at
@@ -66,8 +68,9 @@ Blocking evidence:
   It does not prove arbitrary live control masks or arbitrary attenuation curves at
   neural proxy speed.
 - E3 in `out/light-aware-proxy-ab/report.json` improves the fixed in-region proxy
-  result by 1.64 dB, below the requested 3 dB target. The known undersampling failure
-  is not solved well enough for dynamic game lighting.
+  result by 10.10 dB on a geometric open-top-box occluder fixture and does not
+  regress the fixed open-region light. This is still a toy lampshade-style fixture,
+  not a production lighting scene.
 
 Engineering versus structural:
 
@@ -166,8 +169,7 @@ Engineering versus structural:
 ## Open Work Before Final E10 Completion
 
 - Finish E1 animated camera/time-conditioned proxy validation.
-- Finish E2 multi-bounce invalidation and warm-started proxy fine-tuning.
-- Finish E3 occluder failure reproduction with at least 3 dB guided-proxy improvement.
+- Finish E2 multi-bounce invalidation and warm-started TorchNRP weight fine-tuning.
 - Finish E4 richer-light TorchNRP conditioning on learned texture embeddings.
 - Finish E5 streamed optimizer training plus 512x512 / 128 spp Mitsuba report.
 - Finish E6 WebGPU 128/256/512 exported-runtime matrix, real MPS timings on an

@@ -80,6 +80,32 @@ class LightAwareSamplingTests(unittest.TestCase):
             2.0 * region_density(standard, region)["region_hit_fraction"],
         )
 
+    def test_open_top_box_occluder_fixture_guides_into_region(self):
+        region = {"type": "sphere", "center": [0.30, 0.86, 0.30], "radius": 0.10}
+        occluder = {
+            "type": "open_top_box",
+            "min": [0.12, 0.45, 0.12],
+            "max": [0.38, 0.90, 0.38],
+            "albedo": [0.35, 0.35, 0.35],
+        }
+        standard = trace_path_cache(18, 18, 6, 3, seed=13, occluder=occluder)
+        guided = trace_path_cache(
+            18,
+            18,
+            6,
+            3,
+            seed=13,
+            light_region=region,
+            guide_probability=0.5,
+            occluder=occluder,
+        )
+        self.assertEqual(guided.segment_count, standard.segment_count)
+        guided.validate()
+        self.assertGreater(
+            region_density(guided, region)["region_hit_fraction"],
+            5.0 * region_density(standard, region)["region_hit_fraction"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

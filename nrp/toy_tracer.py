@@ -75,7 +75,10 @@ def _camera_rays(
 
 
 def _intersect_scene(
-    origins: np.ndarray, dirs: np.ndarray, sphere_center: np.ndarray | None = None
+    origins: np.ndarray,
+    dirs: np.ndarray,
+    sphere_center: np.ndarray | None = None,
+    occluder: dict | None = None,
 ):
     """Nearest hit for rays strictly inside the closed box.
 
@@ -122,6 +125,42 @@ def _intersect_scene(
         nrm[flip] *= -1.0
         normal[hit_s] = nrm
         albedo[hit_s] = SPHERE_ALBEDO
+
+    if occluder is not None:
+        if occluder.get("type") != "open_top_box":
+            raise ValueError("occluder currently supports only type 'open_top_box'")
+        bmin = np.asarray(occluder["min"], dtype=np.float64)
+        bmax = np.asarray(occluder["max"], dtype=np.float64)
+        if bmin.shape != (3,) or bmax.shape != (3,) or np.any(bmax <= bmin):
+            raise ValueError("open_top_box occluder requires min/max 3-vectors with max > min")
+        occ_albedo = np.asarray(occluder.get("albedo", [0.35, 0.35, 0.35]), dtype=np.float64)
+        if occ_albedo.shape != (3,):
+            raise ValueError("open_top_box occluder albedo must be an RGB triplet")
+
+        def update_plane(axis: int, bound: float, ranges: tuple[tuple[int, float, float], ...]):
+            nonlocal t_best, normal, albedo
+            d = dirs[:, axis]
+            t = (bound - origins[:, axis]) / np.where(np.abs(d) > EPS, d, 1.0)
+            p = origins + dirs * t[:, None]
+            valid = (np.abs(d) > EPS) & (t > EPS) & (t < t_best)
+            for range_axis, lo, hi in ranges:
+                valid &= (p[:, range_axis] >= lo - EPS) & (p[:, range_axis] <= hi + EPS)
+            if valid.any():
+                geom_n = np.zeros(3)
+                geom_n[axis] = 1.0
+                nvec = np.broadcast_to(geom_n, (origins.shape[0], 3)).copy()
+                flip = np.einsum("ij,ij->i", nvec, dirs) > 0.0
+                nvec[flip] *= -1.0
+                t_best = np.where(valid, t, t_best)
+                normal[valid] = nvec[valid]
+                albedo[valid] = occ_albedo
+
+        # Five finite two-sided panels: bottom plus four walls, deliberately no top.
+        update_plane(1, bmin[1], ((0, bmin[0], bmax[0]), (2, bmin[2], bmax[2])))
+        update_plane(0, bmin[0], ((1, bmin[1], bmax[1]), (2, bmin[2], bmax[2])))
+        update_plane(0, bmax[0], ((1, bmin[1], bmax[1]), (2, bmin[2], bmax[2])))
+        update_plane(2, bmin[2], ((0, bmin[0], bmax[0]), (1, bmin[1], bmax[1])))
+        update_plane(2, bmax[2], ((0, bmin[0], bmax[0]), (1, bmin[1], bmax[1])))
     return t_best, normal, albedo, hit_s
 
 
@@ -245,6 +284,7 @@ def trace_path_cache(
     light_region: dict | None = None,
     guide_probability: float = 0.0,
     camera_pos: np.ndarray | None = None,
+    occluder: dict | None = None,
 ) -> PathCache:
     """Trace `spp` light-agnostic paths per pixel and return the full PathCache.
 
@@ -280,7 +320,9 @@ def trace_path_cache(
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
         keep = np.ones(n_pixels, dtype=bool)
         for _bounce in range(max_bounces):
-            t, normal, albedo, is_sphere = _intersect_scene(origins, dirs, sphere_center)
+            t, normal, albedo, is_sphere = _intersect_scene(
+                origins, dirs, sphere_center, occluder
+            )
             if _bounce == 0 and layer is not None:
                 keep = is_sphere if layer == "sphere" else ~is_sphere
             if medium is not None:
@@ -313,7 +355,7 @@ def trace_path_cache(
     # surface-only even with a medium: albedo/depth/normal are G-buffer features of
     # the first *surface* hit (a scatter vertex has no meaningful normal or albedo).
     origins0, dirs0 = _camera_rays(width, height, None, camera_pos)
-    t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0, sphere_center)
+    t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0, sphere_center, occluder)
     position0 = origins0 + dirs0 * t0[:, None]
 
     cache = PathCache(
@@ -359,6 +401,7 @@ def render_reference(
     light_region: dict | None = None,
     guide_probability: float = 0.0,
     camera_pos: np.ndarray | None = None,
+    occluder: dict | None = None,
 ) -> np.ndarray:
     """Independent rendered reference: trace fresh paths and evaluate the emissive
     sphere inline (equivalent to GATHERLIGHT over an independent path set)."""
@@ -372,6 +415,7 @@ def render_reference(
         light_region=light_region,
         guide_probability=guide_probability,
         camera_pos=camera_pos,
+        occluder=occluder,
     )
     return gather_light(cache, light)
 

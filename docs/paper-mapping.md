@@ -274,13 +274,14 @@ All of the paper's stated limitations apply here too: fixed transport after cach
 parameter-count-driven difficulty for complex light types, and in-memory path data.
 Extension work has started chipping at these limits with light-aware toy-tracer
 sampling for declared placement regions, one-bounce dynamic-geometry cache splicing
-(`nrp.dynamic_geometry`), a tile-sharded cache round-trip, streamed fixed-light target
-construction, and tiled proxy inference (`PathCache.save_sharded`,
-`nrp.torch_backend.relight --tile-pixels`), but occluder failure reproduction, the
-target E3 proxy margin, multi-bounce invalidation, proxy fine-tuning, streamed
-optimizer training, and a production-resolution run are not implemented yet. This
-implementation adds its own: toy scale, no fused kernels, and Monte Carlo noise floors
-at 16–24 spp that dominate SMAPE on near-zero pixels.
+(`nrp.dynamic_geometry`) with an image-space warm-start repair baseline, a
+tile-sharded cache round-trip, streamed fixed-light target construction, and tiled
+proxy inference (`PathCache.save_sharded`,
+`nrp.torch_backend.relight --tile-pixels`). The E3 open-top-box occluder is still a
+toy lampshade-style fixture, and multi-bounce invalidation, TorchNRP weight
+fine-tuning, streamed optimizer training, and a production-resolution run are not
+implemented yet. This implementation adds its own: toy scale, no fused kernels, and
+Monte Carlo noise floors at 16–24 spp that dominate SMAPE on near-zero pixels.
 
 ## Known deviations summary
 

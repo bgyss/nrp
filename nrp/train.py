@@ -55,6 +55,7 @@ def ensure_cache(cfg: dict) -> PathCache:
         layer=t.get("layer"),
         light_region=t.get("light_region"),
         guide_probability=t.get("guide_probability", 0.0),
+        occluder=t.get("occluder"),
     )
     os.makedirs(os.path.dirname(cfg["cache"]), exist_ok=True)
     cache.save(cfg["cache"])

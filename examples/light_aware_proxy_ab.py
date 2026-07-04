@@ -21,6 +21,14 @@ from nrp.torch_backend.train import train  # noqa: E402
 
 
 def make_cfg(root: Path, name: str, region: dict, guided: bool, args) -> dict:
+    occluder = None
+    if args.fixture == "open_top_box":
+        occluder = {
+            "type": "open_top_box",
+            "min": [0.12, 0.45, 0.12],
+            "max": [0.38, 0.90, 0.38],
+            "albedo": [0.35, 0.35, 0.35],
+        }
     return {
         "cache": str(root / name / "path_cache.npz"),
         "out_dir": str(root / name),
@@ -35,6 +43,7 @@ def make_cfg(root: Path, name: str, region: dict, guided: bool, args) -> dict:
                 if guided
                 else {}
             ),
+            **({"occluder": occluder} if occluder is not None else {}),
         },
         "light_type": "sphere",
         "light_bounds": {"radius_min": 0.06, "radius_max": 0.18},
@@ -84,6 +93,21 @@ def main() -> None:
     parser.add_argument("--bounces", type=int, default=3)
     parser.add_argument("--iters", type=int, default=350)
     parser.add_argument("--guide-probability", type=float, default=0.5)
+    parser.add_argument(
+        "--region-center",
+        type=float,
+        nargs=3,
+        default=[0.30, 0.86, 0.30],
+        help="Spherical light-placement region center used for the targeted E3 A/B.",
+    )
+    parser.add_argument("--region-radius", type=float, default=0.10)
+    parser.add_argument("--target-gain-db", type=float, default=3.0)
+    parser.add_argument(
+        "--fixture",
+        choices=("open_top_box", "corner_region"),
+        default="open_top_box",
+        help="E3 fixture: literal open-top box occluder or the earlier region-only probe.",
+    )
     args = parser.parse_args()
 
     out_path = Path(args.out)
@@ -92,7 +116,11 @@ def main() -> None:
         shutil.rmtree(root)
     root.mkdir(parents=True, exist_ok=True)
 
-    region = {"type": "sphere", "center": [0.45, 0.75, 0.45], "radius": 0.12}
+    region = {
+        "type": "sphere",
+        "center": args.region_center,
+        "radius": args.region_radius,
+    }
     configs = {
         "standard": make_cfg(root, "standard", region, False, args),
         "guided": make_cfg(root, "guided", region, True, args),
@@ -127,7 +155,10 @@ def main() -> None:
         "bounces": args.bounces,
         "iters": args.iters,
         "guide_probability": args.guide_probability,
+        "target_gain_db": args.target_gain_db,
+        "fixture": args.fixture,
         "light_region": region,
+        "occluder": configs["guided"]["trace"].get("occluder"),
         "density": density,
         "train": {
             name: {
@@ -141,13 +172,16 @@ def main() -> None:
         "fixed_lights": fixed_eval,
         "inside_region_psnr_gain_db_guided_minus_standard": inside_gain_db,
         "open_region_psnr_delta_db_guided_minus_standard": open_regression_db,
+        "inside_region_target_met": inside_gain_db >= args.target_gain_db,
+        "open_region_regression_within_0p5db": open_regression_db >= -0.5,
         "cache_size_delta_segments": (
             caches["guided"].segment_count - caches["standard"].segment_count
         ),
         "limitations": [
-            "This is a toy placement-region A/B, not the full occluder/lamp-shade reproduction.",
-            "The criterion target is reported directly; this small CPU run is not "
-            "tuned to guarantee +3 dB.",
+            "This is a toy open-top-box occluder fixture, not a full lamp-shade asset.",
+            "The fixed lights are evaluated against each proxy's own cache gather; "
+            "this isolates proxy fit at equal segment budget, not Monte Carlo "
+            "reference bias.",
         ],
     }
     out_path.write_text(json.dumps(report, indent=2) + "\n")
