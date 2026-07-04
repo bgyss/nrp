@@ -14,7 +14,9 @@
       {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            python312
+            (python312.withPackages (ps: [
+              ps.pyyaml
+            ]))
             uv
             ruff
             tbb # oneTBB, runtime dep of the oidn wheel (libtbb.12.dylib)
