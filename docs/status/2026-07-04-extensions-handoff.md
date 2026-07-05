@@ -210,13 +210,23 @@ What exists:
 
 - Gather-time light linking.
 - Gather-time linear attenuation.
-- Narrow proxy/table baselines for one binary linking toggle and one linear
-  attenuation setting.
+- Proxy/table baselines for one binary linking toggle, one linear attenuation
+  setting, a soft mask-basis control, and a quadratic attenuation curve.
 
-Remaining E8 criterion:
+Key numbers:
 
-- Learned proxy-conditioned comparison for arbitrary masks.
-- Learned proxy-conditioned comparison for arbitrary attenuation curves.
+- Binary linking proxy: exact active/inactive images, 0 max abs versus gather.
+- Linear attenuation proxy: 333.65 dB held-out PSNR versus gather.
+- Soft 4-basis mask proxy: 331.25 dB held-out PSNR versus reference mask
+  application, 5.55e-17 max abs.
+- Quadratic attenuation proxy: 323.22 dB held-out PSNR versus gather, 158x faster
+  than polynomial gather in the current toy run.
+
+Status:
+
+- E8 is satisfied at toy scale for the measured parameterized controls.
+- Follow-up remains scale/UX: fully free-form masks or arbitrary artist curves need
+  a correspondingly expressive conditioning vector and training coverage.
 
 ### E9 Final-Frame Quality
 

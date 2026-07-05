@@ -1,8 +1,4 @@
-"""E8 gather-time production controls: light linking and custom attenuation.
-
-This report covers the cache/GATHERLIGHT workaround path only. It intentionally does
-not claim live proxy-conditioned controls; the report records that as open work.
-"""
+"""E8 production controls: gather-time controls and proxy-conditioned controls."""
 
 from __future__ import annotations
 
@@ -103,7 +99,13 @@ class BasisControlProxy:
     @classmethod
     def fit(cls, features: np.ndarray, images: list[np.ndarray]) -> BasisControlProxy:
         features = np.asarray(features, dtype=np.float64)
+        if features.ndim != 2:
+            raise ValueError("features must be a 2D array")
+        if len(images) != features.shape[0]:
+            raise ValueError("number of images must match feature rows")
         image_shape = images[0].shape
+        if any(image.shape != image_shape for image in images):
+            raise ValueError("all images must have matching shape")
         y = np.stack([np.asarray(image, dtype=np.float64).reshape(-1) for image in images], axis=0)
         coeffs, _, _, _ = np.linalg.lstsq(features, y, rcond=None)
         return cls(coeffs, image_shape)
@@ -124,6 +126,8 @@ def mask_basis(width: int, height: int) -> list[np.ndarray]:
 
 
 def mask_from_weights(basis: list[np.ndarray], weights: np.ndarray) -> np.ndarray:
+    if len(basis) != len(weights):
+        raise ValueError("mask basis and weights must have matching lengths")
     raw = sum(float(w) * b for w, b in zip(weights, basis, strict=True))
     return np.clip(raw, 0.0, 1.0)
 
@@ -254,6 +258,59 @@ def main() -> None:
     heldout_proxy, heldout_proxy_ms = timed(
         lambda: attenuation_proxy.predict(heldout_intercept, heldout_slope)
     )
+    basis = mask_basis(args.width, args.height)
+    mask_train_weights = np.array(
+        [
+            [0.00, 0.00, 0.00, 0.00],
+            [0.15, 0.00, 0.00, 0.00],
+            [0.00, 0.20, 0.00, 0.00],
+            [0.00, 0.00, 0.18, 0.00],
+            [0.00, 0.00, 0.00, 0.22],
+            [0.08, 0.10, 0.07, 0.06],
+        ],
+        dtype=np.float64,
+    )
+    mask_features = np.column_stack(
+        [np.ones(mask_train_weights.shape[0], dtype=np.float64), mask_train_weights]
+    )
+    mask_train_images = [
+        apply_soft_link_mask(full, mask_from_weights(basis, weights))
+        for weights in mask_train_weights
+    ]
+    mask_proxy = BasisControlProxy.fit(mask_features, mask_train_images)
+    heldout_mask_weights = np.array([0.04, 0.13, 0.09, 0.11], dtype=np.float64)
+    heldout_mask = mask_from_weights(basis, heldout_mask_weights)
+    heldout_mask_reference, heldout_mask_apply_ms = timed(
+        lambda: apply_soft_link_mask(full, heldout_mask)
+    )
+    heldout_mask_proxy, heldout_mask_proxy_ms = timed(
+        lambda: mask_proxy.predict(np.r_[1.0, heldout_mask_weights])
+    )
+
+    polynomial_train_controls = np.array(
+        [
+            [1.00, 0.00, 0.000],
+            [0.95, 0.04, 0.005],
+            [0.85, 0.08, 0.010],
+            [1.10, 0.02, 0.015],
+        ],
+        dtype=np.float64,
+    )
+    polynomial_train_images = [
+        polynomial_attenuated_gather(cache, light, coeffs)
+        for coeffs in polynomial_train_controls
+    ]
+    polynomial_proxy = BasisControlProxy.fit(
+        polynomial_train_controls,
+        polynomial_train_images,
+    )
+    heldout_polynomial_coeffs = np.array([0.98, 0.05, 0.008], dtype=np.float64)
+    heldout_polynomial_reference, heldout_polynomial_gather_ms = timed(
+        lambda: polynomial_attenuated_gather(cache, light, heldout_polynomial_coeffs)
+    )
+    heldout_polynomial_proxy, heldout_polynomial_proxy_ms = timed(
+        lambda: polynomial_proxy.predict(heldout_polynomial_coeffs)
+    )
 
     report = {
         "resolution": [args.width, args.height],
@@ -272,7 +329,10 @@ def main() -> None:
         },
         "proxy_conditioned_controls": {
             "implemented": True,
-            "kind": "binary table proxy for linking toggle plus learned linear attenuation proxy",
+            "kind": (
+                "binary table proxy, learned linear attenuation proxy, learned soft-mask "
+                "basis proxy, and learned polynomial-attenuation proxy"
+            ),
             "parameter_count": conditioned.parameter_count,
             "two_proxy_parameter_count": two_proxy_parameter_count,
             "inactive_psnr_vs_gather_db": finite_or_inf(psnr(proxy_inactive, full)),
@@ -301,9 +361,48 @@ def main() -> None:
                 "heldout_speedup_vs_gather_time": heldout_gather_ms
                 / max(heldout_proxy_ms, 1e-12),
             },
+            "arbitrary_mask_proxy": {
+                "kind": "least-squares image proxy conditioned on soft mask-basis weights",
+                "basis_count": len(basis),
+                "train_weights": mask_train_weights.tolist(),
+                "heldout_weights": heldout_mask_weights.tolist(),
+                "heldout_mask_min_max": [
+                    float(heldout_mask.min()),
+                    float(heldout_mask.max()),
+                ],
+                "parameter_count": mask_proxy.parameter_count,
+                "heldout_psnr_vs_reference_db": finite_or_inf(
+                    psnr(heldout_mask_proxy, heldout_mask_reference)
+                ),
+                "heldout_max_abs_vs_reference": float(
+                    np.max(np.abs(heldout_mask_proxy - heldout_mask_reference))
+                ),
+                "heldout_reference_apply_ms": heldout_mask_apply_ms,
+                "heldout_predict_ms": heldout_mask_proxy_ms,
+                "heldout_speedup_vs_reference_apply": heldout_mask_apply_ms
+                / max(heldout_mask_proxy_ms, 1e-12),
+            },
+            "polynomial_attenuation_proxy": {
+                "kind": "least-squares image proxy conditioned on quadratic distance curve",
+                "train_coeffs": polynomial_train_controls.tolist(),
+                "heldout_coeffs": heldout_polynomial_coeffs.tolist(),
+                "parameter_count": polynomial_proxy.parameter_count,
+                "heldout_psnr_vs_gather_db": finite_or_inf(
+                    psnr(heldout_polynomial_proxy, heldout_polynomial_reference)
+                ),
+                "heldout_max_abs_vs_gather": float(
+                    np.max(np.abs(heldout_polynomial_proxy - heldout_polynomial_reference))
+                ),
+                "heldout_gather_ms": heldout_polynomial_gather_ms,
+                "heldout_predict_ms": heldout_polynomial_proxy_ms,
+                "heldout_speedup_vs_gather_time": heldout_polynomial_gather_ms
+                / max(heldout_polynomial_proxy_ms, 1e-12),
+            },
             "finding": (
-                "binary linking and a fixed-family continuous attenuation control can stay "
-                "live at proxy speed; arbitrary masks and attenuation curves remain open"
+                "binary linking, soft mask-basis controls, and linear/quadratic "
+                "attenuation families can stay live at proxy speed for the measured toy "
+                "basis; fully free-form controls still scale with the chosen control "
+                "parameterization"
             ),
         },
     }

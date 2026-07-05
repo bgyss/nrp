@@ -727,13 +727,13 @@ exact, but the first measured move (dx=0.05) falls below 25 dB, so the verdict i
 This does **not** yet satisfy E9's full final-frame study: no fresh high-spp
 production-scale cache and no production supervisor-trust verdict.
 
-## Gather-time production controls (extensions E8, cache fallback slice)
+## Production light controls (extensions E8)
 
 `gather_light_controlled` adds post-hoc controls at GATHERLIGHT time: per-pixel
 first-hit exclusion for light linking, and a simple linear-distance artist
 attenuation curve for sphere lights. This is the cache fallback path E8 asks us to
-test, plus a narrow proxy-conditioned path for controls whose output is linear in the
-control parameters.
+test, plus proxy-conditioned toy paths for controls whose output is linear in the
+chosen control parameterization.
 
 Measured by `mise run production-controls` (report:
 `out/production-controls/report.json`) on a 32×32 / 12 spp toy cache with 24,576
@@ -744,8 +744,8 @@ segments:
 | full gather vs sphere+box layers max diff | 0.0 |
 | exclude-sphere gather vs box-layer gather max diff | 0.0 |
 | exclude-sphere gather vs box-layer PSNR | inf |
-| full gather | 1.43 ms |
-| linked gather | 0.85 ms |
+| full gather | 0.63 ms |
+| linked gather | 0.79 ms |
 | attenuated gather | 0.85 ms |
 | attenuated/default mean-radiance ratio | 0.918 |
 
@@ -765,11 +765,23 @@ The same report now includes a learned least-squares image proxy conditioned on 
 continuous attenuation controls `(intercept, slope)` for the fixed
 `linear_distance` curve family. Trained on four control settings, it predicts the
 held-out setting `(1.1, -0.1)` to **333.65 dB** PSNR versus GATHERLIGHT with
-**1.11e-16** max absolute error. Prediction takes **0.0085 ms** versus **0.872 ms**
-for held-out attenuated gather, a **103×** speedup. This is still not a general
-neural proxy for arbitrary per-layer masks or arbitrary attenuation curves; it proves
-that one fixed continuous control family can be conditioned and kept live without
-cache traversal.
+**1.11e-16** max absolute error. Prediction takes **0.015 ms** versus **0.98 ms**
+for held-out attenuated gather, a **64×** speedup. This proves that one fixed
+continuous control family can be conditioned and kept live without cache traversal.
+
+The E8 report now also measures broader conditioned-control fixtures:
+
+| conditioned control | held-out error | edit/inference latency | comparison |
+|---|---:|---:|---:|
+| 4-basis soft link mask | 331.25 dB PSNR, 5.55e-17 max abs | 0.036 ms | exact vs image-space mask application |
+| quadratic distance attenuation | 323.22 dB PSNR, 1.94e-16 max abs | 0.010 ms | 158× faster than polynomial gather |
+
+These results answer E8 at toy scale: binary linking, soft mask-basis controls, and
+linear/quadratic attenuation curves can stay live through a conditioned image proxy
+when the proxy receives the relevant control weights as inputs. The caveat is now
+parameterization scale, not correctness: a fully free-form per-pixel mask or arbitrary
+artist curve would require enough input dimensions and training coverage to span that
+control space.
 
 ## Exported engine-shaped runtime (extensions E6, TorchScript slice)
 

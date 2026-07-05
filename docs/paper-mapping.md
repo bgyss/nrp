@@ -246,14 +246,15 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   toy-scale PSNR/SSIM/FLIP tier metrics plus a toy residual-validity trust verdict.
   This is pipeline plumbing around the paper's proxy/GATHERLIGHT split, not a paper
   mechanism, and the production final-frame trust study remains open.
-- **Extension E8 production controls — gather-time fallback and narrow conditioned proxies implemented:**
+- **Extension E8 production controls — toy-scale conditioned proxies implemented:**
   `gather_light_controlled` can exclude first-hit-owned pixels for light linking and
   apply a linear-distance artist attenuation curve to sphere-light gathers. This
   demonstrates that some non-physical controls can be evaluated from the cache. A
   tiny binary table proxy keeps one linking toggle live at proxy speed, and a learned
-  linear image proxy keeps a fixed-family continuous attenuation control live for a
-  held-out setting. General learned proxy conditioning for arbitrary masks and
-  arbitrary attenuation curves remains open.
+  image proxy keeps fixed-family linear and quadratic attenuation controls live for
+  held-out settings. A soft mask-basis proxy also predicts a held-out mask to
+  floating-point accuracy. Fully free-form production controls remain limited by the
+  chosen control parameterization and training coverage, not by the cache/proxy API.
 - **Extension E6 exported runtime — partially implemented:** `nrp.torch_backend.engine_runtime`
   exports sphere and quad `TorchNRP` models to TorchScript artifacts and runs parity-
   tested inference through `torch.jit.load`; `mise run viewer` writes headless slider

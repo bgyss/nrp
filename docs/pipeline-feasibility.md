@@ -21,7 +21,7 @@ Measured reports used here:
 | E5 out-of-core | `out/out-of-core/report.json` | sharded cache, streamed target table, tiled inference |
 | E6 exported runtime | `out/engine-runtime/report.json` | TorchScript artifact, CPU resolution sweep, headless slider loop |
 | E7 image target loop | `out/generative/report.json` | synthesized scribble and stylized target optimization |
-| E8 production controls | `out/production-controls/report.json` | gather-time controls and binary toggle proxy |
+| E8 production controls | `out/production-controls/report.json` | gather-time controls and conditioned control proxies |
 | E9 quality tiers | `out/quality/report.json` | preview/draft/final PSNR/SSIM/FLIP and residual identity |
 
 The original torch toy proxy report at `out/toy-torch/torch_train_report.json` is used
@@ -63,10 +63,10 @@ Blocking evidence:
   prove secondary transport invalidation or TorchNRP weight fine-tuning.
 - E8 in `out/production-controls/report.json` shows production controls survive at
   gather time, that one binary linking toggle can be precomputed into a table proxy,
-  and that a learned linear image proxy can predict a held-out attenuation setting at
-  333.65 dB PSNR with 103x speedup versus attenuated gather.
-  It does not prove arbitrary live control masks or arbitrary attenuation curves at
-  neural proxy speed.
+  that a learned linear image proxy predicts a held-out attenuation setting at
+  333.65 dB PSNR, that a soft 4-basis mask proxy predicts a held-out mask at
+  331.25 dB PSNR, and that a quadratic attenuation proxy predicts a held-out curve at
+  323.22 dB PSNR with 158x speedup versus polynomial gather.
 - E3 in `out/light-aware-proxy-ab/report.json` improves the fixed in-region proxy
   result by 10.10 dB on a geometric open-top-box occluder fixture and does not
   regress the fixed open-region light. This is still a toy lampshade-style fixture,
@@ -76,8 +76,9 @@ Engineering versus structural:
 
 - Engineering blockers: exported backend beyond TorchScript, WebGPU runtime matrix,
   a host with available MPS for actual MPS timings, streamed optimizer training.
-- Structural blockers: frozen transport under dynamic geometry, per-light-type proxy
-  boundaries, arbitrary controls that still require cache access.
+- Structural blockers: frozen transport under dynamic geometry and per-light-type
+  proxy boundaries; free-form production controls scale with the chosen conditioning
+  parameterization.
 
 ## Animated Film
 
@@ -143,8 +144,10 @@ Measured support:
   with 20 light parameters and 12.31 dB held-out relight PSNR for a 2x2 texture.
 - E8 in `out/production-controls/report.json` proves exact gather-time light linking
   algebra for the toy layer partition, measures attenuation controls, keeps one
-  precomputed binary linking toggle live through a table proxy, and keeps one
-  fixed-family continuous attenuation control live through a learned linear proxy.
+  precomputed binary linking toggle live through a table proxy, keeps one fixed-family
+  continuous attenuation control live through a learned linear proxy, and keeps
+  measured soft-mask and quadratic attenuation controls live through learned
+  basis-conditioned proxies.
 
 Blocking evidence:
 
@@ -154,8 +157,8 @@ Blocking evidence:
   precisely because it exposes the gap between an arbitrary image target and a
   physically realizable lighting setup. E7 still has no high-quality proxy run and no
   true hand-authored or external generative image fixture.
-- E8 arbitrary proxy-conditioned masks and arbitrary custom attenuation curves are
-  not implemented.
+- E8 is satisfied at toy scale for the measured control bases; broader production
+  control rigs remain a scale and UX problem, not a missing proof-of-concept.
 
 Engineering versus structural:
 
@@ -170,7 +173,7 @@ Engineering versus structural:
 |---|---|---|
 | Games | Not the right primitive as a core renderer yet | Dynamic everything is the core requirement, and only one-bounce cache splicing is proven. |
 | Animated film | Viable component | Static-set animated-light preview and residual identity are promising, but final-frame trust and neural animated-camera support are unproven. |
-| Feature VFX | Viable component | Per-shot caches and art-direction loops fit VFX workflows, but richer lights and learned proxy-conditioned controls remain incomplete. |
+| Feature VFX | Viable component | Per-shot caches and art-direction loops fit VFX workflows, but production-scale light rigs and final-frame trust remain incomplete. |
 
 ## Open Work Before Final E10 Completion
 
@@ -182,8 +185,6 @@ Engineering versus structural:
   MPS-enabled PyTorch build, and GUI slider.
 - Finish E7 high-quality proxy run and a true hand-authored or external generative
   image fixture with provenance.
-- Finish E8 learned proxy-conditioned control comparison for arbitrary masks and
-  arbitrary attenuation curves.
 - Finish E9 high-spp production-scale final-frame trust verdict.
 
 Run `mise run pipeline-audit` to verify that every `out/` artifact referenced above
