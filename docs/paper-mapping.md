@@ -89,14 +89,17 @@ PSNR (`examples/kitchen_torch.json`). Scene assets are downloaded on demand
 (`examples/scenes/download_scene.py`), never vendored.
 
 **§4.2 memory layout (fp16 geometry, rgb9e5 throughput) — implemented (opt-in).**
-`PathCache.save(path, compressed=True)` writes the paper's packed layout: segment
+`PathCache.save(path, compressed=True)` and
+`PathCache.save_sharded(directory, packed=True)` write the paper's packed layout: segment
 geometry and G-buffer aux in fp16, per-segment throughput as shared-exponent rgb9e5
 words (`nrp/rgb9e5.py`, the `EXT_texture_shared_exponent` conversion rules,
 round-trip property-tested to the 2⁻⁹ mantissa bound). `load` auto-detects the
 layout and hands back float64 arrays, so gather/training are layout-agnostic;
 escape segments survive because fp16 represents inf exactly. Sizes, decode cost,
 and the (negligible) quality delta are measured in `docs/performance.md`; float64
-stays the default because toy caches are megabytes, not the paper's gigabytes.
+stays the monolithic default because toy caches are megabytes, not the paper's
+gigabytes. T2 uses packed shards on the 52.3M-segment Country Kitchen cache and
+measures 3.32× smaller storage with ≥44.90 dB GATHERLIGHT fidelity.
 
 **§4.3 network inputs — faithful.** Beyond light parameters, exactly the paper's nine
 extra inputs: pixel coordinates px (2D, encoded) and F_px = albedo (3) + depth (1) +
@@ -293,16 +296,17 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
 All of the paper's stated limitations apply here too: fixed transport after caching
 (no post-hoc attenuation/exclusivity edits), undersampled-region artifacts,
 parameter-count-driven difficulty for complex light types, and in-memory path data.
-Extension work has started chipping at these limits with light-aware toy-tracer
+Extension and production-track work chips at these limits with light-aware toy-tracer
 sampling for declared placement regions, one-bounce dynamic-geometry cache splicing
 (`nrp.dynamic_geometry`) with an image-space warm-start repair baseline, a
-tile-sharded cache round-trip, streamed fixed-light target construction, and tiled
-proxy inference (`PathCache.save_sharded`,
-`nrp.torch_backend.relight --tile-pixels`). The E3 open-top-box occluder is still a
-toy lampshade-style fixture, and multi-bounce invalidation, TorchNRP weight
-fine-tuning, streamed optimizer training, and a production-resolution run are not
-implemented yet. This implementation adds its own: toy scale, no fused kernels, and
-Monte Carlo noise floors at 16–24 spp that dominate SMAPE on near-zero pixels.
+packed tile-sharded caches, streamed TorchNRP pool training, and tiled proxy inference
+(`PathCache.save_sharded(..., packed=True)`, `nrp.torch_backend.streamed_train`,
+`nrp.torch_backend.relight --tile-pixels`). T2 measures this path on the 512² Country
+Kitchen scene at 0.80 GiB training peak RSS, versus 8.45 GiB monolithic. The E3
+open-top-box occluder remains a toy lampshade-style fixture, and multi-bounce dynamic
+invalidation is not implemented. This implementation adds its own: no fused streamed
+gather kernel, plus Monte Carlo noise floors at low spp that dominate SMAPE on
+near-zero pixels.
 
 ## Known deviations summary
 

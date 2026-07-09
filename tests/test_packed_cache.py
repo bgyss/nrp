@@ -117,6 +117,21 @@ class PackedCacheTests(unittest.TestCase):
             self.cache.save(packed, compressed=True)
             self.assertLess(os.path.getsize(packed) * 2, os.path.getsize(full))
 
+    def test_packed_sharded_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            full_dir = Path(tmp) / "full"
+            packed_dir = Path(tmp) / "packed"
+            self.cache.save_sharded(str(full_dir), tile_size=4)
+            self.cache.save_sharded(str(packed_dir), tile_size=4, packed=True)
+            again = PathCache.load_sharded(str(packed_dir))
+            light = SphereLight(center=[0.3, 0.9, -0.4], radius=0.3, rgb=[4.0, 3.0, 2.0])
+            self.assertGreaterEqual(
+                psnr(gather_light(again, light), gather_light(self.cache, light)), 40.0
+            )
+            full_bytes = sum(p.stat().st_size for p in full_dir.glob("*.npz"))
+            packed_bytes = sum(p.stat().st_size for p in packed_dir.glob("*.npz"))
+            self.assertLess(packed_bytes, full_bytes)
+
     def test_medium_metadata_survives_packing(self):
         cache = trace_path_cache(8, 8, 4, 3, seed=5, medium={"sigma_t": 0.4, "albedo": 0.8})
         again = self.round_trip(cache)

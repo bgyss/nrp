@@ -99,6 +99,10 @@ run = "uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box --width
 description = "E5 production-scale report: streamed TorchNRP training + tiled inference on the 512x512/128spp cache"
 run = "uv run python examples/mitsuba_512_streamed.py --out out/out-of-core/mitsuba_512_report.json"
 
+[tasks.t2-streaming]
+description = "T2: packed-shard streaming and memory-budget proof on the T1 kitchen scene"
+run = "uv run python examples/t2_real_scene_streaming.py --out out/t2-streaming/report.json"
+
 [tasks.quality-tiers]
 description = "E9 quality ladder: preview/draft/final/residual report"
 run = "uv run python examples/quality_tiers.py --out out/quality/report.json"

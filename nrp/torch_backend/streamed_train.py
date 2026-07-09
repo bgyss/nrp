@@ -21,10 +21,50 @@ import torch
 
 from ..lights import SphereLight
 from ..path_cache import PathCache
+from ..rgb9e5 import rgb9e5_decode
 from .denoise import denoise_image
 from .model import TorchNRP, relative_mse_loss
 from .sampling import sample_light
 from .train import light_param_vector
+
+
+def load_sharded_gbuffer(shard_dir: Path) -> PathCache:
+    """Load only per-pixel data from shards, leaving all segment arrays on disk."""
+    with open(shard_dir / "manifest.json") as f:
+        manifest = json.load(f)
+    width, height = int(manifest["width"]), int(manifest["height"])
+    n_paths = np.zeros((height, width), dtype=np.int64)
+    albedo = np.zeros((height, width, 3), dtype=np.float64)
+    position = np.zeros((height, width, 3), dtype=np.float64)
+    depth = np.zeros((height, width), dtype=np.float64)
+    normal = np.zeros((height, width, 3), dtype=np.float64)
+    for shard in manifest["shards"]:
+        with np.load(shard_dir / shard["path"]) as z:
+            y0, y1 = int(z["y0"]), int(z["y1"])
+            x0, x1 = int(z["x0"]), int(z["x1"])
+            n_paths[y0:y1, x0:x1] = z["n_paths"]
+            albedo[y0:y1, x0:x1] = z["albedo"]
+            position[y0:y1, x0:x1] = z["position"]
+            depth[y0:y1, x0:x1] = z["depth"]
+            normal[y0:y1, x0:x1] = z["normal"]
+    empty = np.zeros(0, dtype=np.float64)
+    cache = PathCache(
+        width=width,
+        height=height,
+        n_paths=n_paths.reshape(-1),
+        seg_pixel=np.zeros(0, dtype=np.int64),
+        seg_origin=np.zeros((0, 3), dtype=np.float64),
+        seg_dir=np.zeros((0, 3), dtype=np.float64),
+        seg_tmax=empty,
+        seg_throughput=np.zeros((0, 3), dtype=np.float64),
+        albedo=albedo,
+        position=position,
+        depth=depth,
+        normal=normal,
+        medium=manifest.get("medium"),
+    )
+    cache.validate()
+    return cache
 
 
 def gather_sphere_streamed(
@@ -42,13 +82,22 @@ def gather_sphere_streamed(
 
     out = np.zeros((height * width, 3), dtype=np.float64)
     peak_segment_bytes = 0
+    segments_processed = 0
     for shard in manifest["shards"]:
         z = np.load(shard_dir / shard["path"])
         seg_pixel = z["seg_pixel"].astype(np.int64)
+        segments_processed += int(seg_pixel.size)
         seg_origin = z["seg_origin"].astype(np.float64)
         seg_dir = z["seg_dir"].astype(np.float64)
+        if "packed_layout" in z:
+            norms = np.linalg.norm(seg_dir, axis=1, keepdims=True)
+            seg_dir = np.divide(seg_dir, norms, out=seg_dir, where=norms > 0)
         seg_tmax = z["seg_tmax"].astype(np.float64)
-        seg_throughput = z["seg_throughput"].astype(np.float64)
+        seg_throughput = (
+            rgb9e5_decode(z["seg_throughput_rgb9e5"])
+            if "packed_layout" in z
+            else z["seg_throughput"].astype(np.float64)
+        )
         peak_segment_bytes = max(
             peak_segment_bytes,
             int(
@@ -65,7 +114,10 @@ def gather_sphere_streamed(
                 np.add.at(out, seg_pixel[hits], seg_throughput[hits])
     denom = np.maximum(n_paths, 1).astype(np.float64)
     out /= denom[:, None]
-    return out.reshape(height, width, 3), {"peak_segment_bytes": peak_segment_bytes}
+    return out.reshape(height, width, 3), {
+        "peak_segment_bytes": peak_segment_bytes,
+        "segments_processed": segments_processed,
+    }
 
 
 class StreamedImagePool:
@@ -92,6 +144,7 @@ class StreamedImagePool:
         self.used_params: list[np.ndarray] = []
         self.supervision_seconds = 0.0
         self.peak_segment_bytes = 0
+        self.segments_processed = 0
         for i in range(self.size):
             self.fill(i)
 
@@ -112,6 +165,7 @@ class StreamedImagePool:
             light.radius,
         )
         self.peak_segment_bytes = max(self.peak_segment_bytes, stats["peak_segment_bytes"])
+        self.segments_processed += stats["segments_processed"]
         dn = self.cfg.get("denoise", {})
         if dn.get("enabled", True):
             image = denoise_image(
@@ -195,4 +249,6 @@ def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tupl
         "loss_curve": loss_curve,
         "peak_segment_bytes_loaded": pool.peak_segment_bytes,
         "supervision_seconds": pool.supervision_seconds,
+        "segments_processed": pool.segments_processed,
+        "segments_per_second": pool.segments_processed / max(pool.supervision_seconds, 1e-12),
     }
