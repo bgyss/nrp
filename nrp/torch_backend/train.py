@@ -35,7 +35,7 @@ import torch
 
 from ..gather_light import gather_light
 from ..lights import TexturedQuadLight
-from ..metrics import psnr, smape
+from ..metrics import flip, psnr, smape, ssim
 from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
 from .denoise import denoise_image
@@ -175,7 +175,14 @@ def build_val_set(cache: PathCache, cfg: dict) -> list[dict]:
     return val_set
 
 
-def evaluate(model, val_set, xy, aux, device) -> list[dict]:
+def _tonemap_srgb(img: np.ndarray) -> np.ndarray:
+    """Reinhard + gamma 1/2.2 tonemap of an HDR image into [0,1] sRGB-ish space,
+    the display-referred domain SSIM (data_range=1) and FLIP are defined over."""
+    img = np.maximum(np.asarray(img, dtype=np.float64), 0.0)
+    return np.clip((img / (1.0 + img)) ** (1.0 / 2.2), 0.0, 1.0)
+
+
+def evaluate(model, val_set, xy, aux, device, hw: tuple[int, int] | None = None) -> list[dict]:
     model.eval()
     metrics = []
     n_px = xy.shape[0]
@@ -186,15 +193,20 @@ def evaluate(model, val_set, xy, aux, device) -> list[dict]:
             ).expand(n_px, -1)
             pred = model(xy, aux, params).cpu().numpy().astype(np.float64)
             light = entry["light"]
-            metrics.append(
-                {
-                    "light": light.to_dict() if hasattr(light, "to_dict") else None,
-                    "psnr_db_vs_raw": psnr(pred, entry["raw"]),
-                    "smape_vs_raw": smape(pred, entry["raw"]),
-                    "psnr_db_vs_denoised": psnr(pred, entry["denoised"]),
-                    "smape_vs_denoised": smape(pred, entry["denoised"]),
-                }
-            )
+            m = {
+                "light": light.to_dict() if hasattr(light, "to_dict") else None,
+                "psnr_db_vs_raw": psnr(pred, entry["raw"]),
+                "smape_vs_raw": smape(pred, entry["raw"]),
+                "psnr_db_vs_denoised": psnr(pred, entry["denoised"]),
+                "smape_vs_denoised": smape(pred, entry["denoised"]),
+            }
+            if hw is not None:
+                h, w = hw
+                pred_tm = _tonemap_srgb(pred.reshape(h, w, 3))
+                raw_tm = _tonemap_srgb(entry["raw"].reshape(h, w, 3))
+                m["ssim_vs_raw"] = ssim(pred_tm, raw_tm, data_range=1.0)
+                m["flip_vs_raw"] = flip(pred_tm, raw_tm)
+            metrics.append(m)
     model.train()
     return metrics
 
@@ -335,7 +347,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
             t_train0 = time.perf_counter()
     train_seconds += time.perf_counter() - t_train0
 
-    val_metrics = evaluate(model, val_set, xy, aux, device)
+    val_metrics = evaluate(model, val_set, xy, aux, device, hw=(cache.height, cache.width))
     model.eval()
 
     # Single-frame inference latency (full image forward, no gather).
@@ -373,6 +385,10 @@ def train(cfg: dict, resume: bool = False) -> dict:
         "val_psnr_db_vs_denoised_mean": float(
             np.mean([m["psnr_db_vs_denoised"] for m in val_metrics])
         ),
+        # SSIM/FLIP are computed on Reinhard+gamma-tonemapped images (FLIP is
+        # defined over display-referred sRGB in [0,1]); data_range=1 for SSIM.
+        "val_ssim_vs_raw_mean": float(np.mean([m["ssim_vs_raw"] for m in val_metrics])),
+        "val_flip_vs_raw_mean": float(np.mean([m["flip_vs_raw"] for m in val_metrics])),
     }
     if cfg.get("record_supervision_lights"):
         # Opt-in (roadmap item 9): the exact light-parameter vectors of every

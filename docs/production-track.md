@@ -19,7 +19,7 @@ Design rationale and decision record: `docs/plans/2026-07-09-production-track-de
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| T1 | Real-scene ingestion at scale | not started | — |
+| T1 | Real-scene ingestion at scale | **done** | `out/export-bench.json` (39–59× ≥ 20× target); `out/kitchen-512-torch/torch_train_report.json` (21.01 dB / SSIM 0.30 / ꟻLIP 0.146); `docs/performance.md` |
 | T2 | Streaming and memory discipline at real-scene scale | not started | — |
 | T3 | Perceptual quality gates | not started | — |
 | T4 | Runtime baseline lock | not started | — |
