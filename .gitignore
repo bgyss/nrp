@@ -6,3 +6,4 @@ out/
 .direnv/
 webgpu/node_modules/
 webgpu/blank.html
+.DS_Store
