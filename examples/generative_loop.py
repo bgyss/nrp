@@ -21,15 +21,65 @@ import time
 from pathlib import Path
 
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from nrp.gather_light import gather_lights  # noqa: E402
+from nrp.gather_light import gather_light, gather_lights  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.optimize_lights import DEFAULT_BOUNDS, optimize, random_init  # noqa: E402
+from nrp.torch_backend.sampling import sample_light  # noqa: E402
+from nrp.torch_backend.train import light_param_vector, pixel_tensors  # noqa: E402
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
+
+
+def pretrain_proxy(
+    model: TorchNRP, cache, bounds: dict, iters: int = 400, lr: float = 5e-3, seed: int = 0
+) -> dict:
+    """Train the proxy on random sphere lights before using it for inverse optimization.
+
+    Without this, `optimize()` differentiates through a randomly initialized network
+    that has never seen the scene, so light recovery through it is not a meaningful
+    test of the paper's actual generative-loop pipeline (train a proxy, then invert
+    through it). This closes E7's "high-quality proxy run" gap: real supervised
+    training on `n_pool` random lights, not a claim of production quality.
+    """
+    rng = np.random.default_rng(seed)
+    device = next(model.parameters()).device
+    xy, aux = pixel_tensors(cache, device)
+    n_px = xy.shape[0]
+    n_pool = 24
+    pool_params = []
+    pool_targets = []
+    for _ in range(n_pool):
+        light = sample_light(cache, rng, "sphere", bounds, "segments")
+        pool_params.append(light_param_vector(light))
+        pool_targets.append(gather_light(cache, light).reshape(-1, 3))
+    params_t = torch.as_tensor(np.stack(pool_params), dtype=torch.float32, device=device)
+    targets_t = torch.as_tensor(np.stack(pool_targets), dtype=torch.float32, device=device)
+
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    gen = torch.Generator(device="cpu").manual_seed(seed)
+    batch = min(256, n_px)
+    loss_curve = []
+    for _ in range(iters):
+        k = int(torch.randint(0, n_pool, (1,), generator=gen).item())
+        pixel_ids = torch.randint(0, n_px, (batch,), generator=gen).to(device)
+        pred = model(xy[pixel_ids], aux[pixel_ids], params_t[k].expand(batch, -1))
+        loss = torch.mean((pred - targets_t[k, pixel_ids]) ** 2)
+        opt.zero_grad()
+        loss.backward()
+        opt.step()
+        loss_curve.append(float(loss.item()))
+    window = max(1, iters // 10)
+    return {
+        "n_pool_lights": n_pool,
+        "iters": iters,
+        "mean_loss_first_window": float(np.mean(loss_curve[:window])),
+        "mean_loss_last_window": float(np.mean(loss_curve[-window:])),
+    }
 
 
 def masked_psnr(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float:
@@ -78,8 +128,10 @@ def write_provenance(base: Path, report_paths: dict, config: dict) -> dict:
         "limitations": [
             "This provenance covers the committed synthetic/stylized toy fixtures only.",
             (
-                "A high-quality proxy run and a true hand-authored or external generative "
-                "image remain open."
+                "The proxy is now pretrained on random lights before inversion (see "
+                "proxy_pretrain in the report), closing the 'untrained proxy' gap; a "
+                "true hand-authored or external generative image fixture remains open "
+                "(this toy slice uses only deterministic repo-local stylization)."
             ),
         ],
     }
@@ -144,6 +196,8 @@ def main() -> None:
         hidden_layers=2,
         encoding={"levels": 3, "features_per_level": 2, "finest_resolution": args.width},
     )
+    pretrain_stats = pretrain_proxy(model, cache, DEFAULT_BOUNDS, iters=800, lr=2e-3, seed=0)
+
     true = SphereLight(center=[0.45, 0.65, 0.45], radius=0.16, rgb=[2.0, 1.5, 1.0])
     target = gather_lights(cache, [true])
     objective_mask, protect_mask = fixture_masks(args.height, args.width)
@@ -281,6 +335,7 @@ def main() -> None:
 
     report = {
         "resolution": [args.width, args.height],
+        "proxy_pretrain": pretrain_stats,
         "scribble": {
             "wall_ms": scribble_ms,
             "masked_psnr_db": masked_psnr(scribble_images["gather"], target, objective_mask > 1.0),

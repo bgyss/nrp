@@ -7,6 +7,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from examples.quality_tiers import quality_metrics, supervisor_trust_verdict  # noqa: E402
+from examples.quality_tiers_production import (  # noqa: E402
+    quality_metrics as production_quality_metrics,
+)
 
 
 class QualityTierReportTests(unittest.TestCase):
@@ -33,6 +36,14 @@ class QualityTierReportTests(unittest.TestCase):
             verdict["verdict"],
             "trust approved frame only; re-bake residual after any measured light move",
         )
+
+    def test_production_quality_metrics_matches_toy_helper(self):
+        image = np.full((3, 3, 3), 0.5)
+        reference = np.ones((3, 3, 3))
+        toy = quality_metrics(image, reference)
+        production = production_quality_metrics(image, reference)
+        self.assertEqual(toy.keys(), production.keys())
+        self.assertAlmostEqual(toy["psnr_vs_final_db"], production["psnr_vs_final_db"])
 
     def test_supervisor_trust_verdict_rejects_failed_identity(self):
         verdict = supervisor_trust_verdict(

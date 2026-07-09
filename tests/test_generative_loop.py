@@ -10,7 +10,15 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from examples.generative_loop import fixture_masks, masked_psnr, write_provenance  # noqa: E402
+from examples.generative_loop import (  # noqa: E402
+    fixture_masks,
+    masked_psnr,
+    pretrain_proxy,
+    write_provenance,
+)
+from nrp.torch_backend.model import TorchNRP  # noqa: E402
+from nrp.torch_backend.optimize_lights import DEFAULT_BOUNDS  # noqa: E402
+from nrp.toy_tracer import trace_path_cache  # noqa: E402
 
 
 class GenerativeLoopTests(unittest.TestCase):
@@ -55,6 +63,19 @@ class GenerativeLoopTests(unittest.TestCase):
         self.assertTrue(all(row["wall_ms"] > 0.0 for row in report["latency_sweep"]))
         self.assertEqual(report["outputs"]["provenance"], "provenance.json")
         self.assertEqual(report["provenance"]["external_generator"], None)
+
+    def test_pretrain_proxy_reduces_windowed_loss(self):
+        cache = trace_path_cache(8, 8, spp=4, max_bounces=1, seed=3)
+        model = TorchNRP(
+            light_type="sphere",
+            hidden_width=16,
+            hidden_layers=2,
+            encoding={"levels": 2, "features_per_level": 2, "finest_resolution": 8},
+        )
+        stats = pretrain_proxy(model, cache, DEFAULT_BOUNDS, iters=120, lr=5e-3, seed=1)
+        self.assertEqual(stats["n_pool_lights"], 24)
+        self.assertEqual(stats["iters"], 120)
+        self.assertLess(stats["mean_loss_last_window"], stats["mean_loss_first_window"])
 
     def test_write_provenance_hashes_files_and_records_method(self):
         with tempfile.TemporaryDirectory() as tmp:

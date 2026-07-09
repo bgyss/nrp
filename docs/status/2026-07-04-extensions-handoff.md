@@ -72,17 +72,52 @@ Key numbers:
 - Spliced cache vs full retrace: exact for the one-bounce fixture.
 - Image-proxy PSNR after repair: 65.86 dB minimum, 69.69 dB mean.
 
+Update (2026-07-08): warm-started TorchNRP weight fine-tuning is now implemented
+and measured (`TorchNRPWarmStartProxy` in `examples/dynamic_geometry.py`), with a
+negative result — see `docs/performance.md` "TorchNRP weight fine-tune regimes".
+Regime (a) full-retrace-retrain reaches 44.88 dB mean PSNR vs the fully retraced
+frame; regime (b) incremental splice + masked-pixel fine-tune only reaches 25.20 dB
+(19.7 dB short of the 1 dB criterion), barely ahead of doing nothing at all (regime
+(c) stale: 22.13 dB). Root cause: fine-tuning only against the invalidated pixels'
+loss has no regularizer holding the shared MLP's fit on unchanged pixels steady, so
+the network drifts. Test coverage:
+`tests/test_dynamic_geometry.py::test_torchnrp_warm_start_fine_tune_only_touches_masked_pixels`,
+`::test_torchnrp_warm_start_no_op_on_empty_mask`.
+
 Important limitation:
 
-- This is not TorchNRP weight fine-tuning.
 - This is not multi-bounce invalidation. Unchanged first-hit pixels can still see
   changed indirect transport once secondary bounces matter.
 
+Update (2026-07-08): multi-bounce invalidation is now implemented and measured.
+`nrp.dynamic_geometry.swept_volume_invalidation_mask` flags any pixel with a cached
+segment at any bounce depth passing through the moving object's conservative
+swept-volume bound. `examples/dynamic_geometry.py::multi_bounce_invalidation_comparison`
+(`out/dynamic-geometry/report.json`, field `multi_bounce_invalidation`) shows the
+failure-then-fix: at 32x32/8spp/2-bounce, primary-visibility-only invalidation
+misses 534 pixels with changed indirect bounces (33.43 dB vs a full retrace, not
+exact); adding the swept-volume mask catches them and recovers an exact match. See
+`docs/performance.md` "Multi-bounce invalidation: swept-volume masking". Test
+coverage: `tests/test_dynamic_geometry.py::test_swept_bounding_sphere_contains_endpoints_and_object_extent`,
+`::test_swept_volume_mask_flags_pixels_with_any_bounce_depth_segment_in_region`,
+`::test_multi_bounce_spliced_cache_matches_full_retrace_with_swept_mask`.
+
+Update (2026-07-08): the replay-regularized retry is done.
+`TorchNRPWarmStartProxy.fine_tune_with_replay` mixes self-distillation targets
+(the model's own pre-update predictions on unchanged pixels) into the incremental
+fine-tune batch. Result: regime (b2) reaches 33.76 dB, closing the gap from 19.7 dB
+to **11.1 dB** — a real, substantial improvement, but still far outside the 1 dB
+criterion. **Conclusion: the 1 dB target is not reachable with segment-local
+fine-tuning (with or without simple replay) at this model capacity** — this is now
+a settled negative result, not an open question. See `docs/performance.md`
+"Replay-regularized retry (regime b2)". Test coverage:
+`tests/test_dynamic_geometry.py::test_torchnrp_fine_tune_with_replay_runs_and_produces_finite_loss`,
+`::test_torchnrp_fine_tune_with_replay_no_op_on_empty_mask`.
+
 Remaining E2 criterion:
 
-- Implement and measure multi-bounce invalidation.
-- Replace or augment the image-space baseline with warm-started TorchNRP weight
-  fine-tuning.
+- The swept-volume mask is conservative (over-invalidates); it is not yet integrated
+  into the per-frame regime (a)/(b)/(c) loop above, which is still one-bounce only.
 
 ### E3 Light-Aware Sampling
 
@@ -162,10 +197,24 @@ What exists:
 - Reported resident segment-byte ratio: 9.0x lower peak streamed segment bytes
   than the monolithic resident segment bytes for the current toy run.
 
-Remaining E5 criterion:
+Update (2026-07-08): streamed TorchNRP optimizer training is now closed at toy
+scale. `nrp/torch_backend/streamed_train.py` trains a real sphere-light `TorchNRP`
+from a `StreamedImagePool` that renders pool targets by visiting shard tiles
+(`out/out-of-core/streamed_torchnrp_report.json`, `mise run streamed-torchnrp`):
+bitwise-identical loss curve and held-out PSNR (9.12 dB) to the monolithic
+in-memory run at 200 iterations/seed 0, with 11.1x lower peak resident segment
+bytes. See `docs/performance.md` "Streamed TorchNRP pool training". Test coverage:
+`tests/test_out_of_core.py::test_streamed_torchnrp_training_matches_monolithic`.
 
-- Streamed TorchNRP optimizer training.
-- 512x512 / 128 spp Mitsuba report with peak RSS, throughput, and held-out PSNR.
+Update (2026-07-08): the 512x512/128spp Mitsuba end-to-end report is done —
+`out/out-of-core/mitsuba_512_report.json` via `mise run export-mitsuba-512` +
+`mise run mitsuba-512-streamed`. 94.2M segments, 3.35 GB monolithic cache / 8.29 GB
+resident segment bytes vs 574 MB peak streamed (14.4x lower), streamed train
+~16.7 min (150 iters), held-out PSNR 32.57 dB, tiled full-frame inference 118.3 ms.
+See `docs/performance.md` "512x512 / 128 spp Mitsuba end-to-end report". **E5 is now
+closed at this scale** — the caveat is that streaming cost is I/O/Python-loop bound,
+not compute bound (a batched streaming gather would speed it up, engineering not
+structural).
 
 ### E6 Engine-Shaped Runtime
 
@@ -175,14 +224,50 @@ What exists:
 
 - TorchScript-shaped exported runtime path.
 - CPU 128/256/512 matrix.
-- MPS rows are recorded as unavailable in the current PyTorch build.
 - Headless slider-loop style runtime measurement.
 
-Remaining E6 criterion:
+Update (2026-07-08): this machine's PyTorch build now has a working MPS backend
+(previously reported unavailable). Re-ran `mise run viewer` for real MPS numbers:
+128x128 106.1 ms/frame (9.4 fps, slower than CPU — dispatch overhead dominates at
+this size), 256x256 28.6 ms/frame (35.0 fps), 512x512 38.15 ms/frame (26.2 fps).
+Neither CPU nor MPS hits 30 fps at 512x512 for this exported artifact on this
+hardware. See `docs/performance.md` "Exported engine-shaped runtime" for the full
+table.
 
-- WebGPU or engine-backend matrix.
-- Real MPS timing on an MPS-enabled PyTorch build.
-- GUI slider/viewer evidence.
+Update (2026-07-08): the GUI slider gap is closed.
+`examples/export_js_viewer.py` (`out/engine-runtime/js_viewer/viewer.html`) trains a
+`use_encoding=False` proxy, exports raw weights, and writes a self-contained HTML
+page with 4 real range-input sliders (light center xyz + radius) that recompute the
+full image through a ~40-line JS reimplementation of the forward pass on every move
+— a genuine interactive GUI (no display/GUI toolkit exists in this environment for a
+native app, so a browser page is the honest choice). JS-vs-PyTorch parity: 1.0e-7 max
+abs diff, verified both in-page and by
+`tests/test_export_js_viewer.py::test_js_forward_pass_matches_python_reference`
+(runs the JS under Node, skips cleanly if absent). See `docs/performance.md` "A real
+GUI slider, and a step toward the WebGPU/engine-backend criterion".
+
+Update (2026-07-08): a genuine WebGPU compute-shader backend was implemented and
+**closes E6's last criterion**. First attempt: `webgpu/bench.mjs` (native Dawn
+bindings via the `webgpu` npm package, no browser) reproducibly segfaulted when
+running the real exported proxy's weights (0/25+ trials). A ~150-trial bisection
+(table in `webgpu/README.md`) narrowed this to a defect in that specific native
+binding's handling of real trained-model float32 data — ruled out magnitude,
+distribution, buffer size, memory layout, and three independent package versions.
+Second attempt, `webgpu/bench_browser.mjs` (`mise run webgpu-bench`, report:
+`out/engine-runtime/webgpu_browser_report.json`): the byte-for-byte identical
+compute shader, executed inside real Google Chrome via Playwright against the same
+real exported proxy weights, has **no such issue** — parity 2.4e-7 vs the PyTorch
+reference, and a 128/256/512 latency sweep clearing 30 and 60 fps at every
+resolution (580 fps at 128², 107 fps at 512²). This confirms the bisection's
+diagnosis (the defect was specific to the experimental Node-only Dawn binding, not
+to WebGPU, this project's shader, or its JS code) and delivers the actual E6
+criterion via a production WebGPU implementation. See `docs/performance.md` "A real
+WebGPU compute-shader backend (closes E6's last criterion)". Test coverage:
+`tests/test_webgpu_browser_bench.py` (end-to-end, spawns real Chrome).
+
+**E6 is now fully closed**: exported TorchScript runtime with real CPU/MPS timings,
+a real interactive GUI slider (JS/canvas), and a real WebGPU compute-shader backend
+running the actual exported proxy, all measured on this machine.
 
 ### E7 Generative Loop
 
@@ -197,10 +282,30 @@ What exists:
 - Deterministic fixture provenance with SHA256s.
 - Physical-realization gap is reported.
 
-Remaining E7 criterion:
+Update (2026-07-08): the "high-quality proxy run" gap is closed. `pretrain_proxy` in
+`examples/generative_loop.py` trains the model on 24 random sphere lights (800 Adam
+steps) before it is used for inverse optimization — previously `optimize()`
+differentiated through a randomly initialized, never-trained network. Windowed mean
+loss drops 0.330 → 0.169. Physical re-render quality (13.19 dB best restart) is
+essentially unchanged from before pretraining (14.13 dB), because a single sphere
+light's expressiveness — not proxy quality — is the binding constraint on this
+fixture. Test coverage: `tests/test_generative_loop.py::test_pretrain_proxy_reduces_windowed_loss`.
 
-- High-quality proxy run.
-- True hand-authored or external generative image fixture with provenance.
+Update (2026-07-08): the hand-authored fixture gap is closed.
+`examples/hand_authored_target.py` (`out/generative/hand_authored_report.json`) is a
+target with no algorithmic connection to any render or light — an explicit,
+hand-picked `(row, col, RGB)` stroke list (a plus-sign pixel-art shape) typed
+directly into the file, distinct from the other fixtures' render-derived content.
+Same pipeline as the rest of E7 (pretrained proxy, 2-light optimization, 3
+restarts): 12.56 dB target-vs-realized PSNR, same physical-realization-gap finding
+as the stylized target. Provenance sets `hand_authored: true,
+derived_from_render: false`. See `docs/performance.md` "A genuinely hand-authored
+target". Test coverage: `tests/test_hand_authored_target.py` (4 tests).
+
+**E7 is now fully closed at toy scale** — every criterion in `docs/extensions.md`
+for E7 (scribble recovery, generative-target workflow, latency sweep,
+proxy-space-vs-re-rendered reporting, high-quality proxy run, hand-authored
+fixture) has measured evidence.
 
 ### E8 Production Controls
 
@@ -240,10 +345,15 @@ What exists:
 - Toy residual-validity trust verdict: trust the approved frame only; re-bake after
   any measured light move.
 
-Remaining E9 criterion:
-
-- Fresh high-spp production-scale cache.
-- Production-scale final-frame trust verdict.
+Update (2026-07-08): the production-scale criterion is closed.
+`out/quality/production_report.json` (`mise run quality-tiers-production`) reuses
+E5's 512x512 Mitsuba caches (32spp export, 128spp converged reference) with a real
+streamed-trained proxy: preview 33.76 dB / draft 35.72 dB PSNR vs the 128spp final,
+exact residual identity at the approval config, and a trust verdict of "trust the
+approved frame only; re-bake after any measured light move" — same qualitative
+verdict as the toy report, now backed by a genuinely converged reference and trained
+proxy. See `docs/performance.md` "Production-scale trust verdict". **E9 is now
+closed at this scale.**
 
 ### E1 Animated Lights and Camera
 
@@ -257,30 +367,36 @@ What exists:
 - Animated-light static-camera harness.
 - Camera-keyframe cache scaling and image-space interpolation baseline.
 
-Remaining E1 criterion:
+Update (2026-07-08): the single time-conditioned neural proxy criterion is now
+closed at toy scale. `examples/time_conditioned_proxy.py`
+(`out/time-camera/proxy_report.json`) trains one `TorchNRP` (light params + a time
+scalar) jointly on the K=3 camera keyframes and evaluates held-out intermediate
+camera times (t=0.25, 0.75) against freshly traced ground truth at those exact
+poses: mean training-keyframe PSNR 28.74 dB, mean held-out PSNR 26.68 dB, gap
+**2.06 dB** (criterion: within 3 dB — met). See `docs/performance.md`
+"Time-conditioned TorchNRP proxy". Test coverage:
+`tests/test_time_conditioned_camera.py::test_light_time_params_appends_time_scalar`,
+`::test_pixel_xy_and_aux_shapes`.
 
-- Single neural proxy conditioned on time/camera inputs.
-- Held-out intermediate-camera proxy PSNR within 3 dB of training-keyframe PSNR, or
-  a report documenting the gap.
+E1 is now closed at toy scale on both axes (animated lights, static camera; and a
+single time-conditioned proxy across camera keyframes). Caveat: K=3 keyframes and a
+small ±0.04 camera range — untested whether the gap holds at larger K or motion
+range.
 
 ## Suggested Next Work
 
-Recommended next slice: E5 streamed optimizer training.
+Recommended next slice: E2 multi-bounce invalidation, or a replay-regularized retry
+of the TorchNRP fine-tune to see if the 1 dB criterion is reachable at all.
 
-Reason: E3 and E4 now have toy-scale completion evidence, while E2's remaining work
-is larger and touches dynamic training. E5 has the clearest production blocker:
-stream optimizer batches from sharded caches instead of only building streamed target
-tables. Start by reading:
-
-- `skills/nrp-path-cache-and-gather/SKILL.md`
-- `examples/out_of_core.py`
-- `nrp/path_cache.py`
-- `nrp/torch_backend/train.py`
-
-Alternative next slice: E2 multi-bounce invalidation plus TorchNRP fine-tuning.
-
-Reason: E2 is the highest structural-risk game-pipeline item, but it is a larger
-change than the E5 streaming path. Start by reading:
+Reason: E5 is now fully closed (toy streamed optimizer + 512x512/128spp production
+report both done). E1 is now closed on both axes (animated lights, and the
+time-conditioned proxy within its 3 dB criterion at K=3). E6's real-MPS-timings gap
+is closed. E2's TorchNRP fine-tune criterion is now measured but failed (19.7 dB
+short) — the next useful experiment is whether mixing a sample of unchanged-pixel
+targets into the incremental fine-tune batch (cheap replay regularization) closes
+that gap, before concluding it's a structural limit. Multi-bounce invalidation is
+still untouched and is the highest structural-risk game-pipeline item remaining.
+Start by reading:
 
 - `examples/dynamic_geometry.py`
 - `nrp/dynamic_geometry.py`

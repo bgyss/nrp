@@ -1,0 +1,16 @@
+{
+  "name": "nrp-webgpu-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "E6: real WebGPU compute-shader backend for a trained TorchNRP proxy. bench_browser.mjs (real Chrome via Playwright) is the working, completed backend; bench.mjs (native Dawn bindings, no browser) is kept as a documented negative result — see README.md.",
+  "scripts": {
+    "smoke": "node smoke.mjs",
+    "bench": "node bench.mjs parity",
+    "bench-browser": "node bench_browser.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.61.1",
+    "webgpu": "^0.4.0"
+  }
+}
