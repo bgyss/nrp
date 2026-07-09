@@ -323,3 +323,19 @@ program's "honest negative results are deliverables" convention.
 
 Run `mise run pipeline-audit` to verify that every `out/` artifact referenced above
 exists.
+
+## What Happens Next
+
+This verdict is not an endpoint: each named blocker above maps to a rung of the
+production track (`docs/production-track.md`), which pairs every
+scale/robustness proof with a performance target and ends in one summit demo
+per target audience.
+
+| named blocker (above) | production-track rung |
+|---|---|
+| Frozen transport under dynamic geometry (games; E2's settled fine-tune failure) | G1 — partitioned residual retraining, evaluated against E2's exact failed recovery target |
+| Scale proof is cornell-box-only (animated film) | T1 — real academic scene ingested, trained, and measured end to end (then T2 streaming, F1/F2 shot harness) |
+| Production light rigs and layered controls (feature VFX) | V1 — ≥ 8-light rig with per-light layered proxies and verified additivity (then V2 art-direction loop) |
+| True production-shot complexity (animated film) | F1/F2 — ≥ 120-frame shot through the quality-tier ladder with a temporal stability metric, rendered at final tier |
+
+See `docs/tracks.md` for the full phase progression.

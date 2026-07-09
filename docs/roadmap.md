@@ -1,5 +1,8 @@
 # Roadmap — Ten Improvements, Written as Goal Prompts
 
+> **Phase 1 of 4 — complete (10/10).** This is a historical record cited by
+> committed reports; see [tracks.md](tracks.md) for the full progression.
+
 Each item below is a self-contained goal prompt (designed for `/goal <prompt>` or as a
 session brief). Every prompt bakes in **verification** (tests + evidence that must
 exist before the goal counts as met) and **performance testing** (numbers that must be

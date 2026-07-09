@@ -1,5 +1,10 @@
 # Extensions — Is NRP a Building Block for a Real-Time Neural Rendering Pipeline?
 
+> **Phase 2 of 4 — complete (E1–E9 measured; E10 verdict in
+> [pipeline-feasibility.md](pipeline-feasibility.md)).** This is a historical
+> record cited by committed reports; see [tracks.md](tracks.md) for the full
+> progression.
+
 This is a research roadmap written as goal prompts, in the same format as
 `docs/roadmap.md` (each item is self-contained, designed for `/goal <prompt>` or as a
 session brief, with baked-in **verification** and **measurement**). Where the original
