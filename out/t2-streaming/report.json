@@ -41,23 +41,57 @@
   "memory_budget_bytes": 8589934592,
   "export_measurements": {
     "t1_full": {
-      "resolution": [512, 512],
+      "scene": "examples/scenes/kitchen/scene.xml",
+      "resolution": [
+        512,
+        512
+      ],
       "spp": 64,
-      "mode": "wavefront[metal_ad_rgb]",
+      "bounces": 4,
+      "seed": 0,
+      "mode": "wavefront",
+      "variant": "metal_ad_rgb",
       "segments": 52264226,
       "trace_seconds": 20.4,
       "wall_seconds": 182.39,
+      "cache_bytes": 2092571573,
       "peak_rss_bytes": 10329554944,
+      "measurement_method": "/usr/bin/time -l around nrp.mitsuba_exporter; future runs use --report",
+      "command": "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 512 --height 512 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache.npz --report out/t2-streaming/export_512x512_64spp.json",
+      "hardware": {
+        "platform": "darwin",
+        "machine": "arm64",
+        "cpu": "Apple M1 Max",
+        "cpu_count": 10,
+        "memory_bytes": 68719476736
+      },
       "within_8gb": false
     },
     "verified_in_budget_ceiling": {
-      "resolution": [128, 128],
+      "scene": "examples/scenes/kitchen/scene.xml",
+      "resolution": [
+        128,
+        128
+      ],
       "spp": 64,
-      "mode": "scalar[scalar_rgb]",
+      "bounces": 4,
+      "seed": 0,
+      "mode": "scalar",
+      "variant": "scalar_rgb",
       "segments": 3266799,
       "trace_seconds": 52.5,
       "wall_seconds": 63.02,
+      "cache_bytes": 137490528,
       "peak_rss_bytes": 3259236352,
+      "measurement_method": "resource.getrusage(RUSAGE_SELF) around nrp.mitsuba_exporter; future runs use --report",
+      "command": "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 128 --height 128 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache_128.npz --report out/t2-streaming/export_128x128_64spp.json",
+      "hardware": {
+        "platform": "darwin",
+        "machine": "arm64",
+        "cpu": "Apple M1 Max",
+        "cpu_count": 10,
+        "memory_bytes": 68719476736
+      },
       "within_8gb": true
     },
     "finding": "512x512/64spp exceeds the budget; 128x128/64spp is the verified passing ceiling. No intermediate configuration is inferred."
@@ -133,6 +167,10 @@
   },
   "hardware": {
     "platform": "darwin",
-    "cpu_count": 10
+    "platform_release": "25.6.0",
+    "machine": "arm64",
+    "cpu": "Apple M1 Max",
+    "cpu_count": 10,
+    "memory_bytes": 68719476736
   }
 }

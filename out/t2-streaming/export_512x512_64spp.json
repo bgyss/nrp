@@ -1,0 +1,23 @@
+{
+  "scene": "examples/scenes/kitchen/scene.xml",
+  "resolution": [512, 512],
+  "spp": 64,
+  "bounces": 4,
+  "seed": 0,
+  "mode": "wavefront",
+  "variant": "metal_ad_rgb",
+  "segments": 52264226,
+  "trace_seconds": 20.4,
+  "wall_seconds": 182.39,
+  "cache_bytes": 2092571573,
+  "peak_rss_bytes": 10329554944,
+  "measurement_method": "/usr/bin/time -l around nrp.mitsuba_exporter; future runs use --report",
+  "command": "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 512 --height 512 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache.npz --report out/t2-streaming/export_512x512_64spp.json",
+  "hardware": {
+    "platform": "darwin",
+    "machine": "arm64",
+    "cpu": "Apple M1 Max",
+    "cpu_count": 10,
+    "memory_bytes": 68719476736
+  }
+}

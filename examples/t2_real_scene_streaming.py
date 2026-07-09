@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import multiprocessing as mp
-import os
 import resource
 import shutil
 import sys
@@ -22,6 +21,7 @@ from examples.streamed_torchnrp_train import (  # noqa: E402
 )
 from nrp.gather_light import gather_light  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
+from nrp.mitsuba_exporter import _hardware_context  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.relight import relight_tiled  # noqa: E402
@@ -201,8 +201,44 @@ def main() -> None:
     parser.add_argument("--out", default="out/t2-streaming/report.json")
     parser.add_argument("--tile-size", type=int, default=64)
     parser.add_argument("--iters", type=int, default=300)
+    parser.add_argument(
+        "--export-full-report", default="out/t2-streaming/export_512x512_64spp.json"
+    )
+    parser.add_argument(
+        "--export-ceiling-report", default="out/t2-streaming/export_128x128_64spp.json"
+    )
+    parser.add_argument(
+        "--compose-only",
+        action="store_true",
+        help=(
+            "refresh export evidence and hardware in an existing report without "
+            "rerunning training"
+        ),
+    )
     args = parser.parse_args()
     cache_path, out_path = Path(args.cache), Path(args.out)
+    budget = 8 * 1024**3
+    export_full = json.loads(Path(args.export_full_report).read_text())
+    export_ceiling = json.loads(Path(args.export_ceiling_report).read_text())
+    export_full["within_8gb"] = export_full["peak_rss_bytes"] <= budget
+    export_ceiling["within_8gb"] = export_ceiling["peak_rss_bytes"] <= budget
+    export_measurements = {
+        "t1_full": export_full,
+        "verified_in_budget_ceiling": export_ceiling,
+        "finding": (
+            "512x512/64spp exceeds the budget; 128x128/64spp is the verified "
+            "passing ceiling. No intermediate configuration is inferred."
+        ),
+    }
+    if args.compose_only:
+        report = json.loads(out_path.read_text())
+        report["export_measurements"] = export_measurements
+        report["passes"]["full_export_within_8gb"] = export_full["within_8gb"]
+        report["passes"]["reduced_export_within_8gb"] = export_ceiling["within_8gb"]
+        report["hardware"] = _hardware_context()
+        out_path.write_text(json.dumps(report, indent=2) + "\n")
+        print(json.dumps(report, indent=2))
+        return
     if not cache_path.exists():
         raise SystemExit(f"missing T1 cache: {cache_path}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,7 +259,6 @@ def main() -> None:
     evaluation = run_worker(
         worker_eval, str(shard_dir), str(mono_path), str(stream_path), cfg
     )
-    budget = 8 * 1024**3
     report = {
         "rung": "T2",
         "scene": "Mitsuba Country Kitchen (T1)",
@@ -231,6 +266,7 @@ def main() -> None:
         "spp": 64,
         "config": cfg,
         "memory_budget_bytes": budget,
+        "export_measurements": export_measurements,
         "packed_cache_conversion": {
             "peak_rss_bytes": shard["peak_rss_bytes"],
         },
@@ -250,12 +286,14 @@ def main() -> None:
         "evaluation": evaluation,
         "passes": {
             "psnr_parity_within_0p1_db": evaluation["psnr_gap_db"] <= 0.1,
+            "full_export_within_8gb": export_full["within_8gb"],
+            "reduced_export_within_8gb": export_ceiling["within_8gb"],
             "packed_cache_conversion_within_8gb": shard["peak_rss_bytes"] <= budget,
             "monolithic_within_8gb": mono["peak_rss_bytes"] <= budget,
             "streamed_training_within_8gb": streamed["peak_rss_bytes"] <= budget,
             "inference_within_8gb": evaluation["peak_rss_bytes"] <= budget,
         },
-        "hardware": {"platform": sys.platform, "cpu_count": os.cpu_count()},
+        "hardware": _hardware_context(),
     }
     out_path.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))

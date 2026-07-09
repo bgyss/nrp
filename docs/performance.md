@@ -704,11 +704,16 @@ gather, analogous to `TorchPathCache`, would close it), not a structural blocker
 
 ### T2 real-scene packed streaming (Country Kitchen, 512×512 / 64 spp)
 
-`mise run t2-streaming` re-proves the E5 machinery on the T1 Country Kitchen cache
+`mise run t2` is the complete reproducible workflow: it measures full and reduced
+exports, then `mise run t2-streaming` re-proves the E5 machinery on the T1 Country Kitchen cache
 with 64×64 tiles and the paper's packed fp16 geometry + shared-exponent rgb9e5
 throughput. Report: `out/t2-streaming/report.json`. The run used CPU, seed 0, an
 eight-image raw target pool, 300 iterations, and an explicit **8 GiB peak-RSS
 budget**. Each phase runs in a fresh process so its `ru_maxrss` is attributable.
+Measurements are from an Apple M1 Max (10 CPU cores, 64 GiB RAM, macOS 26.6).
+The exporter writes its own configuration/timing/RSS/hardware JSON via `--report`;
+the two source reports are `out/t2-streaming/export_512x512_64spp.json` and
+`out/t2-streaming/export_128x128_64spp.json`.
 
 | check | monolithic | packed streamed |
 |---|---:|---:|

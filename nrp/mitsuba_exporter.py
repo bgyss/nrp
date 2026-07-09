@@ -30,7 +30,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import platform
+import resource
+import subprocess
+import sys
 import time
 
 import numpy as np
@@ -41,6 +46,32 @@ from .path_cache import PathCache
 #: first (CPU, works everywhere LLVM is present); Metal covers macOS wheels where
 #: drjit finds no libLLVM.
 JIT_VARIANTS = ("llvm_ad_rgb", "metal_ad_rgb")
+
+
+def _hardware_context() -> dict:
+    """Best-effort machine context for reproducible benchmark reports."""
+    def sysctl(name: str) -> str | None:
+        try:
+            return subprocess.check_output(
+                ["sysctl", "-n", name], text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            return None
+
+    memory = sysctl("hw.memsize")
+    return {
+        "platform": sys.platform,
+        "platform_release": platform.release(),
+        "machine": platform.machine(),
+        "cpu": sysctl("machdep.cpu.brand_string") or platform.processor() or None,
+        "cpu_count": os.cpu_count(),
+        "memory_bytes": int(memory) if memory else None,
+    }
+
+
+def _peak_rss_bytes() -> int:
+    rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return rss * 1024 if sys.platform.startswith("linux") else rss
 
 
 def _import_mitsuba():
@@ -438,8 +469,13 @@ def main() -> None:
         "(wavefront when a JIT variant works, else scalar)",
     )
     parser.add_argument("--out", required=True, help="output path cache .npz")
+    parser.add_argument(
+        "--report",
+        help="optional JSON report with configuration, timings, peak RSS, and hardware context",
+    )
     args = parser.parse_args()
 
+    wall_start = time.perf_counter()
     mode = args.mode
     if mode == "auto":
         mode = "wavefront" if pick_jit_variant(_import_mitsuba()) else "scalar"
@@ -467,12 +503,35 @@ def main() -> None:
     seconds = time.perf_counter() - t0
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     cache.save(args.out)
+    wall_seconds = time.perf_counter() - wall_start
     print(
         f"exported {cache.segment_count} segments from {args.scene} "
         f"({args.width}x{args.height} @ {args.spp} spp, {args.bounces} bounces, "
         f"{mode}[{mi.variant()}]) "
         f"in {seconds:.1f}s -> {args.out} ({os.path.getsize(args.out) / 1e6:.1f} MB)"
     )
+    if args.report:
+        report_path = os.path.abspath(args.report)
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        report = {
+            "scene": args.scene,
+            "resolution": [args.width, args.height],
+            "spp": args.spp,
+            "bounces": args.bounces,
+            "seed": args.seed,
+            "mode": mode,
+            "variant": mi.variant(),
+            "segments": cache.segment_count,
+            "trace_seconds": seconds,
+            "wall_seconds": wall_seconds,
+            "cache_bytes": os.path.getsize(args.out),
+            "peak_rss_bytes": _peak_rss_bytes(),
+            "hardware": _hardware_context(),
+        }
+        with open(report_path, "w") as f:
+            json.dump(report, f, indent=2)
+            f.write("\n")
+        print(f"wrote {report_path}")
 
 
 if __name__ == "__main__":

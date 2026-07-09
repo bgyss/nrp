@@ -103,6 +103,21 @@ run = "uv run python examples/mitsuba_512_streamed.py --out out/out-of-core/mits
 description = "T2: packed-shard streaming and memory-budget proof on the T1 kitchen scene"
 run = "uv run python examples/t2_real_scene_streaming.py --out out/t2-streaming/report.json"
 
+[tasks.t2-export-memory]
+description = "T2: measure full and reduced Country Kitchen exporter peak RSS"
+run = [
+  "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 512 --height 512 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache.npz --report out/t2-streaming/export_512x512_64spp.json",
+  "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 128 --height 128 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache_128.npz --report out/t2-streaming/export_128x128_64spp.json",
+]
+
+[tasks.t2]
+description = "Complete T2 real-scene export, packed streaming, parity, and memory report"
+run = [
+  "mise run t2-export-memory",
+  "mise run t2-streaming",
+  "uv run python examples/audit_pipeline_claims.py --doc docs/production-track.md --out out/t2-streaming/audit.json",
+]
+
 [tasks.quality-tiers]
 description = "E9 quality ladder: preview/draft/final/residual report"
 run = "uv run python examples/quality_tiers.py --out out/quality/report.json"
