@@ -42,7 +42,9 @@ Schema versions:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 
@@ -111,6 +113,126 @@ class PathCache:
     @property
     def segment_count(self) -> int:
         return int(self.seg_pixel.shape[0])
+
+    def save_sharded(self, directory: str, tile_size: int = 128) -> None:
+        """Write a tile-sharded cache directory for out-of-core experiments.
+
+        Each shard owns a rectangular pixel tile and the segments whose row-major
+        pixel index falls inside that tile. Segment pixel indices remain global, and
+        `seg_index` records original segment order so `load_sharded` reconstructs an
+        equivalent monolithic `PathCache`.
+        """
+        self.validate()
+        if tile_size <= 0:
+            raise ValueError("tile_size must be positive")
+        root = Path(directory)
+        root.mkdir(parents=True, exist_ok=True)
+        shards = []
+        seg_indices = np.arange(self.segment_count, dtype=np.int64)
+        for y0 in range(0, self.height, tile_size):
+            y1 = min(y0 + tile_size, self.height)
+            for x0 in range(0, self.width, tile_size):
+                x1 = min(x0 + tile_size, self.width)
+                rows = self.seg_pixel // self.width
+                cols = self.seg_pixel % self.width
+                owned = (rows >= y0) & (rows < y1) & (cols >= x0) & (cols < x1)
+                name = f"tile_y{y0:04d}_x{x0:04d}.npz"
+                np.savez_compressed(
+                    root / name,
+                    y0=y0,
+                    y1=y1,
+                    x0=x0,
+                    x1=x1,
+                    n_paths=self.n_paths.reshape(self.height, self.width)[y0:y1, x0:x1],
+                    albedo=self.albedo[y0:y1, x0:x1],
+                    position=self.position[y0:y1, x0:x1],
+                    depth=self.depth[y0:y1, x0:x1],
+                    normal=self.normal[y0:y1, x0:x1],
+                    seg_index=seg_indices[owned],
+                    seg_pixel=self.seg_pixel[owned],
+                    seg_origin=self.seg_origin[owned],
+                    seg_dir=self.seg_dir[owned],
+                    seg_tmax=self.seg_tmax[owned],
+                    seg_throughput=self.seg_throughput[owned],
+                )
+                shards.append({"path": name, "x0": x0, "x1": x1, "y0": y0, "y1": y1})
+        manifest = {
+            "schema_version": SCHEMA_VERSION,
+            "layout": "path_cache_sharded",
+            "width": self.width,
+            "height": self.height,
+            "tile_size": tile_size,
+            "medium": dict(self.medium) if self.medium is not None else None,
+            "shards": shards,
+        }
+        with open(root / "manifest.json", "w") as f:
+            json.dump(manifest, f, indent=2)
+
+    @classmethod
+    def load_sharded(cls, directory: str) -> PathCache:
+        """Load a cache written by `save_sharded` into the standard monolithic form."""
+        root = Path(directory)
+        with open(root / "manifest.json") as f:
+            manifest = json.load(f)
+        if manifest.get("layout") != "path_cache_sharded":
+            raise ValueError("manifest is not a path_cache_sharded layout")
+        width = int(manifest["width"])
+        height = int(manifest["height"])
+        n_paths = np.zeros((height, width), dtype=np.int64)
+        albedo = np.zeros((height, width, 3), dtype=np.float64)
+        position = np.zeros((height, width, 3), dtype=np.float64)
+        depth = np.zeros((height, width), dtype=np.float64)
+        normal = np.zeros((height, width, 3), dtype=np.float64)
+        seg_parts = []
+        for shard in manifest["shards"]:
+            z = np.load(root / shard["path"])
+            y0, y1 = int(z["y0"]), int(z["y1"])
+            x0, x1 = int(z["x0"]), int(z["x1"])
+            n_paths[y0:y1, x0:x1] = z["n_paths"]
+            albedo[y0:y1, x0:x1] = z["albedo"]
+            position[y0:y1, x0:x1] = z["position"]
+            depth[y0:y1, x0:x1] = z["depth"]
+            normal[y0:y1, x0:x1] = z["normal"]
+            seg_parts.append(
+                {
+                    "index": z["seg_index"].astype(np.int64),
+                    "pixel": z["seg_pixel"].astype(np.int64),
+                    "origin": z["seg_origin"].astype(np.float64),
+                    "dir": z["seg_dir"].astype(np.float64),
+                    "tmax": z["seg_tmax"].astype(np.float64),
+                    "throughput": z["seg_throughput"].astype(np.float64),
+                }
+            )
+        if seg_parts:
+            order = np.argsort(np.concatenate([p["index"] for p in seg_parts]))
+            seg_pixel = np.concatenate([p["pixel"] for p in seg_parts])[order]
+            seg_origin = np.concatenate([p["origin"] for p in seg_parts])[order]
+            seg_dir = np.concatenate([p["dir"] for p in seg_parts])[order]
+            seg_tmax = np.concatenate([p["tmax"] for p in seg_parts])[order]
+            seg_throughput = np.concatenate([p["throughput"] for p in seg_parts])[order]
+        else:
+            seg_pixel = np.zeros(0, dtype=np.int64)
+            seg_origin = np.zeros((0, 3), dtype=np.float64)
+            seg_dir = np.zeros((0, 3), dtype=np.float64)
+            seg_tmax = np.zeros(0, dtype=np.float64)
+            seg_throughput = np.zeros((0, 3), dtype=np.float64)
+        cache = cls(
+            width=width,
+            height=height,
+            n_paths=n_paths.reshape(-1),
+            seg_pixel=seg_pixel,
+            seg_origin=seg_origin,
+            seg_dir=seg_dir,
+            seg_tmax=seg_tmax,
+            seg_throughput=seg_throughput,
+            albedo=albedo,
+            position=position,
+            depth=depth,
+            normal=normal,
+            medium=manifest.get("medium"),
+        )
+        cache.validate()
+        return cache
 
     def save(self, path: str, compressed: bool = False) -> None:
         self.validate()

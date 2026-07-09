@@ -26,17 +26,37 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 
 import numpy as np
 
 from .lights import (
+    EnvironmentLight,
     QuadLight,
     SphereLight,
+    TexturedQuadLight,
     light_from_dict,
     segment_hits_quad,
     segment_hits_sphere,
+    segment_quad_uv,
+    sh_basis_degree2,
 )
 from .path_cache import PathCache
+
+
+@dataclass
+class GatherControls:
+    """Post-hoc gather-time controls for E8 production-light experiments.
+
+    `exclude_pixel_mask` is an (H, W) bool mask of first-hit-owned pixels that should
+    receive no contribution from this light, matching per-layer light linking.
+    `attenuation` is an artist curve dict. The current reference implementation
+    supports sphere lights with a linear distance curve:
+    `{"type": "linear_distance", "intercept": a, "slope": b}`.
+    """
+
+    exclude_pixel_mask: np.ndarray | None = None
+    attenuation: dict | None = None
 
 
 def _accumulate_hits(cache: PathCache, hits: np.ndarray) -> np.ndarray:
@@ -45,6 +65,45 @@ def _accumulate_hits(cache: PathCache, hits: np.ndarray) -> np.ndarray:
     denom = np.maximum(cache.n_paths, 1).astype(np.float64)
     contrib /= denom[:, None]
     return contrib.reshape(cache.height, cache.width, 3)
+
+
+def _accumulate_hits_weighted(
+    cache: PathCache, hits: np.ndarray, weights: np.ndarray | None = None
+) -> np.ndarray:
+    contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
+    if hits.any():
+        values = cache.seg_throughput[hits]
+        if weights is not None:
+            values = values * weights[hits, None]
+        np.add.at(contrib, cache.seg_pixel[hits], values)
+    denom = np.maximum(cache.n_paths, 1).astype(np.float64)
+    contrib /= denom[:, None]
+    return contrib.reshape(cache.height, cache.width, 3)
+
+
+def _apply_exclusion(image: np.ndarray, controls: GatherControls | None) -> np.ndarray:
+    if controls is None or controls.exclude_pixel_mask is None:
+        return image
+    mask = np.asarray(controls.exclude_pixel_mask, dtype=bool)
+    if mask.shape != image.shape[:2]:
+        raise ValueError(f"exclude_pixel_mask must be {image.shape[:2]}, got {mask.shape}")
+    out = image.copy()
+    out[mask] = 0.0
+    return out
+
+
+def _sphere_attenuation_weights(
+    cache: PathCache, light: SphereLight, controls: GatherControls | None
+) -> np.ndarray | None:
+    if controls is None or controls.attenuation is None:
+        return None
+    curve = controls.attenuation
+    if curve.get("type") != "linear_distance":
+        raise ValueError("only attenuation type 'linear_distance' is supported")
+    intercept = float(curve.get("intercept", 1.0))
+    slope = float(curve.get("slope", 0.0))
+    distance = np.linalg.norm(cache.seg_origin - light.center[None, :], axis=1)
+    return np.maximum(0.0, intercept + slope * distance)
 
 
 def gather_throughput(cache: PathCache, center: np.ndarray, radius: float) -> np.ndarray:
@@ -68,14 +127,87 @@ def gather_throughput_quad(
     return _accumulate_hits(cache, hits)
 
 
-def gather_light(cache: PathCache, light: SphereLight | QuadLight) -> np.ndarray:
+def gather_textured_quad(cache: PathCache, light: TexturedQuadLight) -> np.ndarray:
+    """GATHER for a textured quad: segment throughput multiplied by hit texel RGB."""
+    if not cache.segment_count:
+        return np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    hits, uv = segment_quad_uv(
+        cache.seg_origin,
+        cache.seg_dir,
+        cache.seg_tmax,
+        light.center,
+        light.normal,
+        light.width,
+        light.height,
+    )
+    contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
+    if hits.any():
+        tex_h, tex_w = light.texture.shape[:2]
+        ij = np.floor(uv[hits] * np.array([tex_w, tex_h])).astype(np.int64)
+        ij[:, 0] = np.clip(ij[:, 0], 0, tex_w - 1)
+        ij[:, 1] = np.clip(ij[:, 1], 0, tex_h - 1)
+        texels = light.texture[ij[:, 1], ij[:, 0]]
+        np.add.at(contrib, cache.seg_pixel[hits], cache.seg_throughput[hits] * texels)
+    denom = np.maximum(cache.n_paths, 1).astype(np.float64)
+    contrib /= denom[:, None]
+    return contrib.reshape(cache.height, cache.width, 3)
+
+
+def gather_environment(cache: PathCache, light: EnvironmentLight) -> np.ndarray:
+    """Environment contribution for escaped path segments (`seg_tmax == inf`)."""
+    if not cache.segment_count:
+        return np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    escaped = np.isinf(cache.seg_tmax)
+    contrib = np.zeros((cache.height * cache.width, 3), dtype=np.float64)
+    if escaped.any():
+        radiance = sh_basis_degree2(cache.seg_dir[escaped]) @ light.coeffs
+        np.add.at(contrib, cache.seg_pixel[escaped], cache.seg_throughput[escaped] * radiance)
+    denom = np.maximum(cache.n_paths, 1).astype(np.float64)
+    contrib /= denom[:, None]
+    return contrib.reshape(cache.height, cache.width, 3)
+
+
+def gather_light(
+    cache: PathCache, light: SphereLight | QuadLight | TexturedQuadLight | EnvironmentLight
+) -> np.ndarray:
     """Full per-pixel contribution of one light: GATHERtype scaled by emission rgb."""
     if isinstance(light, SphereLight):
         return gather_throughput(cache, light.center, light.radius) * light.rgb
-    return (
-        gather_throughput_quad(cache, light.center, light.normal, light.width, light.height)
-        * light.rgb
-    )
+    if isinstance(light, QuadLight):
+        return (
+            gather_throughput_quad(cache, light.center, light.normal, light.width, light.height)
+            * light.rgb
+        )
+    if isinstance(light, TexturedQuadLight):
+        return gather_textured_quad(cache, light)
+    return gather_environment(cache, light)
+
+
+def gather_light_controlled(
+    cache: PathCache,
+    light: SphereLight | QuadLight | TexturedQuadLight | EnvironmentLight,
+    controls: GatherControls | None = None,
+) -> np.ndarray:
+    """GATHERLIGHT with E8 post-hoc controls.
+
+    Linking/exclusion is applied after accumulation by zeroing excluded first-hit
+    pixels. Attenuation currently applies to sphere-light hits and multiplies each
+    segment contribution by an artist-specified distance curve.
+    """
+    if controls is None:
+        return gather_light(cache, light)
+    if isinstance(light, SphereLight) and controls.attenuation is not None:
+        hits = segment_hits_sphere(
+            cache.seg_origin, cache.seg_dir, cache.seg_tmax, light.center, light.radius
+        )
+        image = _accumulate_hits_weighted(
+            cache, hits, _sphere_attenuation_weights(cache, light, controls)
+        ) * light.rgb
+    elif controls.attenuation is not None:
+        raise ValueError("attenuation controls currently support SphereLight only")
+    else:
+        image = gather_light(cache, light)
+    return _apply_exclusion(image, controls)
 
 
 def gather_lights(cache: PathCache, lights: list) -> np.ndarray:
@@ -83,6 +215,15 @@ def gather_lights(cache: PathCache, lights: list) -> np.ndarray:
     image = np.zeros((cache.height, cache.width, 3), dtype=np.float64)
     for light in lights:
         image += gather_light(cache, light)
+    return image
+
+
+def gather_lights_controlled(
+    cache: PathCache, lights: list, controls: GatherControls | None = None
+) -> np.ndarray:
+    image = np.zeros((cache.height, cache.width, 3), dtype=np.float64)
+    for light in lights:
+        image += gather_light_controlled(cache, light, controls)
     return image
 
 

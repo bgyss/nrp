@@ -8,8 +8,9 @@ emission-weighted sum over lights (Eq. 3). A softplus head keeps contributions
 positive (the paper does not specify its head; this is the one deviation here).
 
 Light shape parameters (emission E(v) is factored out, Eq. 1):
-  sphere: center (3) + radius (1) = 4
-  quad:   center (3) + normal (3) + width + height = 8
+  sphere:        center (3) + radius (1) = 4
+  quad:          center (3) + normal (3) + width + height = 8
+  textured_quad: quad geometry (8) + flattened RGB texture, fixed per model config
 
 Ablation switches (roadmap item 10, paper Table 2): `use_aux=False` drops the 7D
 G-buffer features and `use_encoding=False` feeds the raw 2D pixel coordinates instead
@@ -26,6 +27,7 @@ from torch.nn import functional as F  # noqa: N812
 from .encoding import HashEncoding2D
 
 LIGHT_PARAM_DIMS = {"sphere": 4, "quad": 8}
+SUPPORTED_LIGHT_TYPES = {"sphere", "quad", "textured_quad"}
 
 
 def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.01) -> torch.Tensor:
@@ -43,15 +45,22 @@ class TorchNRP(nn.Module):
         encoding: dict | None = None,
         use_encoding: bool = True,
         use_aux: bool = True,
+        light_param_dim: int | None = None,
     ):
         super().__init__()
-        if light_type not in LIGHT_PARAM_DIMS:
-            raise ValueError(f"light_type must be one of {sorted(LIGHT_PARAM_DIMS)}")
+        if light_type not in SUPPORTED_LIGHT_TYPES:
+            raise ValueError(f"light_type must be one of {sorted(SUPPORTED_LIGHT_TYPES)}")
+        if light_param_dim is None:
+            if light_type not in LIGHT_PARAM_DIMS:
+                raise ValueError(f"light_param_dim is required for light_type {light_type!r}")
+            light_param_dim = LIGHT_PARAM_DIMS[light_type]
         self.light_type = light_type
+        self.light_param_dim = int(light_param_dim)
         self.use_encoding = use_encoding
         self.use_aux = use_aux
         self.config = {
             "light_type": light_type,
+            "light_param_dim": self.light_param_dim,
             "hidden_width": hidden_width,
             "hidden_layers": hidden_layers,
             "encoding": encoding or {},
@@ -60,7 +69,7 @@ class TorchNRP(nn.Module):
         }
         self.encoding = HashEncoding2D(**(encoding or {})) if use_encoding else None
         px_dim = self.encoding.output_dim if use_encoding else 2
-        in_dim = px_dim + (7 if use_aux else 0) + LIGHT_PARAM_DIMS[light_type]
+        in_dim = px_dim + (7 if use_aux else 0) + self.light_param_dim
         layers: list[nn.Module] = []
         for i in range(hidden_layers):
             layers.append(nn.Linear(in_dim if i == 0 else hidden_width, hidden_width))

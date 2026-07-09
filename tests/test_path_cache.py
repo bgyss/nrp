@@ -50,6 +50,20 @@ class PathCacheTests(unittest.TestCase):
         np.testing.assert_array_equal(again.seg_pixel, cache.seg_pixel)
         np.testing.assert_allclose(again.albedo, cache.albedo)
 
+    def test_sharded_round_trip_restores_monolithic_cache(self):
+        cache = tiny_cache()
+        light = SphereLight(center=[1.0, 3.0, 0.0], radius=0.5, rgb=[1.0, 2.0, 3.0])
+        with tempfile.TemporaryDirectory() as tmp:
+            cache.save_sharded(str(Path(tmp) / "shards"), tile_size=1)
+            again = PathCache.load_sharded(str(Path(tmp) / "shards"))
+        np.testing.assert_array_equal(again.seg_pixel, cache.seg_pixel)
+        np.testing.assert_allclose(again.seg_origin, cache.seg_origin)
+        np.testing.assert_allclose(again.seg_dir, cache.seg_dir)
+        np.testing.assert_allclose(again.seg_tmax, cache.seg_tmax)
+        np.testing.assert_allclose(again.seg_throughput, cache.seg_throughput)
+        np.testing.assert_allclose(again.albedo, cache.albedo)
+        np.testing.assert_allclose(gather_light(again, light), gather_light(cache, light))
+
     def test_json_round_trip_preserves_escape_segments(self):
         cache = tiny_cache()
         again = PathCache.from_dict(cache.to_dict())

@@ -517,3 +517,769 @@ OIDN (RT, HDR, albedo+normal guides) on a flat-2.0 HDR signal with σ=0.5 noise:
 MSE 0.248 → 0.0054 (**46×**), mean 1.98 (HDR preserved). The bilateral fallback on
 the same fixture achieves ~2× (it is a much weaker prior — expected). Pool build cost
 with OIDN at 48×48: 0.35 s for 64 images (~5 ms/image).
+
+## Animated-light temporal NRP harness (extensions E1, static-camera slice)
+
+`nrp.torch_backend.animate` renders a keyframed light sequence from one resident
+torch proxy. During frame rendering the path cache is used only for pixel coordinates
+and G-buffer auxiliary tensors; no GATHERLIGHT segment traversal occurs. The committed
+demo command is `mise run animate`, using `examples/animated_lights.json`,
+`out/toy-torch/model.pt`, and `out/toy/path_cache.npz`. Outputs are
+`out/animate/frame_*.npy` plus `out/animate/report.json`.
+
+Measured on the standard 48×48 toy torch proxy (62,923 params, 3k iterations, CPU):
+
+| frame count | proxy ms/frame |
+|---:|---:|
+| 1 | 4.46 |
+| 8 | 4.72 |
+| 24 | 4.79 |
+| 48 | 4.76 |
+
+The near-flat per-frame latency is the expected static-scene/animated-light result:
+one cache-backed proxy can be evaluated frame by frame without retracing or gathering.
+The 24-frame output sequence took 0.116 s total (**4.81 ms/frame**, 208 fps equivalent)
+at 48×48.
+
+Temporal stability was measured as mean absolute per-pixel frame-to-frame delta under
+the smooth light path. The proxy delta was **0.0698** vs **0.0665** for the
+GATHERLIGHT reference sequence, a **1.05×** ratio. The reference sequence is computed
+only for this metric pass (`--measure-reference`); it is not part of the animation
+runtime path.
+
+The animated-camera half now has a toy baseline in `mise run time-camera`
+(`out/time-camera/report.json`). The toy tracer accepts a camera-origin override and
+the script traces **K=3** camera keyframe caches on a ±0.04 x-axis camera move at
+20×20, 8 spp, 2 bounces. Those keyframe caches contain 6,400 segments each and occupy
+**798,180 bytes total** (**266,060 bytes/keyframe**). A simple image-space linear
+interpolator between keyframe GATHERLIGHT frames reaches **27.30 dB** at held-out
+t=0.25 and **25.98 dB** at held-out t=0.75, for **26.64 dB mean** versus directly
+traced intermediate-camera GATHERLIGHT.
+
+This is deliberately not claimed as the completed E1 time-conditioned proxy: it
+measures camera-cache K scaling and establishes a held-out interpolation baseline.
+
+### Time-conditioned TorchNRP proxy (closes E1's held-out criterion)
+
+`examples/time_conditioned_proxy.py` (`mise run time-conditioned-proxy`, report:
+`out/time-camera/proxy_report.json`) trains one `TorchNRP` model on the same K=3
+camera keyframes, with the light-parameter input extended by one scalar (normalized
+time) so a single set of weights covers all keyframes rather than interpolating
+their images post hoc. Each keyframe's own G-buffer aux (camera-pose-dependent)
+supervises training; held-out intermediate times are evaluated against a *freshly
+traced* cache at that exact camera pose (real ground truth, not an interpolation of
+existing frames).
+
+On the same 20×20/8spp/2-bounce/±0.04 setup, 800 iterations, seed 0:
+
+| check | result |
+|---|---:|
+| mean training-keyframe PSNR | 28.74 dB |
+| mean held-out intermediate PSNR (t=0.25, 0.75) | 26.68 dB |
+| held-out − train gap | **2.06 dB** |
+| within 3 dB criterion | **met** |
+| mean full-frame inference latency | 0.77 ms/frame |
+
+This closes E1's outstanding criterion at toy scale: a single neural proxy
+conditioned on time generalizes to unseen intermediate camera poses within the 3 dB
+target. The caveat is scale — K=3 keyframes and a ±0.04 camera range are a small
+interpolation problem; whether the gap holds at larger K or camera-motion range is
+untested.
+
+## Out-of-core foundation (extensions E5, sharded cache + streamed-optimizer slice)
+
+`PathCache.save_sharded` writes a tile-sharded cache directory with a manifest and one
+compressed `.npz` per pixel tile; `PathCache.load_sharded` reconstructs the monolithic
+cache while restoring original segment order. `nrp.torch_backend.relight --tile-pixels`
+and `relight_tiled` render proxy outputs in bounded pixel chunks. The out-of-core
+report also streams shard files directly to build a fixed-light supervised target
+table and to train a tiny per-pixel image proxy optimizer without reconstructing the
+full segment arrays.
+
+Measured by `mise run out-of-core` (report: `out/out-of-core/report.json`) on a
+24×24 / 8 spp toy cache with 9,216 segments:
+
+| check | result |
+|---|---:|
+| monolithic cache size | 381,005 bytes |
+| sharded cache directory size | 423,777 bytes |
+| save sharded | 0.023 s |
+| load sharded | 0.010 s |
+| sharded vs monolithic GATHERLIGHT max diff | 0.0 |
+| streamed target max diff vs monolithic | 3.33e-16 |
+| streamed target PSNR vs monolithic | 334.67 dB |
+| streamed peak loaded segments | 1,024 (11.1% of cache) |
+| streamed peak loaded segment bytes | 90,112 (11.1% of resident segment bytes) |
+| estimated resident segment-memory ratio | 9.0× |
+| process RSS before/after stream | 209,829,888 / 209,829,888 bytes |
+| streamed target pass | 0.0063 s |
+| streamed optimizer loss | 8.11e-3 → 1.24e-7 |
+| streamed optimizer max diff vs monolithic optimizer | 3.33e-16 |
+| streamed optimizer PSNR vs monolithic optimizer | 333.14 dB |
+| tiled vs untiled proxy max diff | 0.0 |
+
+The sharded layout is larger at this tiny scale because each tile pays `.npz` and
+manifest overhead; that is expected and is not a production-scale memory claim. This
+slice now proves exact cache reconstruction, streamed target construction at toy
+scale, a streamed optimizer loop with the same result as its monolithic counterpart,
+and chunked inference.
+
+### Streamed TorchNRP pool training (`nrp.torch_backend.streamed_train`)
+
+The remaining E5 optimizer gap — "the actual TorchNRP optimizer still trains from
+monolithic caches" — is now closed at toy scale. `StreamedImagePool` renders each
+pool slot's GATHERLIGHT target (sphere lights) by visiting shard tiles one at a time
+instead of holding a `TorchPathCache`'s full segment arrays resident; only the
+per-pixel G-buffer (albedo/depth/normal, small) stays resident. `train_streamed`
+reuses the exact same rng draw order (numpy `default_rng` for light sampling, a
+`torch.Generator` seeded identically for pixel/pool-index sampling) as the in-memory
+training loop, so loss curves are directly comparable iteration-for-iteration rather
+than just statistically close.
+
+Measured by `mise run streamed-torchnrp` (`examples/streamed_torchnrp_train.py`,
+report: `out/out-of-core/streamed_torchnrp_report.json`) on a 20×20 / 8 spp toy cache
+(6,400 segments, 6×6 tiles), 200 iterations, seed 0:
+
+| check | monolithic | streamed |
+|---|---:|---:|
+| loss (first → last) | 0.7002 → 0.7636 | 0.7002 → 0.7636 (bitwise) |
+| held-out PSNR vs raw GATHERLIGHT | 9.12 dB | 9.12 dB |
+| resident/peak segment bytes | 563,200 (full cache) | 50,688 |
+
+- PSNR gap: 0.00 dB (criterion: within 0.3 dB) — the two loss curves are bit-identical
+  at this toy scale because both paths compute the same targets from the same
+  segments in the same order.
+- Resident segment-memory ratio: 11.1× lower peak segment bytes for the streamed
+  path.
+
+This closes E5's TorchNRP-optimizer criterion at toy scale.
+
+### 512×512 / 128 spp Mitsuba end-to-end report (closes E5's last criterion)
+
+`examples/mitsuba_512_streamed.py` (`mise run export-mitsuba-512` then
+`mise run mitsuba-512-streamed`, report: `out/out-of-core/mitsuba_512_report.json`)
+exports a 512×512/128spp/4-bounce Mitsuba cornell-box cache, shards it, trains the
+same streamed TorchNRP sphere-light proxy at this resolution, and measures tiled
+full-frame inference — the production-scale "does it scale to film frames" datapoint
+E5 asks for:
+
+| check | result |
+|---|---:|
+| segments | 94,237,448 |
+| monolithic cache size | 3.35 GB |
+| monolithic resident segment bytes | 8.29 GB |
+| sharded cache size (128×128 tiles) | 3.50 GB |
+| save-sharded wall-clock | 306.3 s |
+| streamed pool build | 382.2 s |
+| streamed train (150 iters) | 621.7 s |
+| streamed total | 1,004.9 s (~16.7 min) |
+| peak segment bytes loaded (streamed) | 574.1 MB |
+| resident segment-memory ratio | **14.4×** lower than monolithic |
+| loss (first → last) | 4.15 → 0.0014 |
+| held-out PSNR vs raw GATHERLIGHT | **32.57 dB** |
+| tiled full-frame inference | 118.3 ms (16,384-pixel tiles) |
+
+This is a genuine configuration that would not fit the naive in-memory loader at a
+reasonable memory budget: the monolithic cache needs 8.29 GB of resident segment
+arrays, while the streamed path never holds more than 574 MB (14.4×  less) at any
+point during pool building or training, at the cost of much more wall-clock time
+(shard I/O and repeated `np.add.at` gather passes over ~5.9M-segment shards dominate
+— this is a scalar-numpy-loop implementation, not a fused kernel). The held-out PSNR
+(32.57 dB) is well above the toy-scale runs (~9–14 dB) because 128 spp at 512×512
+supplies far more segments per pixel. This closes E5's last open criterion; the
+caveat is that streaming cost is currently I/O- and Python-loop-bound rather than
+compute-bound, which is an engineering distance (a batched/vectorized streaming
+gather, analogous to `TorchPathCache`, would close it), not a structural blocker.
+
+## Dynamic geometry cache invalidation (extensions E2, one-bounce slice)
+
+`nrp.dynamic_geometry` identifies pixels whose first-hit G-buffer changes after the
+toy sphere moves and splices fresh segments for only those pixels into the old cache.
+This is the primary-visibility slice of E2: it proves cache-level invalidation and
+segment replacement for one-bounce paths, not secondary-bounce transport updates or
+TorchNRP weight fine-tuning. It also includes a deliberately narrow image-space
+warm-start proxy to measure whether incremental cache targets can repair stale
+pixels quickly.
+
+Measured by `mise run dynamic-geometry` (report:
+`out/dynamic-geometry/report.json`) on a 32×32 / 8 spp / 10-frame toy sequence with
+the sphere moving +0.16 along x:
+
+| check | result |
+|---|---:|
+| mean full retrace | 4.45 ms/frame |
+| mean splice pass | 0.71 ms/frame |
+| mean image-proxy fine-tune | 0.30 ms/frame |
+| mean invalid pixels | 29.7% |
+| mean retraced segment fraction | 29.7% |
+| full retrace share of 16 ms frame | 27.8% |
+| splice-only share of 16 ms frame | 4.4% |
+| splice + image-proxy share of 16 ms frame | 6.3% |
+| outside invalidation mask max diff | 0.0 |
+| incremental splice vs full retrace | exact (`inf` PSNR, 0 max abs) |
+| stale cache PSNR at final frame | 10.76 dB |
+| image-proxy PSNR after fine-tune vs full | 65.86 dB min / 69.69 dB mean |
+
+For this constrained one-bounce setup, keeping the cache alive costs a small fraction
+of a 16 ms game frame for splice plus a tiny warm-start repair baseline, and the
+stale-cache baseline falls quickly as the sphere moves. The proxy measurement is not
+the paper proxy: it stores one RGB value per pixel and updates only invalidated
+pixels, so it is evidence about incremental target availability rather than neural
+transport generalization. The important caveat is structural: once secondary bounces
+are enabled, unchanged first-hit pixels can still see changed indirect transport.
+Multi-bounce invalidation is now implemented and measured (below); warm-started
+TorchNRP weight fine-tuning has also been implemented and measured, with a negative
+result.
+
+### Multi-bounce invalidation: swept-volume masking (closes E2's structural gap)
+
+`nrp.dynamic_geometry.swept_volume_invalidation_mask` generalizes primary-visibility
+invalidation to indirect bounces: it flags any pixel with *any* cached segment, at
+*any* bounce depth, whose ray could pass through the moving object's swept volume
+(a conservative bounding sphere — object radius plus half the travel distance,
+centered at the midpoint of the before/after positions — proven in
+`test_swept_bounding_sphere_contains_endpoints_and_object_extent` to contain the
+true capsule-shaped swept region). Primary-visibility invalidation only inspects each
+path's *first* segment, so it misses pixels whose indirect illumination changed
+because the moving object altered transport between two other, still-visible
+surfaces without ever occluding either of their camera rays.
+
+`examples/dynamic_geometry.py::multi_bounce_invalidation_comparison` reproduces this
+failure and shows the fix, on a 32×32/8spp/2-bounce before/after pair (sphere moves
++0.12 along x, `mise run dynamic-geometry`, field `multi_bounce_invalidation` in
+`out/dynamic-geometry/report.json`):
+
+| mask | invalid pixels | max abs diff vs full retrace | PSNR vs full retrace |
+|---|---:|---:|---:|
+| primary-visibility only | 362 | 0.366 | 33.43 dB |
+| primary + swept-volume | 896 | 0.0 | ∞ (exact) |
+
+Primary-only invalidation misses 534 pixels whose indirect bounces changed (a real,
+measured failure — not a hypothetical), producing visible error (33.43 dB, not
+exact) after splicing. Adding the swept-volume mask catches those pixels and
+recovers an exact match to a full retrace, same as the one-bounce case. Test
+coverage: `tests/test_dynamic_geometry.py::test_swept_volume_mask_flags_pixels_with_any_bounce_depth_segment_in_region`
+and `::test_multi_bounce_spliced_cache_matches_full_retrace_with_swept_mask` (the
+latter is the 2-bounce analogue of the existing exact one-bounce splice test). The
+cost is over-invalidation: the swept-volume mask is conservative (any segment
+*potentially* affected is invalidated, not only segments *actually* re-occluded), so
+it invalidates more pixels than the true minimal set — a correctness-first choice
+appropriate for a cache-invalidation scheme, not a performance-first one.
+
+### TorchNRP weight fine-tune regimes (honest negative result)
+
+`TorchNRPWarmStartProxy` (`examples/dynamic_geometry.py`) wraps a real `TorchNRP`
+model (pixel xy + G-buffer aux → RGB, single fixed light) and runs the three regimes
+E2 specifies: (a) full retrace — full retrain (300 Adam iterations) on every frame's
+fully-retraced cache, warm-started from the previous frame's weights; (b) incremental
+— warm-started fine-tune (same 300 iterations) restricted to only the invalidated
+pixels, using the spliced cache's target; (c) stale — the frozen weights from before
+that frame's update, no training at all. All three are measured against the fully
+retraced frame's GATHERLIGHT image.
+
+Measured by `mise run dynamic-geometry` on the same 32×32 / 8 spp / 10-frame sequence:
+
+| regime | mean PSNR vs full | mean ms/frame |
+|---|---:|---:|
+| (a) full retrace + full retrain | 44.88 dB | 207.1 |
+| (b) incremental splice + masked-pixel fine-tune | 25.20 dB | 94.3 |
+| (b2) incremental + self-distillation replay | 33.76 dB | 166.9 |
+| (c) stale (no update) | 22.13 dB | — |
+
+- Gap (a) − (b): **19.7 dB**, far outside the ≥ criterion of "within 1 dB." E2's
+  explicit ask is an honest result either way — this is the negative one.
+- Interpretation: fine-tuning only on the invalidated pixels' loss lets the shared
+  MLP weights drift away from a good fit on the *unchanged* pixels (there is no
+  regularizer holding the rest of the image steady), so regime (b) is barely better
+  than doing nothing (regime (c), 22.13 dB) despite costing real per-frame compute.
+
+### Replay-regularized retry (regime b2): partial fix, not sufficient
+
+`TorchNRPWarmStartProxy.fine_tune_with_replay` tests the follow-up question directly:
+does mixing a sample of unchanged-pixel targets into the incremental fine-tune batch
+close the gap? Since a real incremental-update pipeline has no extra ground truth for
+unchanged pixels, replay uses **self-distillation** — the model's own predictions on
+unmasked pixels, captured before that frame's update — as the regularization target,
+mixed 1:1 with the real invalidated-pixel supervision every batch.
+
+- Gap (a) − (b2): **11.1 dB**, down from 19.7 dB for plain incremental fine-tuning —
+  a real, substantial improvement (`replay_closes_the_gap: true` in the report,
+  meaning the gap shrank by more than 0.5 dB), but still **far outside the 1 dB
+  criterion** (`regime_b2_within_1db_of_a: false`).
+- Cost: replay roughly doubles fine-tune wall-clock (166.9 ms vs 94.3 ms/frame) since
+  every step now runs two forward/backward passes (invalidated + replay batches).
+- Conclusion: self-distillation replay is a real, worthwhile mitigation (8.5 dB
+  recovered) but not a fix. The remaining gap is consistent with genuine capacity/
+  optimization limits of segment-local fine-tuning on a shared small MLP, not simply
+  "forgetting" that a naive regularizer can patch. A production system would likely
+  need either a larger reserved-capacity architecture (e.g. per-region adapter
+  weights) or accept that dynamic geometry forces periodic full retrains rather than
+  purely incremental updates.
+- Test coverage: `tests/test_dynamic_geometry.py::test_torchnrp_warm_start_fine_tune_only_touches_masked_pixels`,
+  `::test_torchnrp_warm_start_no_op_on_empty_mask`,
+  `::test_torchnrp_fine_tune_with_replay_runs_and_produces_finite_loss`,
+  `::test_torchnrp_fine_tune_with_replay_no_op_on_empty_mask`.
+
+## Light-aware path sampling (extensions E3, spherical guide-region slice)
+
+`trace_path_cache` now accepts a spherical light-placement region and a guide
+probability. At eligible surface bounces, the sampler mixes the existing
+cosine-weighted Lambertian direction with a uniform solid-angle cone toward the
+declared region, using `brdf * cos / mixture_pdf` throughput weights. If the guide
+cone is not fully above the surface hemisphere, that ray falls back to cosine
+sampling.
+
+Measured by `mise run light-aware-sampling` (report:
+`out/light-aware-sampling/report.json`) on a 32×32 / 12 spp / 3-bounce toy cache with
+guide probability 0.5:
+
+| check | standard | guided |
+|---|---:|---:|
+| segments | 36,864 | 36,864 |
+| region-hit fraction | 5.18% | 35.03% |
+| trace time | 65.28 ms | 28.04 ms |
+| PSNR vs independent guided reference | 28.68 dB | 32.98 dB |
+| SMAPE vs independent guided reference | 1.183 | 0.270 |
+
+The equal-segment cache puts **6.76×** more segments through the declared placement
+region and improves the direct GATHERLIGHT estimate for a light in that region by
+**4.29 dB** in this toy setup. Cache size is unchanged because the sampler changes
+directions, not path count. This satisfies the low-level E3 sampling-density and
+unbiasedness-consistency slice, but not the full E3 criterion by itself: it does not
+train proxies or reproduce the occluder/lamp-shade failure.
+
+`mise run light-aware-proxy-ab` adds a toy standard-vs-guided proxy A/B with a small
+geometric open-top-box occluder around the declared light-placement region (report:
+`out/light-aware-proxy-ab/report.json`). Both runs use 20×20 / 8 spp caches,
+identical segment budgets, the same 2,743-parameter sphere proxy, and 350 CPU
+training iterations:
+
+| check | standard | guided |
+|---|---:|---:|
+| region-hit fraction | 0.47% | 15.73% |
+| mean held-out validation PSNR | 9.71 dB | 9.59 dB |
+| fixed in-region light PSNR | -6.72 dB | 3.38 dB |
+| fixed open-region light PSNR | 7.35 dB | 16.44 dB |
+| train time | 0.44 s | 0.51 s |
+| in-region target met | false | true |
+| open-region regression within 0.5 dB | false | true |
+
+The guided proxy improves the fixed in-region light by **10.10 dB** and the
+open-region fixture by **9.09 dB** at equal cache size. This satisfies E3's proxy A/B
+margin target on a deterministic open-top-box occluder fixture: standard sampling puts
+only 0.47% of segments through the declared region, while guided sampling puts 15.73%
+there. The remaining caveat is scale and realism, not the existence of the failure
+reproduction: the fixture is a toy geometric box, not a full lampshade asset or
+production lighting scene.
+
+## Quality-tier relight ladder (extensions E9, CLI plumbing slice)
+
+`nrp.torch_backend.relight` now accepts `--quality preview|draft|final` and writes a
+metadata sidecar next to every `.npy` output. `preview` is the proxy output, `draft`
+is GATHERLIGHT from the current cache, and `final` is GATHERLIGHT from `--final-cache`
+when supplied. `--residual-light` applies the E9 cached residual
+`GATHERLIGHT(approved) - proxy(approved)` to preview output.
+
+Measured by `mise run quality-tiers` (report: `out/quality/report.json`) on a
+16×16 toy cache, using an 8-spp draft cache and a 32-spp final cache:
+
+SSIM and FLIP are computed after the repo's documented display preprocessing:
+Reinhard tonemap plus sRGB encoding.
+
+| tier | source | ms | PSNR vs final | SSIM vs final | FLIP vs final |
+|---|---|---:|---:|---:|---:|
+| preview | proxy | 27.55 | -14.11 dB | 0.023 | 0.954 |
+| draft | cached GATHERLIGHT | 0.16 | 10.81 dB | 0.190 | 0.166 |
+| final | high-spp GATHERLIGHT | 0.39 | inf | 1.000 | 0.000 |
+
+The proxy in this report is intentionally untrained; the measurement is for the
+quality-tier plumbing, sidecar metadata, and residual identity rather than visual
+quality. At the approved light config, proxy plus cached residual matches cached
+GATHERLIGHT to max absolute error **5.6e-17**. Moving the light by dx =
+{0.05, 0.10, 0.20} drops residual-corrected PSNR vs cached GATHERLIGHT to
+{24.67, 23.73, 20.40} dB, which is the expected residual-validity decay.
+
+The report now includes a toy-scale supervisor-trust verdict with a 1e-12 residual
+identity tolerance and a 25 dB residual-validity threshold. The approved frame is
+exact, but the first measured move (dx=0.05) falls below 25 dB, so the verdict is:
+**trust the approved frame only; re-bake residual after any measured light move**.
+### Production-scale trust verdict (closes E9's last criterion)
+
+`examples/quality_tiers_production.py` (`mise run quality-tiers-production`, report:
+`out/quality/production_report.json`) reuses the E5 512×512 Mitsuba cornell-box
+caches: a 32spp "export" cache (tiers 1/2/4) and the 128spp cache from the E5 report
+(tier 3, converged reference). The proxy is trained via the streamed pipeline
+(`nrp.torch_backend.streamed_train`) on the 32spp cache's shards — a real trained
+proxy, not the intentionally-untrained one in the toy report above.
+
+| tier | source | ms | PSNR vs final (128spp) | SSIM vs final | FLIP vs final |
+|---|---|---:|---:|---:|---:|
+| preview | proxy | 86.9 | 33.76 dB | 0.9944 | 0.0426 |
+| draft | cached GATHERLIGHT (32spp) | 2,021.7 | 35.72 dB | 0.9965 | 0.0087 |
+| final | GATHERLIGHT (128spp, fresh) | 9,589.7 | inf | 1.000 | 0.000 |
+
+Unlike the toy report, this proxy is trained and predicts within 2 dB of the export-spp
+cache itself, both close to the converged 128spp reference — 32spp cornell-box noise
+is low enough that the gap between draft and final is small at this scene's
+complexity. At the approved light config, proxy plus cached residual matches cached
+GATHERLIGHT (32spp) to max absolute error **0.0** (exact, same identity as the toy
+report). Moving the light by dx = {5, 10, 20} world units (this scene's units, not
+normalized) drops residual-corrected PSNR vs cached GATHERLIGHT to
+**{-13.67, -18.46, -25.68} dB** — a much sharper decay than the toy report's
+{24.67, 23.73, 20.40} dB, because the moved-light re-renders here use the same
+proxy without re-training and the sphere radius (8 units) is large relative to the
+tested dx range, so small moves already change occlusion substantially.
+
+The production-scale supervisor-trust verdict (1e-12 identity tolerance, 25 dB
+validity threshold): **trust the approved frame only; re-bake residual after any
+measured light move** — the same qualitative verdict as the toy report, now backed
+by a real trained proxy and a genuinely converged high-spp reference. This closes
+E9's last open criterion. The caveat: this is one scene (cornell-box) and one light
+family (sphere); the decay radius is scene- and light-scale-dependent (compare the
+toy report's normalized-unit dx values to this report's world-unit dx values), so
+the *qualitative* verdict (don't trust residual correction beyond the approval point)
+generalizes more confidently than the *specific* decay numbers.
+
+## Production light controls (extensions E8)
+
+`gather_light_controlled` adds post-hoc controls at GATHERLIGHT time: per-pixel
+first-hit exclusion for light linking, and a simple linear-distance artist
+attenuation curve for sphere lights. This is the cache fallback path E8 asks us to
+test, plus proxy-conditioned toy paths for controls whose output is linear in the
+chosen control parameterization.
+
+Measured by `mise run production-controls` (report:
+`out/production-controls/report.json`) on a 32×32 / 12 spp toy cache with 24,576
+segments:
+
+| check | result |
+|---|---:|
+| full gather vs sphere+box layers max diff | 0.0 |
+| exclude-sphere gather vs box-layer gather max diff | 0.0 |
+| exclude-sphere gather vs box-layer PSNR | inf |
+| full gather | 0.63 ms |
+| linked gather | 0.79 ms |
+| attenuated gather | 0.85 ms |
+| attenuated/default mean-radiance ratio | 0.918 |
+
+The linking algebra is exact for the toy layer partition: excluding the sphere-owned
+pixels from the full cache leaves the box-layer contribution for that light. The
+attenuation curve used here is `max(0, 1 - 0.1 * distance(origin, light_center))`,
+validated by a closed-form unit fixture.
+
+The report also includes a tiny binary table proxy conditioned on the linking toggle:
+it stores the inactive and active linked images, so it has the same 6,144 parameters
+as a two-proxy table at this resolution. The active and inactive predictions match
+their GATHERLIGHT references exactly (`inf` PSNR, 0 max abs). Active-toggle prediction
+takes **0.010 ms**, an **81×** speedup over linked gather in this toy run. This proves
+that a precomputed binary control can stay live at proxy speed.
+
+The same report now includes a learned least-squares image proxy conditioned on the
+continuous attenuation controls `(intercept, slope)` for the fixed
+`linear_distance` curve family. Trained on four control settings, it predicts the
+held-out setting `(1.1, -0.1)` to **333.65 dB** PSNR versus GATHERLIGHT with
+**1.11e-16** max absolute error. Prediction takes **0.015 ms** versus **0.98 ms**
+for held-out attenuated gather, a **64×** speedup. This proves that one fixed
+continuous control family can be conditioned and kept live without cache traversal.
+
+The E8 report now also measures broader conditioned-control fixtures:
+
+| conditioned control | held-out error | edit/inference latency | comparison |
+|---|---:|---:|---:|
+| 4-basis soft link mask | 331.25 dB PSNR, 5.55e-17 max abs | 0.036 ms | exact vs image-space mask application |
+| quadratic distance attenuation | 323.22 dB PSNR, 1.94e-16 max abs | 0.010 ms | 158× faster than polynomial gather |
+
+These results answer E8 at toy scale: binary linking, soft mask-basis controls, and
+linear/quadratic attenuation curves can stay live through a conditioned image proxy
+when the proxy receives the relevant control weights as inputs. The caveat is now
+parameterization scale, not correctness: a fully free-form per-pixel mask or arbitrary
+artist curve would require enough input dimensions and training coverage to span that
+control space.
+
+## Exported engine-shaped runtime (extensions E6, TorchScript slice)
+
+`nrp.torch_backend.engine_runtime` exports a `TorchNRP` to a TorchScript artifact plus
+JSON metadata and renders by loading that artifact through `torch.jit.load`, without
+loading the training checkpoint in the frame loop. `docs/engine-integration.md`
+documents the current input/output contract.
+
+Measured by `mise run viewer` (report: `out/engine-runtime/report.json`) on a 32×32
+toy cache and a small sphere-light proxy:
+
+| check | result |
+|---|---:|
+| artifact size | 38,763 bytes |
+| module vs exported runtime max diff | 0.0 |
+| exported runtime allclose rtol 1e-4 | true |
+| exported runtime latency | 0.46 ms/frame |
+| exported runtime rate | 2,153 fps |
+| headless slider loop mean | 1.19 ms/frame |
+| headless slider loop max | 6.72 ms/frame |
+
+The same report includes an exported-runtime device sweep using valid synthetic
+G-buffer caches to isolate full-frame inference cost from path tracing. This
+machine's PyTorch build now has a working MPS backend (`torch.backends.mps.is_built()
+== True`), so the MPS row is a real measurement, not the earlier "unavailable"
+placeholder:
+
+| device | resolution | available? | ms/frame | fps | 30 fps? | 60 fps? |
+|---|---:|---|---:|---:|---|---|
+| CPU | 128×128 | yes | 4.74 | 210.9 | yes | yes |
+| CPU | 256×256 | yes | 14.67 | 68.1 | yes | yes |
+| CPU | 512×512 | yes | 33.40 | 29.9 | no | no |
+| MPS | 128×128 | yes | 106.10 | 9.4 | no | no |
+| MPS | 256×256 | yes | 28.61 | 35.0 | yes | no |
+| MPS | 512×512 | yes | 38.15 | 26.2 | no | no |
+
+MPS is *slower* than CPU at 128×128 (fixed per-dispatch overhead dominates at this
+tiny model/resolution) and only pulls ahead of CPU at 512×512, where it still misses
+30 fps. Neither backend hits 30 fps at 512×512 for this exported artifact on this
+hardware — state that plainly rather than rounding up. This proves the
+exported-artifact inference path and records a frame-dump "viewer" loop under
+`out/engine-runtime/viewer_frames/`.
+
+### A real GUI slider, and a step toward the WebGPU/engine-backend criterion
+
+`examples/export_js_viewer.py` (`mise run js-viewer`, output:
+`out/engine-runtime/js_viewer/`) closes the "no GUI slider" gap and takes a concrete
+step toward "structure the exporter so a WebGPU/engine port is a backend, not a
+rewrite": it trains a small proxy with `use_encoding=False` (so the forward pass is
+plain `Linear -> ReLU -> ... -> Linear -> softplus`, no hashgrid), extracts the raw
+weight matrices, and writes a **self-contained HTML page** (`viewer.html`, no
+external requests, no build step) that re-implements that exact forward pass in
+~40 lines of vanilla JavaScript. Four range-input sliders (light center x/y/z,
+radius) drive real interactive re-rendering: every slider move recomputes the full
+image through the JS forward pass and redraws a canvas — a genuine GUI, unlike the
+headless frame-dump loop above (this environment has no display or GUI toolkit
+available for a native app, so a browser page is the honest choice here).
+
+Parity between the JS and PyTorch forward passes (the E6 "matches the PyTorch
+module" criterion, now for a non-TorchScript backend) is verified two ways: the
+page itself runs a JS-side comparison against an embedded Python-computed reference
+image at load time, and `tests/test_export_js_viewer.py::test_js_forward_pass_matches_python_reference`
+runs the same JS logic under Node (skips cleanly if `node` is absent) and asserts
+max abs diff < 1e-4. Measured max abs diff on this machine: **1.0e-7**.
+
+### A real WebGPU compute-shader backend (closes E6's last criterion)
+
+`webgpu/bench_browser.mjs` (`mise run webgpu-bench`, report:
+`out/engine-runtime/webgpu_browser_report.json`) is a real WGSL compute shader
+replicating the exact forward pass, executed inside real Google Chrome (via
+Playwright) against the **actual exported proxy's weights** — not a browser demo
+with synthetic data, the real trained model:
+
+| check | result |
+|---|---:|
+| parity vs. PyTorch reference (max abs diff) | 2.4e-7 |
+| adapter | Apple M1 Max, Metal 3 (real hardware) |
+| 128×128 latency | ~1.7 ms/frame (580 fps) |
+| 256×256 latency | ~2.8–4.0 ms/frame (250–350 fps) |
+| 512×512 latency | ~9.4 ms/frame (107 fps) |
+
+All three resolutions clear both 30 fps and 60 fps — a substantially better result
+than the TorchScript CPU/MPS matrix above (which misses 30 fps at 512×512 on both
+backends). Test coverage: `tests/test_webgpu_browser_bench.py` (end-to-end,
+spawns real Chrome; skips cleanly if Playwright/Chrome aren't installed).
+
+The path here is worth recording: an earlier attempt, `webgpu/bench.mjs`, used
+native Dawn bindings (the `webgpu` npm package) to avoid needing a browser at all,
+and reproducibly segfaulted when given the real exported proxy's weights — 100%
+failure across 60+ trials, while a synthetic-weight smoke test of the identical
+pipeline succeeded reliably (8/8). A ~150-trial bisection (full table in
+`webgpu/README.md`) narrowed this to a defect in that specific native binding's
+handling of real trained-model float32 data (ruled out: magnitude, distribution,
+buffer size, memory layout, three independent package versions). Running the
+byte-for-byte identical shader inside a production WebGPU implementation (Chrome's)
+instead of the experimental Node-only binding resolved it completely — confirming
+the diagnosis and delivering the actual criterion. `webgpu/bench.mjs` and
+`webgpu/smoke.mjs` are kept as a documented negative result illustrating that
+diagnosis; `bench_browser.mjs` is the working, measured backend.
+
+This uses the same exported model as the JS/canvas viewer (`use_encoding=False`, so
+the forward pass is portable without a hashgrid port — one remaining ablation
+shared by both browser-backend demos, not new to this one). A genuine WebGPU port
+of the paper's exact hashgrid-encoded architecture (`HashEncoding2D` in WGSL)
+remains a separate, larger future step; what closes here is the E6 criterion as
+stated — a real, executed, measured WebGPU compute-shader backend running the
+actual exported proxy.
+
+## Environment-light inverse recovery (extensions E4, SH slice)
+
+`EnvironmentLight` uses degree-2 spherical harmonics over escaped segments
+(`seg_tmax = inf`). Because reference GATHERLIGHT is linear in the 9 RGB coefficient
+triples, `nrp.environment_fit` builds an explicit design matrix and solves the
+inverse problem with least squares.
+
+Measured by `mise run environment-fit` (report: `out/environment-fit/report.json`) on
+a deterministic 48-pixel escaped-ray fixture:
+
+| check | result |
+|---|---:|
+| equations / unknowns | 144 / 27 |
+| least-squares rank | 27 |
+| relative coefficient error | 1.26e-15 |
+| reconstruction max abs error | 1.67e-15 |
+| reconstruction PSNR | 305.22 dB |
+
+This satisfies the E4 inverse-recovery criterion for the SH environment slice
+(< 10% relative error) and gives future torch inverse/proxy work a closed-form
+reference.
+
+`mise run textured-quad-fit` adds the corresponding reference inverse-recovery check
+for `TexturedQuadLight` (report: `out/textured-quad-fit/report.json`). For fixed quad
+geometry and nearest-neighbor texture lookup, GATHERLIGHT is linear in the RGB texel
+values, so `nrp.texture_fit` builds one design matrix per color channel and solves
+least squares. The synthetic fixture gives each texel independent observations.
+
+| texture | RGB params | rank per channel | relative texture error | reconstruction PSNR |
+|---:|---:|---:|---:|---:|
+| 2×2 | 12 | 4 / 4 | 2.34e-16 | 319.62 dB |
+| 4×4 | 48 | 16 / 16 | 1.72e-16 | 324.19 dB |
+| 8×8 | 192 | 64 / 64 | 1.96e-16 | 322.09 dB |
+
+This satisfies textured-quad reference inverse recovery at the requested 8×8
+resolution and records the parameter-count growth from 12 to 192 RGB values.
+
+The same report now includes a linear texture-proxy scaling baseline: each texture
+size is fitted from the same 48 random quad-hit observations and evaluated on a
+separate 256-observation held-out cache. This isolates the parameter-count pressure
+behind the paper's warning that richer light parameterizations hurt convergence.
+
+| texture | RGB params | train obs | rank / unknowns per channel | held-out PSNR |
+|---:|---:|---:|---:|---:|
+| 2×2 | 12 | 48 | 4 / 4 | 319.61 dB |
+| 4×4 | 48 | 48 | 16 / 16 | 320.47 dB |
+| 8×8 | 192 | 48 | 32 / 64 | 10.66 dB |
+
+The 8×8 case becomes underdetermined at equal observation budget and collapses on
+held-out samples.
+
+The report now adds a compact learned texture-embedding proxy: a torch MLP encodes
+each flattened RGB texture into an 8D embedding, then predicts textured-quad
+GATHERLIGHT observations from UV, segment throughput, and that embedding. Each row
+uses 24 training textures, 6 held-out textures, 96 observations per training texture,
+256 held-out observations, and 600 CPU optimization steps:
+
+| texture | RGB params | proxy params | mean held-out PSNR | min held-out PSNR |
+|---:|---:|---:|---:|---:|
+| 2×2 | 12 | 4,187 | 20.08 dB | 19.05 dB |
+| 4×4 | 48 | 5,915 | 21.19 dB | 20.07 dB |
+| 8×8 | 192 | 12,827 | 22.27 dB | 17.62 dB |
+
+This satisfies a learned texture-embedding proxy-scaling slice for E4 and shows that
+the learned proxy avoids the catastrophic 8×8 collapse of the equal-observation
+linear baseline on this synthetic texture bank.
+
+The same run also verifies first-class `TexturedQuadLight` support in the main
+`TorchNRP` train/relight path for a small 2×2 texture parameterization:
+
+| check | result |
+|---|---:|
+| light type | `textured_quad` |
+| light parameter dimension | 20 |
+| model parameters | 2,005 |
+| iterations | 120 |
+| validation PSNR vs raw | 13.27 dB |
+| held-out relight PSNR | 12.31 dB |
+
+This completes the E4 toy-scale evidence loop: reference inverse recovery, a
+texture-resolution proxy scaling table, and a first-class TorchNRP train/relight path
+for textured-quad lights. The remaining caveat is quality and scale rather than API
+coverage: the first-class TorchNRP smoke uses 2×2 textures, while the broader learned
+scaling table remains an experiment harness rather than a production model.
+
+## Image-space target to physical lights (extensions E7, toy demo slice)
+
+`mise run generative-loop` runs two toy-scale inverse-lighting workflows through the
+existing `optimize_lights` mask/protect machinery and writes
+`out/generative/report.json` plus target, mask, realized-GATHERLIGHT images, and
+`out/generative/provenance.json`.
+
+The proxy is now pretrained on random sphere lights before being used for inversion
+(`pretrain_proxy` in `examples/generative_loop.py`, 24 random lights, 800 Adam steps)
+— closing the "high-quality proxy run" gap. Previously `optimize()` differentiated
+through a randomly initialized network that had never seen the scene, which is not a
+meaningful test of the paper's actual pipeline (train a proxy, then invert through
+it). Windowed mean loss (first vs last 10% of iterations, not single-minibatch
+values, per this repo's testing convention) drops from **0.330 to 0.169**.
+
+The synthesized scribble fixture is initialized at the known hidden light and exists
+to verify the mask/protect accounting path:
+
+| scribble check | result |
+|---|---:|
+| masked-region PSNR | 155.01 dB |
+| protected-region MSE vs base | 1.5e-17 |
+| passes E7 thresholds | true |
+| wall-clock | 2.3 ms |
+
+The stylized/generative target is a deliberately non-physical edit optimized from
+three restarts at pixel fraction 0.25 for 20 steps each, now through the pretrained
+proxy:
+
+| restart | proxy loss first | proxy loss last | GATHERLIGHT PSNR vs target |
+|---:|---:|---:|---:|
+| 0 | 1.055 | 0.238 | 13.19 dB |
+| 1 | 0.382 | 0.157 | 12.43 dB |
+| 2 | 3.329 | 2.343 | 11.53 dB |
+
+Best physical re-render PSNR is **13.19 dB** and the protected-region MSE is
+**0.0052** — comparable to the pre-pretraining numbers (14.13 dB), since a single
+sphere light's expressiveness, not proxy quality, is the binding constraint here.
+The raw stylized image cannot be exactly realized by one physical sphere light at
+this budget; that physical-realization gap is the useful finding for this slice.
+
+The same report includes the required pixel-fraction latency sweep on the stylized
+target, using 10 optimization steps per fraction:
+
+| pixel fraction | wall-clock | ms/step | final proxy loss | GATHERLIGHT PSNR |
+|---:|---:|---:|---:|---:|
+| 1.0 | 13.4 ms | 1.34 | 0.245 | 13.16 dB |
+| 0.25 | 11.5 ms | 1.15 | 3.032 | 10.43 dB |
+| 0.05 | 10.8 ms | — | — | — |
+
+At this 14×14 toy scale, optimizer overhead dominates, so lowering the pixel fraction
+does not reduce wall-clock linearly.
+
+The report includes committed provenance for the current toy fixtures:
+`out/generative/provenance.json` records the deterministic repo-local generation
+method, the known-light scribble recipe, the stylized target multipliers, optimizer
+settings, proxy-pretrain configuration, and SHA-256 hashes for six generated `.npy`
+files. It explicitly records that no external image model, editor, or asset was used
+for this slice. This closes the provenance gap and the "high-quality proxy run" gap
+for the synthetic/stylized toy targets.
+
+### A genuinely hand-authored target (closes E7's last gap)
+
+`examples/hand_authored_target.py` (`mise run hand-authored-target`, report:
+`out/generative/hand_authored_report.json`) is different in kind from the fixtures
+above: those are *derived* (the scribble is GATHERLIGHT from a known light; the
+"stylized" target is a deterministic filter applied to a render). This target has no
+reference to any render, light, or scene geometry at all — it is an explicit,
+hand-picked list of `(row, col, RGB)` strokes (a small pixel-art plus-sign with an
+accent dot) typed directly into `hand_authored_strokes()`. The coordinates and
+colors *are* the authored content, satisfying the extension's "creating them in any
+paint tool is fine" bar — the deliverable is authored pixel content, not the
+specific tool used to author it.
+
+The same pipeline as the other E7 workflows applies: pretrain a proxy (24 random
+lights, 800 steps), then optimize 2 physical sphere lights against the hand-authored
+target through objective/protect masks, 3 restarts:
+
+| check | result |
+|---|---:|
+| best restart GATHERLIGHT-tonemapped MSE | 0.0262 |
+| best restart proxy-space PSNR vs target | 10.24 dB |
+| target vs. best realized-GATHERLIGHT PSNR | 12.56 dB |
+| protected-corner region MSE vs base | 0.0052 |
+
+As with the stylized target, a hand-drawn plus-sign cannot be exactly realized by
+two physical sphere lights — the same physical-realization-gap finding, now against
+content with no algorithmic connection to the physics at all.
+`out/generative/hand_authored_provenance.json` records the full stroke list and sets
+`hand_authored: true`, `derived_from_render: false`, distinct from the other
+fixtures' `hand_authored: false`. Test coverage:
+`tests/test_hand_authored_target.py` (4 tests: stroke bounds, render correctness,
+provenance flags, end-to-end CLI report).
+
+This closes E7's last open criterion at toy scale.

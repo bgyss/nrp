@@ -34,6 +34,7 @@ import numpy as np
 import torch
 
 from ..gather_light import gather_light
+from ..lights import TexturedQuadLight
 from ..metrics import psnr, smape
 from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
@@ -44,9 +45,25 @@ from .sampling import sample_light
 
 
 def light_param_vector(light) -> np.ndarray:
+    if isinstance(light, TexturedQuadLight):
+        return np.concatenate(
+            [
+                light.center,
+                light.normal,
+                [light.width, light.height],
+                light.texture.reshape(-1),
+            ]
+        )
     if hasattr(light, "radius"):
         return np.concatenate([light.center, [light.radius]])
     return np.concatenate([light.center, light.normal, [light.width], [light.height]])
+
+
+def light_param_dim_from_cfg(cfg: dict) -> int:
+    if cfg["light_type"] == "textured_quad":
+        tex_h, tex_w = cfg["light_bounds"].get("texture_size", [2, 2])
+        return 8 + int(tex_h) * int(tex_w) * 3
+    return LIGHT_PARAM_DIMS[cfg["light_type"]]
 
 
 def pixel_tensors(cache: PathCache, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
@@ -78,7 +95,7 @@ class ImagePool:
         self.size = cfg["pool"]["size"]
         n_px = cache.height * cache.width
         self.params = torch.empty(
-            (self.size, LIGHT_PARAM_DIMS[cfg["light_type"]]), dtype=torch.float32, device=device
+            (self.size, light_param_dim_from_cfg(cfg)), dtype=torch.float32, device=device
         )
         self.targets = torch.empty((self.size, n_px, 3), dtype=torch.float32, device=device)
         self._next_replace = 0
@@ -212,6 +229,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
 
     model = TorchNRP(
         light_type=cfg["light_type"],
+        light_param_dim=light_param_dim_from_cfg(cfg),
         hidden_width=cfg["model"].get("hidden_width", 128),
         hidden_layers=cfg["model"].get("hidden_layers", 4),
         encoding=cfg["model"].get("encoding"),

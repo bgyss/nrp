@@ -9,8 +9,8 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
-from nrp.gather_light import gather_light  # noqa: E402
-from nrp.lights import SphereLight  # noqa: E402
+from nrp.gather_light import gather_light, gather_lights  # noqa: E402
+from nrp.lights import SphereLight, TexturedQuadLight  # noqa: E402
 from nrp.torch_backend.denoise import joint_bilateral_denoise  # noqa: E402
 from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
 from nrp.torch_backend.model import (  # noqa: E402
@@ -23,6 +23,12 @@ from nrp.torch_backend.optimize_lights import (  # noqa: E402
     ReparamSphereLights,
     optimize,
     reinhard,
+)
+from nrp.torch_backend.relight import (  # noqa: E402
+    relight,
+    relight_tiled,
+    render_quality_tier,
+    write_image_with_metadata,
 )
 from nrp.torch_backend.sampling import sample_light, sample_positions  # noqa: E402
 from nrp.torch_backend.train import light_param_vector, load_config, train  # noqa: E402
@@ -84,6 +90,17 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(out.shape, (9, 3))
             self.assertTrue(bool((out >= 0).all()), "softplus head must be non-negative")
 
+    def test_forward_shape_textured_quad_with_configured_param_dim(self):
+        model = TorchNRP(
+            light_type="textured_quad",
+            light_param_dim=20,
+            hidden_width=16,
+            hidden_layers=2,
+        )
+        out = model(torch.rand(9, 2), torch.rand(9, 7), torch.rand(9, 20))
+        self.assertEqual(out.shape, (9, 3))
+        self.assertEqual(model.light_param_dim, 20)
+
     def test_save_load_roundtrip(self):
         model = TorchNRP(hidden_width=16, hidden_layers=2)
         xy, aux, lp = torch.rand(5, 2), torch.rand(5, 7), torch.rand(5, 4)
@@ -91,6 +108,22 @@ class ModelTests(unittest.TestCase):
             path = str(Path(tmp) / "model.pt")
             model.save(path)
             loaded = TorchNRP.load(path)
+        torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
+
+    def test_textured_quad_save_load_roundtrip(self):
+        model = TorchNRP(
+            light_type="textured_quad",
+            light_param_dim=20,
+            hidden_width=16,
+            hidden_layers=2,
+        )
+        xy, aux, lp = torch.rand(5, 2), torch.rand(5, 7), torch.rand(5, 20)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.light_type, "textured_quad")
+        self.assertEqual(loaded.light_param_dim, 20)
         torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
 
     def test_ablation_switches_shapes_and_input_dims(self):
@@ -140,6 +173,53 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(qp.shape, (4, 8))
         torch.testing.assert_close(qp[0, 3:6], torch.tensor([0.0, 0.0, 1.0]))
 
+    def test_tiled_relight_matches_untiled(self):
+        cache = trace_path_cache(5, 4, 2, 1, seed=9)
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "finest_resolution": 5},
+        )
+        lights = [SphereLight(center=[0.0, 0.5, 0.0], radius=0.2, rgb=[1.0, 0.5, 2.0])]
+        np.testing.assert_allclose(
+            relight_tiled(model, cache, lights, tile_pixels=3),
+            relight(model, cache, lights),
+            rtol=0.0,
+            atol=1e-6,
+        )
+
+    def test_residual_quality_tier_is_exact_at_approval_light(self):
+        cache = trace_path_cache(5, 4, 2, 1, seed=10)
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "finest_resolution": 5},
+        )
+        lights = [SphereLight(center=[0.0, 0.5, 0.0], radius=0.2, rgb=[1.0, 0.5, 2.0])]
+        image, metadata = render_quality_tier(
+            model,
+            cache,
+            lights,
+            quality="preview",
+            residual_lights=lights,
+        )
+        np.testing.assert_allclose(image, gather_lights(cache, lights), rtol=0.0, atol=1e-12)
+        self.assertEqual(metadata["quality"], "preview")
+        self.assertTrue(metadata["residual_applied"])
+        self.assertEqual(metadata["source"], "proxy_plus_cached_residual")
+
+    def test_relight_metadata_sidecar_is_written(self):
+        image = np.zeros((2, 2, 3))
+        metadata = {"quality": "draft", "source": "gatherlight_cached"}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "image.npy")
+            write_image_with_metadata(path, image, metadata)
+            np.testing.assert_array_equal(np.load(path), image)
+            with open(f"{path}.json") as f:
+                written = json.load(f)
+        self.assertEqual(written["quality"], "draft")
+        self.assertEqual(written["source"], "gatherlight_cached")
+
 
 class DenoiseTests(unittest.TestCase):
     def test_reduces_noise_on_flat_region(self):
@@ -185,10 +265,24 @@ class SamplingTests(unittest.TestCase):
         rng = np.random.default_rng(2)
         s = sample_light(self.cache, rng, "sphere", {"radius_min": 0.1, "radius_max": 0.2})
         q = sample_light(self.cache, rng, "quad", {"size_min": 0.1, "size_max": 0.3})
+        tq = sample_light(
+            self.cache,
+            rng,
+            "textured_quad",
+            {
+                "center": [0.0, 0.0, 1.0],
+                "normal": [0.0, 0.0, -1.0],
+                "width": 2.0,
+                "height": 2.0,
+                "texture_size": [2, 2],
+            },
+        )
         self.assertTrue(0.1 <= s.radius <= 0.2)
         self.assertTrue(0.1 <= q.width <= 0.3 and 0.1 <= q.height <= 0.3)
+        self.assertIsInstance(tq, TexturedQuadLight)
         self.assertEqual(len(light_param_vector(s)), 4)
         self.assertEqual(len(light_param_vector(q)), 8)
+        self.assertEqual(len(light_param_vector(tq)), 20)
 
 
 class TrainingSmokeTests(unittest.TestCase):
@@ -248,6 +342,41 @@ class TrainingSmokeTests(unittest.TestCase):
             cfg_path = Path(tmp) / "cfg.json"
             cfg_path.write_text(json.dumps(cfg))
             report = train(load_config(str(cfg_path)))
+            self.assertIn("val_psnr_db_vs_raw_mean", report)
+
+    def test_textured_quad_training_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 10, "height": 10, "spp": 4, "bounces": 2, "seed": 2},
+                "light_type": "textured_quad",
+                "light_bounds": {
+                    "center": [0.0, 0.0, 1.0],
+                    "normal": [0.0, 0.0, -1.0],
+                    "width": 2.0,
+                    "height": 2.0,
+                    "texture_size": [2, 2],
+                    "texture_min": 0.1,
+                    "texture_max": 1.0,
+                },
+                "pool": {"size": 6, "replace_every": 10, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 20,
+                "batch_pixels": 128,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "encoding": {"levels": 2, "table_size_log2": 8, "finest_resolution": 10},
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+            }
+            cfg_path = Path(tmp) / "cfg.json"
+            cfg_path.write_text(json.dumps(cfg))
+            report = train(load_config(str(cfg_path)))
+            self.assertEqual(report["config"]["light_type"], "textured_quad")
             self.assertIn("val_psnr_db_vs_raw_mean", report)
 
 

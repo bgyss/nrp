@@ -71,6 +71,94 @@ run = "uv run python -m nrp.export_bench --out out/export-bench.json"
 description = "Benchmark proxy inference across resolutions on all available devices"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --out out/bench.json"
 
+[tasks.animate]
+description = "Render an animated-light frame sequence from one resident torch proxy"
+run = "uv run python -m nrp.torch_backend.animate --model out/toy-torch/model.pt --cache out/toy/path_cache.npz --keyframes examples/animated_lights.json --out-dir out/animate --measure-reference"
+
+[tasks.time-camera]
+description = "E1 animated-camera cache-keyframe interpolation baseline"
+run = "uv run python examples/time_conditioned_camera.py --out out/time-camera/report.json"
+
+[tasks.time-conditioned-proxy]
+description = "E1: single TorchNRP proxy conditioned on time, held-out camera PSNR gap report"
+run = "uv run python examples/time_conditioned_proxy.py --out out/time-camera/proxy_report.json"
+
+[tasks.out-of-core]
+description = "E5 foundation: sharded cache round-trip and tiled inference report"
+run = "uv run python examples/out_of_core.py --out out/out-of-core/report.json"
+
+[tasks.streamed-torchnrp]
+description = "E5: streamed vs monolithic TorchNRP pool training parity report"
+run = "uv run python examples/streamed_torchnrp_train.py --out out/out-of-core/streamed_torchnrp_report.json"
+
+[tasks.export-mitsuba-512]
+description = "Export a 512x512/128spp Mitsuba cornell-box cache for the E5 production-scale report (needs the mitsuba extra)"
+run = "uv run python -m nrp.mitsuba_exporter --scene builtin:cornell-box --width 512 --height 512 --spp 128 --bounces 4 --out out/mitsuba-512/path_cache.npz"
+
+[tasks.mitsuba-512-streamed]
+description = "E5 production-scale report: streamed TorchNRP training + tiled inference on the 512x512/128spp cache"
+run = "uv run python examples/mitsuba_512_streamed.py --out out/out-of-core/mitsuba_512_report.json"
+
+[tasks.quality-tiers]
+description = "E9 quality ladder: preview/draft/final/residual report"
+run = "uv run python examples/quality_tiers.py --out out/quality/report.json"
+
+[tasks.quality-tiers-production]
+description = "E9 production-scale (512x512) quality-tier ladder and trust verdict (needs out/mitsuba-512{,-draft}/path_cache.npz)"
+run = "uv run python examples/quality_tiers_production.py --out out/quality/production_report.json"
+
+[tasks.production-controls]
+description = "E8 gather-time light linking and attenuation report"
+run = "uv run python examples/production_controls.py --out out/production-controls/report.json"
+
+[tasks.environment-fit]
+description = "E4 environment SH inverse recovery report"
+run = "uv run python examples/environment_fit.py --out out/environment-fit/report.json"
+
+[tasks.textured-quad-fit]
+description = "E4 textured-quad inverse recovery and texture-resolution report"
+run = "uv run python examples/textured_quad_fit.py --out out/textured-quad-fit/report.json"
+
+[tasks.dynamic-geometry]
+description = "E2 one-bounce dynamic-geometry invalidation and cache-splice report"
+run = "uv run python examples/dynamic_geometry.py --out out/dynamic-geometry/report.json"
+
+[tasks.light-aware-sampling]
+description = "E3 light-aware toy-tracer sampling density and consistency report"
+run = "uv run python examples/light_aware_sampling.py --out out/light-aware-sampling/report.json"
+
+[tasks.light-aware-proxy-ab]
+description = "E3 toy standard-vs-guided proxy A/B report"
+run = "uv run python examples/light_aware_proxy_ab.py --out out/light-aware-proxy-ab/report.json"
+
+[tasks.pipeline-audit]
+description = "E10 audit: verify pipeline feasibility doc references existing out/ artifacts"
+run = "uv run python examples/audit_pipeline_claims.py --doc docs/pipeline-feasibility.md --out out/pipeline-feasibility/audit.json"
+
+[tasks.viewer]
+description = "E6 exported-runtime headless viewer loop and parity report"
+run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"
+
+[tasks.js-viewer]
+description = "E6: export a JS-backend GUI slider viewer (WebGPU-shaped step) and parity report"
+run = "uv run python examples/export_js_viewer.py --out-dir out/engine-runtime/js_viewer"
+
+[tasks.webgpu-smoke]
+description = "E6: verify the real WebGPU compute pipeline mechanism (synthetic weights; see webgpu/README.md for why the native Node binding crashes on real weights)"
+run = "cd webgpu && npm install --silent && node smoke.mjs"
+
+[tasks.webgpu-bench]
+description = "E6: the completed WebGPU backend — real compute shader in real Chrome (via Playwright) against the actual exported proxy, parity + 128/256/512 latency sweep"
+run = "cd webgpu && npm install --silent && npx playwright install chrome && node bench_browser.mjs"
+
+[tasks.generative-loop]
+description = "E7 scribble/generative target inverse-lighting report"
+run = "uv run python examples/generative_loop.py --out out/generative/report.json"
+
+[tasks.hand-authored-target]
+description = "E7: hand-authored (not derived-from-render) image target inverse-lighting report"
+run = "uv run python examples/hand_authored_target.py --out out/generative/hand_authored_report.json"
+
 [tasks.inverse-grid]
 description = "Table-3-style grid: N in {1,3,5} lights x pixel fractions, 5 runs/cell (Mitsuba cornell)"
 run = "uv run python examples/inverse_grid.py --model out/mitsuba-torch/model.pt --cache out/mitsuba/path_cache.npz --out out/inverse-grid/report.json"

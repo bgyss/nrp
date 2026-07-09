@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..lights import QuadLight, SphereLight
+from ..lights import QuadLight, SphereLight, TexturedQuadLight
 from ..path_cache import PathCache
 
 
@@ -60,7 +60,7 @@ def sample_light(
     light_type: str,
     bounds: dict,
     strategy: str = "segments",
-) -> SphereLight | QuadLight:
+) -> SphereLight | QuadLight | TexturedQuadLight:
     """One random light configuration with unit emission (E is factored out during
     training; the network learns the pre-emission contribution)."""
     center = sample_positions(cache, rng, 1, strategy)[0]
@@ -73,4 +73,21 @@ def sample_light(
         width = bounds["size_min"] + rng.random() * (bounds["size_max"] - bounds["size_min"])
         height = bounds["size_min"] + rng.random() * (bounds["size_max"] - bounds["size_min"])
         return QuadLight(center=center, normal=normal, width=float(width), height=float(height))
+    if light_type == "textured_quad":
+        tex_h, tex_w = bounds.get("texture_size", [2, 2])
+        tex_min = float(bounds.get("texture_min", 0.0))
+        tex_max = float(bounds.get("texture_max", 1.0))
+        texture = tex_min + rng.random((int(tex_h), int(tex_w), 3)) * (tex_max - tex_min)
+        normal = np.asarray(bounds.get("normal", [0.0, 0.0, -1.0]), dtype=np.float64)
+        normal /= np.linalg.norm(normal)
+        center = np.asarray(bounds.get("center", center), dtype=np.float64)
+        width = float(bounds.get("width", bounds.get("size", 1.0)))
+        height = float(bounds.get("height", bounds.get("size", 1.0)))
+        return TexturedQuadLight(
+            center=center,
+            normal=normal,
+            width=width,
+            height=height,
+            texture=texture,
+        )
     raise ValueError(f"unknown light type {light_type!r}")

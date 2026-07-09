@@ -21,7 +21,11 @@ GATHERLIGHT verbatim: every segment crossing the light accumulates
 **Importance sampling constraints — faithful.** Both producers use BSDF sampling with
 no next-event estimation (NEE would bake light knowledge into the paths). The Mitsuba
 exporter applies throughput-based Russian roulette as the paper describes; the toy
-tracer uses a fixed bounce count.
+tracer uses a fixed bounce count. Extension E3 adds an optional toy-tracer sampler
+that mixes cosine BSDF sampling with a cone toward a declared spherical light-placement
+region, using mixture-pdf throughput weights. This is an experiment around the
+paper's undersampled-region limitation, not a replacement for the paper-faithful
+default path-data pass.
 
 **Consistency validation (ours, not the paper's):** `nrp/compare_reference.py`
 re-traces the toy scene with an independent seed and evaluates the emissive light
@@ -54,8 +58,15 @@ emission-weighted sum over lights (`gather_lights`, `torch_backend/relight.py`).
 
 **Sphere lights (4 params) and quad lights (8 params) — faithful.** Quad tangent
 frame is derived deterministically from the normal so (center, normal, w, h) fully
-determine the light. Textured / arbitrary-shape area lights: future work in the paper
-too.
+determine the light. Extension work now adds reference-GATHERLIGHT support for
+`TexturedQuadLight` and degree-2 `EnvironmentLight` (`nrp/lights.py`,
+`nrp/gather_light.py`), including constant-texture and constant-environment reduction
+tests plus closed-form/reference inverse recovery paths (`nrp/environment_fit.py`,
+`nrp/texture_fit.py`). `out/textured-quad-fit/report.json` now includes both a linear
+held-out texture-proxy scaling baseline and a compact learned texture-embedding torch
+proxy baseline; the main `TorchNRP` train/relight path also accepts a fixed-size
+`textured_quad` parameter vector for a small 2×2 texture smoke. The paper-faithful
+production-trained light types remain sphere and quad.
 
 ## §4 Implementation
 
@@ -206,6 +217,15 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   consistency; `nrp.torch_backend.relight_multiview` applies one light edit across
   all resident view proxies with no path-cache access (latency scales linearly in N;
   numbers in `docs/performance.md`).
+- **Extension E1 animated camera — implemented**: the toy tracer accepts a
+  camera-origin override; `examples/time_conditioned_camera.py` (`mise run
+  time-camera`) traces K camera keyframe caches and evaluates image-space
+  interpolation on held-out intermediate cameras (baseline). `examples/
+  time_conditioned_proxy.py` (`mise run time-conditioned-proxy`) goes further: a
+  single `TorchNRP` conditioned on light params plus a normalized time scalar,
+  trained jointly on the K keyframes, reaches held-out intermediate-camera PSNR
+  within 2.06 dB of its training-keyframe PSNR (criterion: within 3 dB — met) at
+  K=3, a small camera range.
 - **§6.1 per-layer compositing NRPs (Fig. 11) — implemented** (toy tracer):
   `nrp.toy_tracer --layer sphere|box` records only paths whose first hit is on the
   layer's geometry (full scene still traced, so the two layer caches partition the
@@ -223,14 +243,66 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
 - **§6.3 generative targets — out of scope** as a dependency (no image model is
   bundled), but any generated image dropped in as `--target file.npy` exercises the
   same path the paper uses.
+- **Extension E9 quality tiers — implemented:** `nrp.torch_backend.relight`
+  exposes `--quality preview|draft|final`, output metadata sidecars, and cached
+  residual correction for approved light configs; `out/quality/report.json` includes
+  toy-scale PSNR/SSIM/FLIP tier metrics plus a toy residual-validity trust verdict.
+  `examples/quality_tiers_production.py` reproduces this at 512x512 on real Mitsuba
+  cornell-box caches (32spp export, 128spp converged reference) with a genuinely
+  trained (not intentionally-untrained) streamed proxy, reaching the same
+  qualitative trust verdict. This is pipeline plumbing around the paper's
+  proxy/GATHERLIGHT split, not a paper mechanism.
+- **Extension E8 production controls — toy-scale conditioned proxies implemented:**
+  `gather_light_controlled` can exclude first-hit-owned pixels for light linking and
+  apply a linear-distance artist attenuation curve to sphere-light gathers. This
+  demonstrates that some non-physical controls can be evaluated from the cache. A
+  tiny binary table proxy keeps one linking toggle live at proxy speed, and a learned
+  image proxy keeps fixed-family linear and quadratic attenuation controls live for
+  held-out settings. A soft mask-basis proxy also predicts a held-out mask to
+  floating-point accuracy. Fully free-form production controls remain limited by the
+  chosen control parameterization and training coverage, not by the cache/proxy API.
+- **Extension E6 exported runtime — implemented:** `nrp.torch_backend.engine_runtime`
+  exports sphere and quad `TorchNRP` models to TorchScript artifacts and runs parity-
+  tested inference through `torch.jit.load`; `mise run viewer` writes headless slider
+  frame dumps and a CPU/MPS 128/256/512 full-frame inference sweep (real MPS
+  timings, not the earlier "unavailable" placeholder). `examples/export_js_viewer.py`
+  (`mise run js-viewer`) closes the GUI-slider gap with a self-contained HTML/JS page
+  (real interactive light-position sliders, 1e-7 parity vs PyTorch, verified under
+  Node). `webgpu/bench_browser.mjs` (`mise run webgpu-bench`) closes the WebGPU
+  criterion: a real WGSL compute shader running the actual exported proxy inside
+  real Chrome (via Playwright), 2.4e-7 parity vs PyTorch, 30/60 fps cleared at
+  128/256/512². An earlier native-binding-only attempt (`webgpu/bench.mjs`, no
+  browser) reproducibly crashed on real trained-model weights — bisected to a
+  defect in that specific binding (`webgpu/README.md`), resolved by running the
+  identical shader in a production WebGPU implementation instead. Both browser
+  backends still sidestep the hashgrid encoding via a `use_encoding=False`
+  ablation; porting `HashEncoding2D` to WGSL remains open, separately.
+- **Extension E7 image-space target loop — mostly implemented:** `mise run
+  generative-loop` creates a synthesized scribble fixture and a stylized target,
+  pretrains the proxy on random lights before inversion (closing the "untrained
+  proxy" gap), exercises objective/protect masks through `optimize_lights`, and
+  reports proxy-space plus physical GATHERLIGHT errors. `out/generative/provenance.json`
+  records the deterministic fixture recipes and SHA-256 hashes for the generated
+  toy targets. The toy stylized target is explicitly reported as not exactly
+  realizable by one sphere light; a true hand-authored or external generative image
+  fixture remains open (requires an external asset this environment cannot produce
+  unprompted).
 
 ## §7 Limitations — shared
 
 All of the paper's stated limitations apply here too: fixed transport after caching
 (no post-hoc attenuation/exclusivity edits), undersampled-region artifacts,
 parameter-count-driven difficulty for complex light types, and in-memory path data.
-This implementation adds its own: toy scale, no fused kernels, and Monte Carlo noise
-floors at 16–24 spp that dominate SMAPE on near-zero pixels.
+Extension work has started chipping at these limits with light-aware toy-tracer
+sampling for declared placement regions, one-bounce dynamic-geometry cache splicing
+(`nrp.dynamic_geometry`) with an image-space warm-start repair baseline, a
+tile-sharded cache round-trip, streamed fixed-light target construction, and tiled
+proxy inference (`PathCache.save_sharded`,
+`nrp.torch_backend.relight --tile-pixels`). The E3 open-top-box occluder is still a
+toy lampshade-style fixture, and multi-bounce invalidation, TorchNRP weight
+fine-tuning, streamed optimizer training, and a production-resolution run are not
+implemented yet. This implementation adds its own: toy scale, no fused kernels, and
+Monte Carlo noise floors at 16–24 spp that dominate SMAPE on near-zero pixels.
 
 ## Known deviations summary
 
