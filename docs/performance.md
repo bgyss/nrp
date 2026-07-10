@@ -1429,3 +1429,57 @@ frozen baseline, or 512² misses the 30 fps p95 floor outright. The same check r
 as `tests/test_export_webgpu_runtime.py::T4BaselineCheckTests` (spawns real
 Chrome; skips cleanly without node/Playwright/export artifacts, repo convention).
 Full per-frame timings live in `out/t4-runtime/report.json` (also committed).
+
+## Dynamic geometry, second attempt (production track, rung G1)
+
+E2's settled negative result was that segment-local TorchNRP weight fine-tuning
+misses its 1 dB recovery target by 11–20 dB even with replay regularization. G1
+tests a changed hypothesis on E2's *exact* fixture (32×32 / 8 spp / 10 frames,
+sphere moving +0.16 along x, same light, same 300-iteration / lr 5e-3 per-frame
+budget, warm-started per frame like every E2 regime): mark invalidated cache
+shards with E2's swept-volume + primary-visibility masks aggregated to an 8×8
+tile grid, keep the base proxy **frozen**, and train a signed-output residual
+MLP (`nrp.torch_backend.residual_dynamic.ResidualNRP`, linear head — a residual
+must go negative) over only the invalidated region, composited additively at
+inference. Outside the region the composite equals the frozen base bitwise
+(unit-proven), so E2's failure mode is structurally impossible.
+
+Measured by `mise run g1-residual` (report: `out/g1-residual/report.json`,
+committed), one script producing all five regimes; E2's regimes reproduce their
+published numbers exactly:
+
+| regime | mean PSNR vs full | gap vs (a) | within 1 dB | mean ms/frame |
+|---|---:|---:|---|---:|
+| (a) full retrace + full retrain | 44.88 dB | — | — | 141.8 |
+| (b) E2 masked-pixel fine-tune | 25.20 dB | 19.7 dB | no | 69.8 |
+| (b2) E2 fine-tune + replay | 33.76 dB | 11.1 dB | no | 121.1 |
+| (c) stale (no update) | 22.13 dB | 22.8 dB | no | — |
+| (d) G1 frozen base + shard residual | **37.15 dB** | **7.7 dB** | **no** | 84.5 |
+
+**The letter of the target is still not met** — but the failure mode is
+categorically different from E2's, which is what the rung asked to establish:
+
+- Regime (b) fails by *global forgetting*: its out-of-mask PSNR averages
+  22.95 dB (the fine-tune degrades pixels the geometry change never touched).
+  Regime (d)'s out-of-mask PSNR averages **54.90 dB** and cannot drift by
+  construction.
+- Per-frame floor: (d) never drops below **25.3 dB**; (b) collapses to 10.6 dB
+  (worse than doing nothing) and (a) itself oscillates down to 16.4 dB mid-
+  sequence. At the per-frame **median**, (d) is 1.2 dB *better* than (a)
+  (median gap −1.17 dB) and beats it outright on 6 of 10 frames.
+- The 7.7 dB mean gap is dominated by the two near-static frames (dx ≤ 0.018)
+  where (a) retrains on an almost-unchanged target and scores 110+ dB while
+  (d) is capped at ~58 dB by the frozen base's own fit. G1's residual failure
+  mode is therefore *in-region underfit against an overfit reference on
+  degenerate frames*, not forgetting.
+- Cost: invalidate-and-recover (mask + splice + spliced GATHERLIGHT + residual
+  train) averages 84.5 ms/frame vs 141.8 ms for full retrace + retrain — 0.60×,
+  at matched optimization budget.
+
+T1-scene feasibility: not run — the Mitsuba exporter has no scene-edit/retrace
+path for a moved object (it records paths for a fixed scene), so invalidation
+targets cannot be produced for the kitchen; the toy fixture is kept because the
+rung requires the apples-to-apples comparison against E2's numbers. Unit
+coverage: `tests/test_residual_dynamic.py` (shard-grid aggregation incl.
+non-divisible edges, signed head, bitwise outside-region compositing, windowed
+loss decrease, save/load round-trip, report-loop smoke).
