@@ -13,6 +13,20 @@ Shader-performance history and full numbers: `docs/performance.md` ("Runtime
 baseline lock"). The E6 material below (toy no-encoding proxy) is kept as the
 original criterion's record.
 
+## G2 update: interactive summit demo — `demo/` + `demo_g2.mjs`
+
+`webgpu/demo/` (rung G2; `mise run g2-serve` for the interactive page, `mise run
+g2-demo` for the scripted replay) is a live viewer for the exported T1 kitchen
+proxy: animated lights (E1 keyframe format), the two E8 production controls
+(per-layer light linking via the exported first-hit mask, first-hit
+linear-distance artist attenuation) applied in-shader, and — from G1 — a
+toy-scale moving-object panel compositing the frozen base proxy with per-frame
+signed residuals (GPU composite parity-checked against the exporter's torch
+composite). The committed trace (`demo/trace.json`) is replayed by
+`demo_g2.mjs` in real Chrome, which writes the frame-time histogram, the
+screen recording, and the gate-sample frames that `examples/g2_gate.py` gates
+per frame at preview tier. Results: `docs/performance.md` ("Summit demo").
+
 ## Result: complete — `bench_browser.mjs`
 
 `bench_browser.mjs` (`mise run webgpu-bench`, report:

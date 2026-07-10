@@ -75,6 +75,17 @@ uv run python -m nrp.quality.gate report out/ablation/report.json --tier preview
 mise run t4-export   # examples/export_webgpu_runtime.py -> out/t4-runtime/export/
 mise run t4-bench    # webgpu/bench_t4.mjs -> out/t4-runtime/report.json
 mise run t4-check    # fails on parity break, >30% p95 regression, or <30 fps p95 at 512^2
+
+# Dynamic geometry, second attempt (production track G1): E2's exact fixture,
+# frozen base + shard-partitioned residual vs the failed fine-tune regimes.
+mise run g1-residual  # examples/residual_dynamic.py -> out/g1-residual/report.json
+
+# Browser summit demo (production track G2): live relight + E8 controls + the G1
+# moving-object panel in real Chrome.
+mise run g2-export   # examples/export_webgpu_demo.py -> out/g2-demo/export*/
+mise run g2-serve    # interactive: http://localhost:8791/webgpu/demo/index.html
+mise run g2-demo     # scripted trace replay: frame-time histogram + recording + gate frames
+mise run g2-gate     # per-frame preview-tier gate (run inside the nix devshell for OIDN)
 ```
 
 The numpy backend keeps its own `nrp.relight` / `nrp.optimize_lights` CLIs with the
