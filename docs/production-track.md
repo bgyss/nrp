@@ -23,8 +23,8 @@ Design rationale and decision record: `docs/plans/2026-07-09-production-track-de
 | T2 | Streaming and memory discipline at real-scene scale | **done** | `out/t2-streaming/report.json`; `out/t2-streaming/export_512x512_64spp.json`; `out/t2-streaming/export_128x128_64spp.json` (0.000 dB parity; 0.80 GiB streamed training peak vs 8.45 GiB monolithic; 44.90 dB minimum packed-cache fidelity; export ceiling documented); `docs/performance.md` |
 | T3 | Perceptual quality gates | **done** | `nrp/quality/gate.py` + `tests/test_quality_gate.py` (19 tests, incl. degraded-render failure); `out/quality/report.json` + `out/ablation/report_gated.json` re-emitted, conclusions unchanged; `out/quality/gate_overhead.json` (gate = 4.3% of the draft+reference render pair at 512², < 5% target); `docs/performance.md` |
 | T4 | Runtime baseline lock | **done** | `out/t4-runtime/baseline.json` + `out/t4-runtime/report.json` (T1-scene proxy, hashgrid in WGSL, real Chrome: parity 1.2e-6; 512² p95 23.3 ms = 43 fps p95, 30 fps floor holds; `mise run t4-check` regression gate); `docs/performance.md` |
-| G1 | Dynamic geometry, second attempt | not started | — |
-| G2 | Summit: live relight + controls in the browser | not started | — |
+| G1 | Dynamic geometry, second attempt | **done (honest negative, changed failure mode)** | `out/g1-residual/report.json` (regime (d) 37.15 dB, gap 7.7 dB vs the 1 dB target — but out-of-mask fidelity 54.9 dB vs E2's 22.95 dB forgetting, per-frame floor 25.3 dB vs 10.6 dB, median gap −1.17 dB, 0.60× wall-clock); `docs/performance.md` |
+| G2 | Summit: live relight + controls in the browser | **done** | `out/g2-demo/report.json` (481 frames under interaction: p95 30.7 ms ≤ 33 ms at 512²; G1-panel parity 4.8e-7); `out/g2-demo/gate.json` (12/12 trace frames pass preview tier vs OIDN-denoised controlled GATHERLIGHT, SSIM ≥ 0.883); `out/g2-demo/recording.webm` + `webgpu/demo/trace.json`; moving object included at G1's toy scale; `docs/performance.md` |
 | F1 | Shot harness with temporal stability | not started | — |
 | F2 | Summit: final-tier shot | not started | — |
 | V1 | Production light rig | not started | — |

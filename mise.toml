@@ -142,6 +142,26 @@ run = "uv run python examples/environment_fit.py --out out/environment-fit/repor
 description = "E4 textured-quad inverse recovery and texture-resolution report"
 run = "uv run python examples/textured_quad_fit.py --out out/textured-quad-fit/report.json"
 
+[tasks.g2-export]
+description = "G2: export the kitchen demo blobs (controls included, G2's longer-trained proxy) and the G1 moving-object panel blobs"
+run = "uv run python examples/export_webgpu_demo.py --model out/kitchen-512-torch-g2/model.pt && uv run python examples/export_webgpu_demo.py --g1"
+
+[tasks.g2-serve]
+description = "G2: serve the interactive browser demo (open http://localhost:8791/webgpu/demo/index.html)"
+run = "node webgpu/demo/server.mjs"
+
+[tasks.g2-demo]
+description = "G2: replay the committed interaction trace in real Chrome — frame-time histogram (p95 <= 33 ms gate), screen recording, and gate-sample frames"
+run = "cd webgpu && npm install --silent && npx playwright install chrome && node demo_g2.mjs"
+
+[tasks.g2-gate]
+description = "G2: gate every sampled trace frame at preview tier against controlled GATHERLIGHT references"
+run = "uv run python examples/g2_gate.py"
+
+[tasks.g1-residual]
+description = "G1: E2-fixture recovery comparison — frozen base + shard-partitioned residual vs E2's fine-tune regimes"
+run = "uv run python examples/residual_dynamic.py"
+
 [tasks.dynamic-geometry]
 description = "E2 one-bounce dynamic-geometry invalidation and cache-splice report"
 run = "uv run python examples/dynamic_geometry.py --out out/dynamic-geometry/report.json"

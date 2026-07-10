@@ -1,0 +1,408 @@
+{
+  "rung": "G1",
+  "scope": "dynamic geometry, second attempt: swept-volume shard invalidation + frozen base + per-frame residual proxy, vs E2's fine-tune regimes on E2's exact fixture",
+  "fixture": {
+    "resolution": [
+      32,
+      32
+    ],
+    "spp": 8,
+    "frames": 10,
+    "max_bounces": 1,
+    "seed": 21,
+    "sphere_dx_max": 0.16,
+    "light": {
+      "type": "sphere",
+      "center": [
+        0.35,
+        0.28,
+        0.62
+      ],
+      "radius": 0.2,
+      "rgb": [
+        1.3,
+        1.0,
+        0.8
+      ]
+    },
+    "proxy": {
+      "hidden_width": 32,
+      "hidden_layers": 2,
+      "iters": 300,
+      "lr": 0.005
+    },
+    "shard_size": 8,
+    "residual_warm_start": true,
+    "recovery_target_db": 1.0
+  },
+  "base_train_ms": 838.8392090000707,
+  "recovery_comparison": [
+    {
+      "regime": "a",
+      "description": "full retrace + full retrain (reference)",
+      "mean_psnr_vs_full_db": 44.884812955914825,
+      "gap_vs_regime_a_db": 0.0,
+      "within_1db_of_a": true,
+      "mean_ms_per_frame": 141.77550410022377
+    },
+    {
+      "regime": "b",
+      "description": "E2: incremental masked-pixel fine-tune",
+      "mean_psnr_vs_full_db": 25.204206282416724,
+      "gap_vs_regime_a_db": 19.6806066734981,
+      "within_1db_of_a": false,
+      "mean_ms_per_frame": 69.76224600020942
+    },
+    {
+      "regime": "b2",
+      "description": "E2 follow-up: fine-tune + self-distillation replay",
+      "mean_psnr_vs_full_db": 33.76110815571224,
+      "gap_vs_regime_a_db": 11.123704800202582,
+      "within_1db_of_a": false,
+      "mean_ms_per_frame": 121.08657499993569
+    },
+    {
+      "regime": "c",
+      "description": "stale (no update)",
+      "mean_psnr_vs_full_db": 22.130358276193228,
+      "gap_vs_regime_a_db": 22.754454679721597,
+      "within_1db_of_a": false,
+      "mean_ms_per_frame": null
+    },
+    {
+      "regime": "d",
+      "description": "G1: frozen base + shard-partitioned residual, composited",
+      "mean_psnr_vs_full_db": 37.14984779457068,
+      "gap_vs_regime_a_db": 7.734965161344142,
+      "within_1db_of_a": false,
+      "mean_ms_per_frame": 84.45609600021271
+    }
+  ],
+  "recovery_target_met_by_regime_d": false,
+  "per_frame_summary": {
+    "regime_a": {
+      "min_psnr_db": 16.434279263821267,
+      "median_psnr_db": 32.91489806494029,
+      "median_gap_vs_a_db": 0.0,
+      "frames_at_or_above_regime_a": 10
+    },
+    "regime_b": {
+      "min_psnr_db": 10.62068792609365,
+      "median_psnr_db": 11.506260320893576,
+      "median_gap_vs_a_db": 18.102277627605122,
+      "frames_at_or_above_regime_a": 0
+    },
+    "regime_b2": {
+      "min_psnr_db": 17.619639159234083,
+      "median_psnr_db": 31.769821536340295,
+      "median_gap_vs_a_db": 0.2601755927800724,
+      "frames_at_or_above_regime_a": 5
+    },
+    "regime_d": {
+      "min_psnr_db": 25.27472134177429,
+      "median_psnr_db": 33.80461247160001,
+      "median_gap_vs_a_db": -1.1667641537880655,
+      "frames_at_or_above_regime_a": 6
+    },
+    "note": "the mean-gap recovery target is dominated by the two near-static frames (dx <= 0.018) where regime (a) is retrained on an almost-unchanged target and scores 110+ dB while regime (d) is capped by the frozen base's own ~55 dB fit; per-frame medians and minima tell the operational story"
+  },
+  "failure_mode": {
+    "e2_regime_b": "global forgetting: fine-tuning shared weights on only the invalidated pixels degrades the unchanged pixels (see regime_b_out_of_mask_psnr per frame)",
+    "g1_regime_d": "out-of-region drift is structurally impossible (composite equals the frozen base bitwise outside the invalidated shards); any residual gap is in-region underfit or conservative over-invalidation (see regime_d_in_mask_psnr)",
+    "mean_regime_b_out_of_mask_psnr": 22.953358912089204,
+    "mean_regime_d_out_of_mask_psnr": 54.902583220183566
+  },
+  "t1_scene_feasibility": "not feasible this rung: the Mitsuba exporter has no scene-edit/retrace path for a moved object (it records paths for a fixed scene), so invalidation targets cannot be produced for the kitchen; the toy fixture is E2's, kept for the apples-to-apples comparison the rung requires",
+  "frames_detail": [
+    {
+      "frame": 0,
+      "sphere_center": [
+        0.35,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.7195000006468035,
+      "e2_primary_splice_ms": 0.5937499990977813,
+      "combined_invalid_pixels": 421,
+      "region_pixels": 576,
+      "invalidated_shards": 9,
+      "segments_replaced": 3368,
+      "regime_a_psnr": 110.2263861849854,
+      "regime_b_psnr": 58.21943682968478,
+      "regime_b2_psnr": 58.21943682968478,
+      "regime_c_psnr": 58.21943682968478,
+      "regime_d_psnr": 58.19607290498918,
+      "regime_b_in_mask_psnr": 60.65179543879526,
+      "regime_b_out_of_mask_psnr": 56.3123250162683,
+      "regime_d_in_mask_psnr": 60.579483957005635,
+      "regime_d_out_of_mask_psnr": 56.3123250162683,
+      "regime_a_full_retrace_and_retrain_ms": 141.64554200215207,
+      "regime_b_finetune_ms": 0.004625000656233169,
+      "regime_b2_finetune_ms": 0.012165999578428455,
+      "regime_d_invalidate_and_recover_ms": 88.36695799982408,
+      "residual_loss_first": 0.00803902093321085,
+      "residual_loss_last": 8.813448175715166e-07
+    },
+    {
+      "frame": 1,
+      "sphere_center": [
+        0.36777777777777776,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.763209000884672,
+      "e2_primary_splice_ms": 0.6560410001839045,
+      "combined_invalid_pixels": 442,
+      "region_pixels": 640,
+      "invalidated_shards": 10,
+      "segments_replaced": 3536,
+      "regime_a_psnr": 112.2110641298492,
+      "regime_b_psnr": 100.96258231436741,
+      "regime_b2_psnr": 59.08094810167209,
+      "regime_c_psnr": 58.16765309600083,
+      "regime_d_psnr": 59.31076166988768,
+      "regime_b_in_mask_psnr": 105.7363282202018,
+      "regime_b_out_of_mask_psnr": 97.71680497144774,
+      "regime_d_in_mask_psnr": 65.91966780626704,
+      "regime_d_out_of_mask_psnr": 55.68822452890493,
+      "regime_a_full_retrace_and_retrain_ms": 144.3845420017169,
+      "regime_b_finetune_ms": 76.64704200033157,
+      "regime_b2_finetune_ms": 129.63720900006592,
+      "regime_d_invalidate_and_recover_ms": 80.88054200015904,
+      "residual_loss_first": 2.9153210562071763e-05,
+      "residual_loss_last": 2.568764045918215e-07
+    },
+    {
+      "frame": 2,
+      "sphere_center": [
+        0.38555555555555554,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.50595900110784,
+      "e2_primary_splice_ms": 0.6363330012391089,
+      "combined_invalid_pixels": 473,
+      "region_pixels": 704,
+      "invalidated_shards": 11,
+      "segments_replaced": 3784,
+      "regime_a_psnr": 30.43313734820554,
+      "regime_b_psnr": 14.233129621586489,
+      "regime_b2_psnr": 34.54943732371201,
+      "regime_c_psnr": 25.942169810067078,
+      "regime_d_psnr": 34.91640351528584,
+      "regime_b_in_mask_psnr": 14.746860288421287,
+      "regime_b_out_of_mask_psnr": 11.001044009217164,
+      "regime_d_in_mask_psnr": 33.29700758232923,
+      "regime_d_out_of_mask_psnr": 55.00418610230926,
+      "regime_a_full_retrace_and_retrain_ms": 141.59308400121517,
+      "regime_b_finetune_ms": 76.58441700004914,
+      "regime_b2_finetune_ms": 132.56295899918769,
+      "regime_d_invalidate_and_recover_ms": 83.14945900019666,
+      "residual_loss_first": 0.006263159215450287,
+      "residual_loss_last": 0.0008022249094210565
+    },
+    {
+      "frame": 3,
+      "sphere_center": [
+        0.4033333333333333,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.178541999863228,
+      "e2_primary_splice_ms": 0.635208998573944,
+      "combined_invalid_pixels": 494,
+      "region_pixels": 704,
+      "invalidated_shards": 11,
+      "segments_replaced": 3952,
+      "regime_a_psnr": 22.247857979175144,
+      "regime_b_psnr": 12.558085069669175,
+      "regime_b2_psnr": 28.990205748968574,
+      "regime_c_psnr": 13.097638024712921,
+      "regime_d_psnr": 27.879852253044767,
+      "regime_b_in_mask_psnr": 13.7668428507462,
+      "regime_b_out_of_mask_psnr": 8.419573687074218,
+      "regime_d_in_mask_psnr": 26.254136649162028,
+      "regime_d_out_of_mask_psnr": 55.00418610230926,
+      "regime_a_full_retrace_and_retrain_ms": 145.49441700000898,
+      "regime_b_finetune_ms": 77.39324999965902,
+      "regime_b2_finetune_ms": 132.5341669999034,
+      "regime_d_invalidate_and_recover_ms": 84.00712500042573,
+      "residual_loss_first": 0.02539140172302723,
+      "residual_loss_last": 0.004009522031992674
+    },
+    {
+      "frame": 4,
+      "sphere_center": [
+        0.4211111111111111,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.343082999184844,
+      "e2_primary_splice_ms": 0.7538749996456318,
+      "combined_invalid_pixels": 530,
+      "region_pixels": 704,
+      "invalidated_shards": 11,
+      "segments_replaced": 4240,
+      "regime_a_psnr": 18.37750900160626,
+      "regime_b_psnr": 12.044785866559636,
+      "regime_b2_psnr": 24.766212494029585,
+      "regime_c_psnr": 12.231227006607071,
+      "regime_d_psnr": 25.27472134177429,
+      "regime_b_in_mask_psnr": 13.103311233739403,
+      "regime_b_out_of_mask_psnr": 8.075439353157192,
+      "regime_d_in_mask_psnr": 23.64830312620525,
+      "regime_d_out_of_mask_psnr": 55.00418610230926,
+      "regime_a_full_retrace_and_retrain_ms": 140.48320799884095,
+      "regime_b_finetune_ms": 76.81125000090105,
+      "regime_b2_finetune_ms": 133.6302079998859,
+      "regime_d_invalidate_and_recover_ms": 83.09287500014761,
+      "residual_loss_first": 0.016365593299269676,
+      "residual_loss_last": 0.007304578088223934
+    },
+    {
+      "frame": 5,
+      "sphere_center": [
+        0.4388888888888889,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.429292001077556,
+      "e2_primary_splice_ms": 0.7458330001099966,
+      "combined_invalid_pixels": 559,
+      "region_pixels": 704,
+      "invalidated_shards": 11,
+      "segments_replaced": 4472,
+      "regime_a_psnr": 16.434279263821267,
+      "regime_b_psnr": 10.863810661839821,
+      "regime_b2_psnr": 21.949345869241608,
+      "regime_c_psnr": 11.803303553144763,
+      "regime_d_psnr": 30.594763507529656,
+      "regime_b_in_mask_psnr": 11.747990184662886,
+      "regime_b_out_of_mask_psnr": 7.107417466062438,
+      "regime_d_in_mask_psnr": 28.970400920479626,
+      "regime_d_out_of_mask_psnr": 55.00418610230926,
+      "regime_a_full_retrace_and_retrain_ms": 142.15800000056333,
+      "regime_b_finetune_ms": 75.77504199980467,
+      "regime_b2_finetune_ms": 135.5620419999468,
+      "regime_d_invalidate_and_recover_ms": 83.04883299933863,
+      "residual_loss_first": 0.015295707620680332,
+      "residual_loss_last": 0.002191415522247553
+    },
+    {
+      "frame": 6,
+      "sphere_center": [
+        0.45666666666666667,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.647707999538397,
+      "e2_primary_splice_ms": 0.6474169986177003,
+      "combined_invalid_pixels": 593,
+      "region_pixels": 768,
+      "invalidated_shards": 12,
+      "segments_replaced": 4744,
+      "regime_a_psnr": 30.97228230381871,
+      "regime_b_psnr": 10.967734775227516,
+      "regime_b2_psnr": 19.868107694514865,
+      "regime_c_psnr": 10.65052478421806,
+      "regime_d_psnr": 33.183966564785216,
+      "regime_b_in_mask_psnr": 10.652205482826094,
+      "regime_b_out_of_mask_psnr": 9.801867477519583,
+      "regime_d_in_mask_psnr": 31.93960577316076,
+      "regime_d_out_of_mask_psnr": 54.252134561856366,
+      "regime_a_full_retrace_and_retrain_ms": 138.87891599915747,
+      "regime_b_finetune_ms": 78.19216700045217,
+      "regime_b2_finetune_ms": 133.09074999961013,
+      "regime_d_invalidate_and_recover_ms": 85.52812500056461,
+      "residual_loss_first": 0.004377045668661594,
+      "residual_loss_last": 0.0010812283726409078
+    },
+    {
+      "frame": 7,
+      "sphere_center": [
+        0.47444444444444445,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.415999999764608,
+      "e2_primary_splice_ms": 0.6430829998862464,
+      "combined_invalid_pixels": 626,
+      "region_pixels": 768,
+      "invalidated_shards": 12,
+      "segments_replaced": 5008,
+      "regime_a_psnr": 34.85751382606186,
+      "regime_b_psnr": 10.714104374704295,
+      "regime_b2_psnr": 17.619639159234083,
+      "regime_c_psnr": 10.571187313484309,
+      "regime_d_psnr": 34.979357872671486,
+      "regime_b_in_mask_psnr": 10.31540516282636,
+      "regime_b_out_of_mask_psnr": 9.913180001939693,
+      "regime_d_in_mask_psnr": 33.737572719029146,
+      "regime_d_out_of_mask_psnr": 54.252134561856366,
+      "regime_a_full_retrace_and_retrain_ms": 140.93558299828146,
+      "regime_b_finetune_ms": 77.98237499991956,
+      "regime_b2_finetune_ms": 136.99245800125937,
+      "regime_d_invalidate_and_recover_ms": 85.7660420006141,
+      "residual_loss_first": 0.0029736573342233896,
+      "residual_loss_last": 0.0007116809720173478
+    },
+    {
+      "frame": 8,
+      "sphere_center": [
+        0.4922222222222222,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.4583330000023125,
+      "e2_primary_splice_ms": 0.6494999997812556,
+      "combined_invalid_pixels": 662,
+      "region_pixels": 768,
+      "invalidated_shards": 12,
+      "segments_replaced": 5296,
+      "regime_a_psnr": 37.10700833724595,
+      "regime_b_psnr": 10.62068792609365,
+      "regime_b2_psnr": 36.55293379116293,
+      "regime_c_psnr": 10.361092832080907,
+      "regime_d_psnr": 34.425258378414796,
+      "regime_b_in_mask_psnr": 10.143082826550904,
+      "regime_b_out_of_mask_psnr": 10.204294053810713,
+      "regime_d_in_mask_psnr": 33.18256191171444,
+      "regime_d_out_of_mask_psnr": 54.252134561856366,
+      "regime_a_full_retrace_and_retrain_ms": 141.94533299996692,
+      "regime_b_finetune_ms": 79.1712499994901,
+      "regime_b2_finetune_ms": 137.44349999979022,
+      "regime_d_invalidate_and_recover_ms": 84.8044590002246,
+      "residual_loss_first": 0.0015988218365237117,
+      "residual_loss_last": 0.0008127943146973848
+    },
+    {
+      "frame": 9,
+      "sphere_center": [
+        0.51,
+        0.28,
+        0.62
+      ],
+      "full_trace_ms": 4.62629100002232,
+      "e2_primary_splice_ms": 0.7171249999373686,
+      "combined_invalid_pixels": 685,
+      "region_pixels": 768,
+      "invalidated_shards": 12,
+      "segments_replaced": 5480,
+      "regime_a_psnr": 35.981091184378975,
+      "regime_b_psnr": 10.85770538443448,
+      "regime_b2_psnr": 36.01481454490185,
+      "regime_c_psnr": 10.25934951193153,
+      "regime_d_psnr": 32.73731993732389,
+      "regime_b_in_mask_psnr": 10.282398942596094,
+      "regime_b_out_of_mask_psnr": 10.981643084394996,
+      "regime_d_in_mask_psnr": 31.49246762966236,
+      "regime_d_out_of_mask_psnr": 54.252134561856366,
+      "regime_a_full_retrace_and_retrain_ms": 140.23641600033443,
+      "regime_b_finetune_ms": 79.06104200083064,
+      "regime_b2_finetune_ms": 139.40029100012907,
+      "regime_d_invalidate_and_recover_ms": 85.91654200063203,
+      "residual_loss_first": 0.0021704353857785463,
+      "residual_loss_last": 0.0011983488220721483
+    }
+  ]
+}

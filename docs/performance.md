@@ -1429,3 +1429,123 @@ frozen baseline, or 512² misses the 30 fps p95 floor outright. The same check r
 as `tests/test_export_webgpu_runtime.py::T4BaselineCheckTests` (spawns real
 Chrome; skips cleanly without node/Playwright/export artifacts, repo convention).
 Full per-frame timings live in `out/t4-runtime/report.json` (also committed).
+
+## Dynamic geometry, second attempt (production track, rung G1)
+
+E2's settled negative result was that segment-local TorchNRP weight fine-tuning
+misses its 1 dB recovery target by 11–20 dB even with replay regularization. G1
+tests a changed hypothesis on E2's *exact* fixture (32×32 / 8 spp / 10 frames,
+sphere moving +0.16 along x, same light, same 300-iteration / lr 5e-3 per-frame
+budget, warm-started per frame like every E2 regime): mark invalidated cache
+shards with E2's swept-volume + primary-visibility masks aggregated to an 8×8
+tile grid, keep the base proxy **frozen**, and train a signed-output residual
+MLP (`nrp.torch_backend.residual_dynamic.ResidualNRP`, linear head — a residual
+must go negative) over only the invalidated region, composited additively at
+inference. Outside the region the composite equals the frozen base bitwise
+(unit-proven), so E2's failure mode is structurally impossible.
+
+Measured by `mise run g1-residual` (report: `out/g1-residual/report.json`,
+committed), one script producing all five regimes; E2's regimes reproduce their
+published numbers exactly:
+
+| regime | mean PSNR vs full | gap vs (a) | within 1 dB | mean ms/frame |
+|---|---:|---:|---|---:|
+| (a) full retrace + full retrain | 44.88 dB | — | — | 141.8 |
+| (b) E2 masked-pixel fine-tune | 25.20 dB | 19.7 dB | no | 69.8 |
+| (b2) E2 fine-tune + replay | 33.76 dB | 11.1 dB | no | 121.1 |
+| (c) stale (no update) | 22.13 dB | 22.8 dB | no | — |
+| (d) G1 frozen base + shard residual | **37.15 dB** | **7.7 dB** | **no** | 84.5 |
+
+**The letter of the target is still not met** — but the failure mode is
+categorically different from E2's, which is what the rung asked to establish:
+
+- Regime (b) fails by *global forgetting*: its out-of-mask PSNR averages
+  22.95 dB (the fine-tune degrades pixels the geometry change never touched).
+  Regime (d)'s out-of-mask PSNR averages **54.90 dB** and cannot drift by
+  construction.
+- Per-frame floor: (d) never drops below **25.3 dB**; (b) collapses to 10.6 dB
+  (worse than doing nothing) and (a) itself oscillates down to 16.4 dB mid-
+  sequence. At the per-frame **median**, (d) is 1.2 dB *better* than (a)
+  (median gap −1.17 dB) and beats it outright on 6 of 10 frames.
+- The 7.7 dB mean gap is dominated by the two near-static frames (dx ≤ 0.018)
+  where (a) retrains on an almost-unchanged target and scores 110+ dB while
+  (d) is capped at ~58 dB by the frozen base's own fit. G1's residual failure
+  mode is therefore *in-region underfit against an overfit reference on
+  degenerate frames*, not forgetting.
+- Cost: invalidate-and-recover (mask + splice + spliced GATHERLIGHT + residual
+  train) averages 84.5 ms/frame vs 141.8 ms for full retrace + retrain — 0.60×,
+  at matched optimization budget.
+
+T1-scene feasibility: not run — the Mitsuba exporter has no scene-edit/retrace
+path for a moved object (it records paths for a fixed scene), so invalidation
+targets cannot be produced for the kitchen; the toy fixture is kept because the
+rung requires the apples-to-apples comparison against E2's numbers. Unit
+coverage: `tests/test_residual_dynamic.py` (shard-grid aggregation incl.
+non-divisible edges, signed head, bitwise outside-region compositing, windowed
+loss decrease, save/load round-trip, report-loop smoke).
+
+## Summit demo: live relight + controls in the browser (production track, rung G2)
+
+The T1 kitchen proxy relit live in real Chrome (WebGPU, Apple M1 Max / metal-3):
+`webgpu/demo/` is an interactive viewer — animated lights in the E1 keyframe
+format, the two E8 production controls (per-layer light linking via the exported
+first-hit layer mask, 10.1% of pixels; a first-hit linear-distance artist
+attenuation curve) applied in-shader, an emission tint (Eq. 3), and — G1's
+deliverable — a toy-scale moving-object panel compositing the frozen base proxy
+with per-frame signed residuals next to the full-retrace GATHERLIGHT reference.
+`mise run g2-serve` opens it; `mise run g2-demo` replays the committed
+interaction trace (`webgpu/demo/trace.json`) headlessly and writes the evidence.
+
+**The proxy had to be retrained to clear the gate.** T1's 3000-iteration model
+(21.0 dB mean val PSNR) tops out at SSIM ≈ 0.78 against OIDN-denoised references
+on interior lights, and its only *raw*-reference pass region is degenerate — a
+light enclosing the camera, rendering a near-constant image (std 0.006). A
+15k-iteration cosine-schedule run of the same architecture
+(`examples/kitchen_512_torch_g2.json`, 61 min CPU, report:
+`out/kitchen-512-torch-g2/torch_train_report.json`) lifts mean val PSNR to
+29.4 dB and clears preview tier across the whole committed light path (dense
+17-point pre-verification sweep plus control states: 32–37.5 dB / SSIM
+0.881–0.906 / FLIP ≤ 0.075).
+
+Measured by `mise run g2-demo` (report: `out/g2-demo/report.json`, committed;
+recording: `out/g2-demo/recording.webm`, committed) — 481 timed frames at 512²
+under the full interaction timeline (light animation + linking toggle +
+attenuation + tint, plus the G1 panel's two extra dispatches and three canvas
+presents per frame):
+
+| check | result |
+|---|---:|
+| frame time mean / p50 / p95 / max | 26.7 / 27.2 / 30.7 / 35.4 ms |
+| fps p95 (criterion: p95 ≤ 33 ms) | **32.6 fps — passes** |
+| G1-panel GPU-vs-torch composite parity | 4.8e-7 max abs (all 10 frames) |
+| preview-tier gate (12 sampled trace frames) | **12/12 pass** |
+| gate metrics vs OIDN-denoised gather | 32.1–37.3 dB, SSIM ≥ 0.883, FLIP ≤ 0.075 |
+| same frames vs raw 64-spp gather | SSIM 0.297–0.438 (noise-bound; PSNR ≥ 30.7 dB) |
+| gate evaluation per frame | 0.15 s |
+
+The per-frame gate (`mise run g2-gate`, report: `out/g2-demo/gate.json`,
+committed) scores the browser's actual output buffers against GATHERLIGHT
+references carrying the *identical* pixel-level control algebra — linking zeroes
+the same layer-mask pixels, attenuation applies the same first-hit curve, tint
+folds into emission — so the gate measures proxy fidelity, not control
+approximation. The reference is the **OIDN-denoised** gather, the class the
+proxy is supervised on (§4.4): the raw 64-spp gather's Monte Carlo noise bounds
+SSIM at ~0.2–0.44 on these frames regardless of proxy quality (recorded per
+frame as `raw_reference_metrics`), while linear-HDR PSNR — noise-robust — stays
+≥ 30.7 dB against the raw reference too. Honest caveats, stated plainly: the
+committed light path was *authored inside* the proxy's verified pass region
+(radius ≈ 0.28–0.37 interior lights among the training distribution); arbitrary
+light positions do not gate at preview tier (T1's per-light variance table
+already showed this), and the linking/attenuation controls are the pixel-level
+(first-hit) control family — E8's own gather-time linking algebra, but not a
+per-segment attenuation. The moving object ships at G1's toy scale with the
+scale labeled in the UI, since G1's result is toy-scale and the exporter has no
+scene-edit retrace path for the kitchen.
+
+Frame-time context: the earlier identical workload measured 23.1/24.2 ms
+(mean/p95) on a quieter machine; the committed run carried ~5 load average of
+unrelated processes. Both hold the 33 ms criterion; the T4 single-proxy bench
+(no canvas, no G1 panel) remains the tighter runtime baseline. Integration
+coverage: `tests/test_g2_demo.py` (real-Chrome render + G1 parity, skips
+without the browser toolchain), `tests/test_export_webgpu_demo.py`,
+`tests/test_g2_gate.py`.

@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>NRP G2 summit demo — live relight + controls (WebGPU)</title>
+<style>
+  body { font: 13px system-ui, sans-serif; background: #14161a; color: #dde; margin: 16px; }
+  h1 { font-size: 16px; } h2 { font-size: 13px; margin: 6px 0; }
+  .row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+  canvas { background: #000; border: 1px solid #333; }
+  #kitchen { width: 512px; height: 512px; }
+  .g1canvas { width: 224px; height: 224px; image-rendering: pixelated; }
+  .panel { max-width: 540px; }
+  label { display: block; margin: 6px 0; }
+  input[type=range] { width: 220px; vertical-align: middle; }
+  #stats { font-family: ui-monospace, monospace; color: #9fd39f; margin-top: 8px; }
+  .note { color: #99a; font-size: 12px; max-width: 520px; }
+  button { margin-right: 6px; }
+</style>
+</head>
+<body>
+<h1>Neural render proxy — T1 kitchen scene, live relight + E8 controls (rung G2)</h1>
+<div class="row">
+  <div class="panel">
+    <canvas id="kitchen" width="512" height="512"></canvas>
+    <div id="stats">initializing WebGPU…</div>
+  </div>
+  <div class="panel">
+    <h2>Animated light (E1 keyframe harness)</h2>
+    <label><button id="play">Pause</button> t = <span id="tlabel">0.00</span> s
+      <input type="range" id="time" min="0" max="8" step="0.01" value="0" /></label>
+    <h2>Production controls (E8)</h2>
+    <label><input type="checkbox" id="link" /> light linking: exclude the layer
+      (first-hit box) from this light</label>
+    <label>artist attenuation k = <span id="klabel">0.00</span>
+      <input type="range" id="atten" min="0" max="0.25" step="0.005" value="0" /></label>
+    <h2>Emission (Eq. 3)</h2>
+    <label>R <input type="range" id="rgb_r" min="0" max="2" step="0.05" value="1" />
+           G <input type="range" id="rgb_g" min="0" max="2" step="0.05" value="1" />
+           B <input type="range" id="rgb_b" min="0" max="2" step="0.05" value="1" /></label>
+    <p class="note">One resident 409 k-parameter hashgrid proxy; per frame only the
+    light/control uniforms change. Linking uses the exported first-hit layer mask
+    (E8's pixel-level gather-time algebra); attenuation is a first-hit
+    linear-distance artist curve applied identically in the Python reference the
+    quality gate compares against.</p>
+    <div id="g1panel" style="display:none">
+      <h2>Moving object — toy scale (G1)</h2>
+      <div class="row">
+        <div><canvas id="g1canvas" class="g1canvas" width="32" height="32"></canvas><br/>composite (frozen base + residual)</div>
+        <div><canvas id="g1ref" class="g1canvas" width="32" height="32"></canvas><br/>full-retrace GATHERLIGHT</div>
+      </div>
+      <label>object frame <span id="g1label">0</span>
+        <input type="range" id="g1frame" min="0" max="9" step="1" value="0" /></label>
+      <p class="note">G1 ran at E2's toy fixture scale (32², sphere translating);
+      the T1 scene has no retrace path for scene edits. The composite is the frozen
+      base proxy plus a per-frame signed residual over only the invalidated cache
+      shards — the panel is honest about that scale.</p>
+    </div>
+  </div>
+</div>
+<script type="module" src="./main.mjs"></script>
+</body>
+</html>
