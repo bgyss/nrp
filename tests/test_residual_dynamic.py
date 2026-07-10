@@ -25,7 +25,7 @@ from nrp.toy_tracer import SPHERE_CENTER, trace_path_cache  # noqa: E402
 class InvalidatedShardsTests(unittest.TestCase):
     def test_invalidated_shards_cover_mask_and_align_to_tile_grid(self):
         mask = np.zeros((16, 16), dtype=bool)
-        mask[3, 5] = True  # tile (0, 0) with shard_size 8? no: (0, 0) since 3<8,5<8
+        mask[3, 5] = True  # tile (0, 0)
         mask[10, 12] = True  # tile (1, 1)
         region, tiles = invalidated_shards(mask, shard_size=8)
         self.assertEqual(tiles, [(0, 0), (1, 1)])
@@ -149,6 +149,39 @@ class ResidualProxyTests(unittest.TestCase):
         with torch.no_grad():
             after = loaded(torch.as_tensor(xy), torch.as_tensor(aux), params).numpy()
         np.testing.assert_array_equal(before, after)
+
+
+class ReportSmokeTests(unittest.TestCase):
+    def test_regime_d_loop_smoke(self):
+        """Tiny end-to-end run of the G1 report loop: the report carries the
+        comparison table, target verdict, and failure-mode fields (the bitwise
+        outside-region property is proven in ResidualProxyTests)."""
+        import argparse
+        import tempfile
+
+        from examples.residual_dynamic import run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(
+                out_dir=tmp,
+                width=12,
+                height=12,
+                spp=2,
+                frames=2,
+                iters=40,
+                lr=5e-3,
+                shard_size=8,
+                residual_cold_start=False,
+            )
+            report = run(args)
+        self.assertEqual(report["rung"], "G1")
+        self.assertEqual(len(report["recovery_comparison"]), 5)
+        self.assertIn("recovery_target_met_by_regime_d", report)
+        self.assertIn("failure_mode", report)
+        for frame in report["frames_detail"]:
+            out_psnr = frame["regime_d_out_of_mask_psnr"]
+            if isinstance(out_psnr, float):
+                self.assertGreater(out_psnr, 0.0)
 
 
 if __name__ == "__main__":

@@ -142,6 +142,10 @@ run = "uv run python examples/environment_fit.py --out out/environment-fit/repor
 description = "E4 textured-quad inverse recovery and texture-resolution report"
 run = "uv run python examples/textured_quad_fit.py --out out/textured-quad-fit/report.json"
 
+[tasks.g1-residual]
+description = "G1: E2-fixture recovery comparison — frozen base + shard-partitioned residual vs E2's fine-tune regimes"
+run = "uv run python examples/residual_dynamic.py"
+
 [tasks.dynamic-geometry]
 description = "E2 one-bounce dynamic-geometry invalidation and cache-splice report"
 run = "uv run python examples/dynamic_geometry.py --out out/dynamic-geometry/report.json"
