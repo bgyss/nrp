@@ -1,0 +1,21 @@
+{
+  "frozen_from": "/Users/briangyss/src/nrp-t4/out/t4-runtime/report.json",
+  "adapter": "apple / metal-3",
+  "parity_tolerance": 0.0002,
+  "regression_threshold": 0.3,
+  "floor_p95_ms_512": 33.333333333333336,
+  "latency": {
+    "128": {
+      "mean_ms": 2.155500000016764,
+      "p95_ms": 2.7000000001862645
+    },
+    "256": {
+      "mean_ms": 5.7985000000009315,
+      "p95_ms": 6.5
+    },
+    "512": {
+      "mean_ms": 20.60799999999814,
+      "p95_ms": 22.899999999441206
+    }
+  }
+}

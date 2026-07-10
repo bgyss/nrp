@@ -68,6 +68,13 @@ uv run python -m nrp.quality.gate images pred.npy ref.npy --tier draft
 uv run python -m nrp.quality.gate report out/ablation/report.json --tier preview \
   --psnr-key psnr_db_mean --ssim-key ssim_mean --flip-key flip_mean \
   --out out/ablation/report_gated.json
+
+# WebGPU runtime baseline (production track T4): export the T1-scene proxy
+# (hashgrid included) for the browser backend, bench it in real Chrome, and gate
+# frame-time regressions against the committed baseline.
+mise run t4-export   # examples/export_webgpu_runtime.py -> out/t4-runtime/export/
+mise run t4-bench    # webgpu/bench_t4.mjs -> out/t4-runtime/report.json
+mise run t4-check    # fails on parity break, >30% p95 regression, or <30 fps p95 at 512^2
 ```
 
 The numpy backend keeps its own `nrp.relight` / `nrp.optimize_lights` CLIs with the
