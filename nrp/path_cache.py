@@ -30,6 +30,9 @@ load to restore unit length. Escape segments survive packing: fp16 represents
 inf exactly, and finite t_max values are clamped to the fp16 finite range so
 they can never round *to* inf.
 
+Tile-sharded caches support the same packed representation through
+`save_sharded(..., packed=True)`; shard readers auto-detect and decode both layouts.
+
 Schema versions:
   - v1: surface-only, no version field (all caches written before mid-2026).
   - v2: adds `schema_version` and an optional `medium` metadata dict
@@ -114,7 +117,7 @@ class PathCache:
     def segment_count(self) -> int:
         return int(self.seg_pixel.shape[0])
 
-    def save_sharded(self, directory: str, tile_size: int = 128) -> None:
+    def save_sharded(self, directory: str, tile_size: int = 128, packed: bool = False) -> None:
         """Write a tile-sharded cache directory for out-of-core experiments.
 
         Each shard owns a rectangular pixel tile and the segments whose row-major
@@ -137,24 +140,58 @@ class PathCache:
                 cols = self.seg_pixel % self.width
                 owned = (rows >= y0) & (rows < y1) & (cols >= x0) & (cols < x1)
                 name = f"tile_y{y0:04d}_x{x0:04d}.npz"
-                np.savez_compressed(
-                    root / name,
+                arrays = dict(
                     y0=y0,
                     y1=y1,
                     x0=x0,
                     x1=x1,
                     n_paths=self.n_paths.reshape(self.height, self.width)[y0:y1, x0:x1],
-                    albedo=self.albedo[y0:y1, x0:x1],
-                    position=self.position[y0:y1, x0:x1],
-                    depth=self.depth[y0:y1, x0:x1],
-                    normal=self.normal[y0:y1, x0:x1],
+                    albedo=(
+                        _to_fp16(self.albedo[y0:y1, x0:x1])
+                        if packed
+                        else self.albedo[y0:y1, x0:x1]
+                    ),
+                    position=(
+                        _to_fp16(self.position[y0:y1, x0:x1])
+                        if packed
+                        else self.position[y0:y1, x0:x1]
+                    ),
+                    depth=(
+                        _to_fp16(self.depth[y0:y1, x0:x1])
+                        if packed
+                        else self.depth[y0:y1, x0:x1]
+                    ),
+                    normal=(
+                        _to_fp16(self.normal[y0:y1, x0:x1])
+                        if packed
+                        else self.normal[y0:y1, x0:x1]
+                    ),
                     seg_index=seg_indices[owned],
-                    seg_pixel=self.seg_pixel[owned],
-                    seg_origin=self.seg_origin[owned],
-                    seg_dir=self.seg_dir[owned],
-                    seg_tmax=self.seg_tmax[owned],
-                    seg_throughput=self.seg_throughput[owned],
                 )
+                if packed:
+                    tmax = _to_fp16(self.seg_tmax[owned])
+                    tmax = np.where(
+                        (tmax == 0) & (self.seg_tmax[owned] > 0),
+                        np.float16(_FP16_TINY),
+                        tmax,
+                    )
+                    arrays.update(
+                        packed_layout=1,
+                        seg_pixel=self.seg_pixel[owned].astype(np.int32),
+                        seg_origin=_to_fp16(self.seg_origin[owned]),
+                        seg_dir=_to_fp16(self.seg_dir[owned]),
+                        seg_tmax=tmax,
+                        seg_throughput_rgb9e5=rgb9e5_encode(self.seg_throughput[owned]),
+                    )
+                else:
+                    arrays.update(
+                        seg_pixel=self.seg_pixel[owned],
+                        seg_origin=self.seg_origin[owned],
+                        seg_dir=self.seg_dir[owned],
+                        seg_tmax=self.seg_tmax[owned],
+                        seg_throughput=self.seg_throughput[owned],
+                    )
+                np.savez_compressed(root / name, **arrays)
                 shards.append({"path": name, "x0": x0, "x1": x1, "y0": y0, "y1": y1})
         manifest = {
             "schema_version": SCHEMA_VERSION,
@@ -162,6 +199,7 @@ class PathCache:
             "width": self.width,
             "height": self.height,
             "tile_size": tile_size,
+            "packed_layout": bool(packed),
             "medium": dict(self.medium) if self.medium is not None else None,
             "shards": shards,
         }
@@ -193,14 +231,21 @@ class PathCache:
             position[y0:y1, x0:x1] = z["position"]
             depth[y0:y1, x0:x1] = z["depth"]
             normal[y0:y1, x0:x1] = z["normal"]
+            seg_dir = z["seg_dir"].astype(np.float64)
+            if "packed_layout" in z:
+                norms = np.linalg.norm(seg_dir, axis=1, keepdims=True)
+                seg_dir = np.divide(seg_dir, norms, out=seg_dir, where=norms > 0)
+                throughput = rgb9e5_decode(z["seg_throughput_rgb9e5"])
+            else:
+                throughput = z["seg_throughput"].astype(np.float64)
             seg_parts.append(
                 {
                     "index": z["seg_index"].astype(np.int64),
                     "pixel": z["seg_pixel"].astype(np.int64),
                     "origin": z["seg_origin"].astype(np.float64),
-                    "dir": z["seg_dir"].astype(np.float64),
+                    "dir": seg_dir,
                     "tmax": z["seg_tmax"].astype(np.float64),
-                    "throughput": z["seg_throughput"].astype(np.float64),
+                    "throughput": throughput,
                 }
             )
         if seg_parts:

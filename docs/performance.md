@@ -27,10 +27,13 @@
 | toy box | `nrp/toy_tracer.py` | 48×48 | 24 | 3 | 165,888 | 7.1 MB |
 | Mitsuba cornell box | `nrp/mitsuba_exporter.py` | 48×48 | 16 | 4 (RR) | 103,680 | 3.9 MB |
 | Country Kitchen (gallery) | `nrp/mitsuba_exporter.py` (wavefront) | 128×128 | 64 | 4 (RR) | 3,266,937 | 128.7 MB |
+| Country Kitchen — T1 scene | `nrp/mitsuba_exporter.py` (wavefront) | 512×512 | 64 | 4 (RR) | 52,264,226 | 2,092.6 MB |
 
 Export cost: toy trace ~seconds; Mitsuba cornell box **1.6 s** scalar; the kitchen at
 128×128 / 64 spp exports in **4.0 s** with the wavefront loop (would be ~55 s scalar
-at the measured scalar throughput). The kitchen scene is downloaded on demand by
+at the measured scalar throughput), and at 512×512 / 64 spp (the T1 scene of
+`docs/production-track.md`) in **27.2 s** for 52.3M segments — a ~15-minute job at
+scalar throughput. The kitchen scene is downloaded on demand by
 `examples/scenes/download_scene.py kitchen` (assets are never committed).
 
 ## Exporter throughput: scalar vs drjit wavefront (roadmap item 1)
@@ -96,6 +99,7 @@ emission (same scene, different seeds — independent path sets):
 | torch, toy box | 62,923 | 60 s (+0.7 s pool) | 19.17 dB (18.86 vs denoised) | 0.92 | hashgrid, bilateral-denoised pool |
 | torch, Mitsuba box + OIDN | 62,923 | 48 s (+0.4 s pool) | **25.87 dB** (26.48 vs denoised) | 0.94 | paper-exact §4.1+§4.4 pipeline |
 | torch, kitchen 128² + OIDN | 106,085 | 126 s (+4.8 s pool) | **25.24 dB** (23.02 vs denoised) | 0.99 | first real academic scene; wavefront-exported cache |
+| torch, kitchen 512² + OIDN (T1) | 409,189 | 854 s (+44 s pool) | **21.01 dB** (20.56 vs denoised), SSIM 0.30, ꟻLIP 0.146 | 0.88 | T1 scene end to end; 118.6 ms/frame (8.4 Hz) CPU inference at 512² |
 
 Readings:
 
@@ -110,6 +114,13 @@ Readings:
   430 KB vs the 129 MB cache it compresses. PSNR vs *denoised* is lower than vs
   raw here (23.02 dB): at 64 spp the raw GATHERLIGHT target is already clean, so
   OIDN's residual smoothing costs more than the noise it removes.
+- The T1 run (`examples/kitchen_512_torch.json`, report in
+  `out/kitchen-512-torch/torch_train_report.json`) trains the same architecture
+  (wider hashgrid, 409k params, 1.6 MB) end to end on the 52.3M-segment 512² cache:
+  21.01 dB / SSIM 0.30 / ꟻLIP 0.146 held out, 854 s train wall-clock on CPU. One
+  validation light (a small emitter placed nearly inside geometry) scores −5.3 dB
+  and drags the means; the median light is ~24.1 dB. Per-light metrics are in the
+  report. SSIM/FLIP are newly recorded here for T3's perceptual gates.
 - SMAPE ≈ 0.9 everywhere: near-zero-contribution pixels dominate this metric at
   16–24 spp. Trust PSNR for aggregate quality at these sample counts.
 - Model sizes: 175 KB (numpy .npz) / 257 KB (torch .pt) — the compression story of
@@ -690,6 +701,51 @@ supplies far more segments per pixel. This closes E5's last open criterion; the
 caveat is that streaming cost is currently I/O- and Python-loop-bound rather than
 compute-bound, which is an engineering distance (a batched/vectorized streaming
 gather, analogous to `TorchPathCache`, would close it), not a structural blocker.
+
+### T2 real-scene packed streaming (Country Kitchen, 512×512 / 64 spp)
+
+`mise run t2` is the complete reproducible workflow: it measures full and reduced
+exports, then `mise run t2-streaming` re-proves the E5 machinery on the T1 Country Kitchen cache
+with 64×64 tiles and the paper's packed fp16 geometry + shared-exponent rgb9e5
+throughput. Report: `out/t2-streaming/report.json`. The run used CPU, seed 0, an
+eight-image raw target pool, 300 iterations, and an explicit **8 GiB peak-RSS
+budget**. Each phase runs in a fresh process so its `ru_maxrss` is attributable.
+Measurements are from an Apple M1 Max (10 CPU cores, 64 GiB RAM, macOS 26.6).
+The exporter writes its own configuration/timing/RSS/hardware JSON via `--report`;
+the two source reports are `out/t2-streaming/export_512x512_64spp.json` and
+`out/t2-streaming/export_128x128_64spp.json`.
+
+| check | monolithic | packed streamed |
+|---|---:|---:|
+| on-disk cache | 2.09 GB | 630.20 MB (3.32× smaller) |
+| training peak RSS | **9.07 GB / 8.45 GiB (over budget)** | **0.85 GB / 0.80 GiB** |
+| pool build | 8.37 s | 37.18 s |
+| total train phase | 35.62 s | 100.18 s |
+| held-out PSNR vs packed GATHERLIGHT | 21.873 dB | 21.873 dB |
+| PSNR gap (criterion ≤ 0.1 dB) | — | **0.000 dB, pass** |
+| 512² tiled inference | 235.5 ms | 224.3 ms |
+| inference peak RSS | — | 1.19 GB / 1.11 GiB |
+
+The actual 512²/64-spp wavefront SAMPLEPATHS export took 182.4 s end to end
+(20.4 s trace plus serialization) and peaked at **10.33 GB / 9.62 GiB**, over budget.
+Following T2's required fallback, a 128²/64-spp scalar export establishes a passing
+ceiling at 3.26 GB / 3.04 GiB peak RSS (63.0 s end to end; 52.5 s trace). The
+intermediate 512²/48-spp measurement was not available, so the bracket is reported
+rather than inferred. Packed-shard conversion of the full 512² T1 cache took 115.0 s
+and peaked at 8.33 GB / 7.76 GiB, under the
+8 GiB budget. The largest decoded shard is 79.1 MB. Streamed supervision processed
+segments at **11.24 million segments/s**. Across six fixed fresh lights, packed vs
+float64 GATHERLIGHT fidelity is 59.72 dB mean and **44.90 dB minimum**. This is the
+committed cache-size/quality curve: 2.09 GB float64 is the reference point; the
+630.20 MB packed point retains ≥44.90 dB image fidelity.
+
+The full monolithic comparison was run (rather than silently subsampled) and exceeded
+the budget by 0.45 GiB. The packed streamed training and inference phases remain far
+inside it, so T2's production path succeeds while documenting the monolithic ceiling.
+The cost is a 4.4× slower pool build from scalar shard visits; this is the next
+optimization target. T2 therefore records an export ceiling rather than claiming the
+full T1 export fits; packed streaming keeps the subsequent full-resolution phases
+within budget.
 
 ## Dynamic geometry cache invalidation (extensions E2, one-bounce slice)
 
