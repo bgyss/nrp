@@ -277,9 +277,13 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   128/256/512². An earlier native-binding-only attempt (`webgpu/bench.mjs`, no
   browser) reproducibly crashed on real trained-model weights — bisected to a
   defect in that specific binding (`webgpu/README.md`), resolved by running the
-  identical shader in a production WebGPU implementation instead. Both browser
-  backends still sidestep the hashgrid encoding via a `use_encoding=False`
-  ablation; porting `HashEncoding2D` to WGSL remains open, separately.
+  identical shader in a production WebGPU implementation instead. The remaining
+  gap — both browser backends sidestepped the hashgrid encoding via a
+  `use_encoding=False` ablation — closed with production-track rung T4:
+  `webgpu/bench_t4.mjs` (`mise run t4-bench`) ports `HashEncoding2D` to WGSL and
+  runs the actual T1 kitchen proxy (hashgrid + 4×128 MLP) in real Chrome at 1.2e-6
+  parity, 30 fps p95-verified at 512², locked as a regression baseline
+  (`mise run t4-check`, `out/t4-runtime/baseline.json`).
 - **Extension E7 image-space target loop — mostly implemented:** `mise run
   generative-loop` creates a synthesized scribble fixture and a stylized target,
   pretrains the proxy on random lights before inversion (closing the "untrained

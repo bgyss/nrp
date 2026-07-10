@@ -22,7 +22,7 @@ Design rationale and decision record: `docs/plans/2026-07-09-production-track-de
 | T1 | Real-scene ingestion at scale | **done** | `out/export-bench.json` (39–59× ≥ 20× target); `out/kitchen-512-torch/torch_train_report.json` (21.01 dB / SSIM 0.30 / ꟻLIP 0.146); `docs/performance.md` |
 | T2 | Streaming and memory discipline at real-scene scale | **done** | `out/t2-streaming/report.json`; `out/t2-streaming/export_512x512_64spp.json`; `out/t2-streaming/export_128x128_64spp.json` (0.000 dB parity; 0.80 GiB streamed training peak vs 8.45 GiB monolithic; 44.90 dB minimum packed-cache fidelity; export ceiling documented); `docs/performance.md` |
 | T3 | Perceptual quality gates | **done** | `nrp/quality/gate.py` + `tests/test_quality_gate.py` (19 tests, incl. degraded-render failure); `out/quality/report.json` + `out/ablation/report_gated.json` re-emitted, conclusions unchanged; `out/quality/gate_overhead.json` (gate = 4.3% of the draft+reference render pair at 512², < 5% target); `docs/performance.md` |
-| T4 | Runtime baseline lock | not started | — |
+| T4 | Runtime baseline lock | **done** | `out/t4-runtime/baseline.json` + `out/t4-runtime/report.json` (T1-scene proxy, hashgrid in WGSL, real Chrome: parity 1.2e-6; 512² p95 23.3 ms = 43 fps p95, 30 fps floor holds; `mise run t4-check` regression gate); `docs/performance.md` |
 | G1 | Dynamic geometry, second attempt | not started | — |
 | G2 | Summit: live relight + controls in the browser | not started | — |
 | F1 | Shot harness with temporal stability | not started | — |

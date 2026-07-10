@@ -1375,3 +1375,57 @@ of interactive previews needs cheaper metrics (a G2/T4 concern). Getting here
 required a real optimization: `nrp.metrics` separable convolutions now use
 `sliding_window_view` + matvec instead of per-tap Python sums (identical results to
 ≤1e-15; full gate evaluation 0.22 s → 0.15 s, SSIM/FLIP tests unchanged).
+
+## Runtime baseline lock (production track, rung T4)
+
+T4 locks the browser-WebGPU runtime floor on the real T1 scene, upgrading the E6
+result (toy proxy, `use_encoding=False`, mean-only timing) in three ways: it runs
+the **actual T1 kitchen proxy** (409 k parameters: 10-level hashgrid + 4×128 MLP,
+`out/kitchen-512-torch/model.pt`) with the hashgrid encoding ported to WGSL — the
+step the E6 section explicitly deferred; it feeds the real exported 512² G-buffer
+rather than synthetic aux; and it reports a frame-time histogram (p95, not just
+mean) under a per-frame jittered light uniform, the interactive-relight access
+pattern.
+
+Pipeline: `mise run t4-export` (`examples/export_webgpu_runtime.py`) dumps the
+proxy — MLP weights, hashgrid tables, per-level metadata — plus xy/aux G-buffer and
+a PyTorch reference image as flat float32 blobs (`out/t4-runtime/export/`), with a
+numpy reimplementation of the exported forward pass self-checked against the torch
+module at export time (max abs diff 1.6e-6; unit-tested in
+`tests/test_export_webgpu_runtime.py` including hashed-vs-dense table levels).
+`mise run t4-bench` (`webgpu/bench_t4.mjs`) runs the WGSL port in real Chrome via
+Playwright (same harness as E6), 200 timed frames per resolution after 10 warmup
+frames; timing covers uniform upload, dispatch, and `onSubmittedWorkDone` — no
+per-frame readback, weights/tables/G-buffer resident.
+
+Apple M1 Max (Metal 3), Chrome; parity vs the PyTorch reference at 512²:
+**1.2e-6 max abs diff** (tolerance 2e-4):
+
+| resolution | mean | p50 | p95 | min–max | fps (mean) | fps (p95) | 30 fps p95 | 60 fps p95 |
+|---|---:|---:|---:|---:|---:|---:|---|---|
+| 128² | 2.21 ms | 2.10 ms | 2.80 ms | 1.9–5.8 ms | 452 | 357 | pass | pass |
+| 256² | 5.93 ms | 5.60 ms | 7.40 ms | 5.4–9.6 ms | 169 | 135 | pass | pass |
+| 512² | 20.96 ms | 20.50 ms | 23.30 ms | 19.5–28.3 ms | 48 | 43 | **pass** | fail |
+
+The T4 floor — 30 fps at 512² sustained, p95-verified — **holds** on the real
+scene (p95 23.3 ms < 33.3 ms), with ~30% headroom. 60 fps holds through 256²
+but not at 512²; recorded as-is, the floor is 30.
+
+Getting under the floor required real shader work, recorded because the failed
+variants are instructive: a naive per-thread scalar loop over the storage-buffer
+weights ran at 219 ms p95 at 512² (4.6 fps, ~7× over the floor); rewriting it with
+vec4 dot products halved that (132 ms); workgroup-shared weight tiles alone changed
+nothing (108 ms) because the true bottleneck was dynamically-indexed function-space
+arrays (activations/accumulators) spilling to device memory. The shipped shader
+generates fully-unrolled constant-index accumulator statements (registers), reads
+each activation once per 16-vec4 output block, and streams transposed weights
+through a ≤16 KiB workgroup tile: 20.9 ms mean — ~10× the naive version, all
+parity-identical.
+
+The lock: `out/t4-runtime/baseline.json` (committed) freezes per-resolution
+mean/p95 plus the thresholds; `mise run t4-check` re-runs the bench and **fails**
+if parity exceeds 2e-4, any resolution's p95 regresses more than 30% over the
+frozen baseline, or 512² misses the 30 fps p95 floor outright. The same check runs
+as `tests/test_export_webgpu_runtime.py::T4BaselineCheckTests` (spawns real
+Chrome; skips cleanly without node/Playwright/export artifacts, repo convention).
+Full per-frame timings live in `out/t4-runtime/report.json` (also committed).

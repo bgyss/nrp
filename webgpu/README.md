@@ -1,5 +1,18 @@
 # E6 WebGPU backend
 
+## T4 update: real T1-scene proxy, hashgrid in WGSL — `bench_t4.mjs`
+
+`bench_t4.mjs` (production track rung T4; `mise run t4-bench` / `t4-check`) extends
+this backend to the actual T1 kitchen proxy: the 10-level `HashEncoding2D` is ported
+to WGSL and the shader runs the real 409 k-parameter model against the real exported
+512² G-buffer (`mise run t4-export` → `out/t4-runtime/export/`). Parity vs PyTorch
+1.2e-6; frame-time histogram at 128/256/512² with the 30 fps p95 floor at 512²
+locked as a committed regression baseline (`out/t4-runtime/baseline.json`; the
+`--check` mode fails on parity break, >30% p95 regression, or a missed floor).
+Shader-performance history and full numbers: `docs/performance.md` ("Runtime
+baseline lock"). The E6 material below (toy no-encoding proxy) is kept as the
+original criterion's record.
+
 ## Result: complete — `bench_browser.mjs`
 
 `bench_browser.mjs` (`mise run webgpu-bench`, report:
