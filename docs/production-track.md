@@ -21,7 +21,7 @@ Design rationale and decision record: `docs/plans/2026-07-09-production-track-de
 |---|---|---|---|
 | T1 | Real-scene ingestion at scale | **done** | `out/export-bench.json` (39–59× ≥ 20× target); `out/kitchen-512-torch/torch_train_report.json` (21.01 dB / SSIM 0.30 / ꟻLIP 0.146); `docs/performance.md` |
 | T2 | Streaming and memory discipline at real-scene scale | not started | — |
-| T3 | Perceptual quality gates | not started | — |
+| T3 | Perceptual quality gates | **done** | `nrp/quality/gate.py` + `tests/test_quality_gate.py` (19 tests, incl. degraded-render failure); `out/quality/report.json` + `out/ablation/report_gated.json` re-emitted, conclusions unchanged; `out/quality/gate_overhead.json` (gate = 4.3% of the draft+reference render pair at 512², < 5% target); `docs/performance.md` |
 | T4 | Runtime baseline lock | not started | — |
 | G1 | Dynamic geometry, second attempt | not started | — |
 | G2 | Summit: live relight + controls in the browser | not started | — |

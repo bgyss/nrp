@@ -60,6 +60,14 @@ uv run python examples/make_art_target.py --cache out/toy/path_cache.npz \
 uv run python -m nrp.torch_backend.optimize_lights --model out/toy-torch/model.pt \
   --cache out/toy/path_cache.npz --target out/toy/art/art_target.npy \
   --mask out/toy/art/art_mask.npy --out-dir out/toy-torch/art-opt
+
+# Perceptual quality gate (production track T3): pass/fail a render against a
+# reference at a named tier (preview/draft/final), exit code 0/1 for CI, or
+# re-emit an existing report JSON with quality_gate verdicts attached.
+uv run python -m nrp.quality.gate images pred.npy ref.npy --tier draft
+uv run python -m nrp.quality.gate report out/ablation/report.json --tier preview \
+  --psnr-key psnr_db_mean --ssim-key ssim_mean --flip-key flip_mean \
+  --out out/ablation/report_gated.json
 ```
 
 The numpy backend keeps its own `nrp.relight` / `nrp.optimize_lights` CLIs with the

@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 from nrp.gather_light import gather_lights  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import flip, psnr, ssim, tonemap_srgb  # noqa: E402
+from nrp.quality.gate import gate_metrics  # noqa: E402
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.relight import render_quality_tier, write_image_with_metadata  # noqa: E402
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
@@ -45,6 +46,18 @@ def quality_metrics(image: np.ndarray, reference: np.ndarray) -> dict:
         "ssim_vs_final": ssim(image_ldr, reference_ldr, data_range=1.0),
         "flip_vs_final": flip(image_ldr, reference_ldr),
     }
+
+
+def tier_gate(metrics: dict, tier: str) -> dict:
+    """T3 gate for one tier row (this file's metric key names → the gate's)."""
+    return gate_metrics(
+        {
+            "psnr_db": metrics["psnr_vs_final_db"],
+            "ssim": metrics["ssim_vs_final"],
+            "flip": metrics["flip_vs_final"],
+        },
+        tier,
+    )
 
 
 def supervisor_trust_verdict(
@@ -120,10 +133,15 @@ def main() -> None:
             )
         )
         write_image_with_metadata(str(base / f"{quality}.npy"), image, metadata)
+        metrics = quality_metrics(image, final_reference)
         tiers[quality] = {
             "ms": ms,
             "metadata": metadata,
-            **quality_metrics(image, final_reference),
+            **metrics,
+            # T3 gate at this tier's own named thresholds. The preview proxy here
+            # is untrained (this demo exercises plumbing, not training), so its
+            # gate is expected to fail — that is the report's existing conclusion.
+            "quality_gate": tier_gate(metrics, quality),
         }
 
     residual_image, residual_meta = render_quality_tier(
@@ -161,6 +179,9 @@ def main() -> None:
         )
 
     residual_identity = float(np.max(np.abs(residual_image - draft)))
+    # T3 gate on the approval frame: proxy+cached-residual vs cached GATHERLIGHT
+    # at the approved config must clear the final tier (identity ⇒ exact metrics).
+    residual_gate = tier_gate(quality_metrics(residual_image, draft), "final")
     report = {
         "resolution": [args.width, args.height],
         "cache_spp": args.spp,
@@ -168,6 +189,7 @@ def main() -> None:
         "tiers": tiers,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP",
         "residual_identity_max_abs_diff": residual_identity,
+        "residual_identity_quality_gate": residual_gate,
         "residual_decay": decay,
         "supervisor_trust_verdict": supervisor_trust_verdict(residual_identity, decay),
         "outputs": {

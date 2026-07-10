@@ -107,6 +107,10 @@ run = "uv run python examples/quality_tiers.py --out out/quality/report.json"
 description = "E9 production-scale (512x512) quality-tier ladder and trust verdict (needs out/mitsuba-512{,-draft}/path_cache.npz)"
 run = "uv run python examples/quality_tiers_production.py --out out/quality/production_report.json"
 
+[tasks.gate-overhead]
+description = "T3 measure: quality-gate evaluation overhead vs render time at 512x512 (needs the T1 kitchen cache + model)"
+run = "uv run python examples/gate_overhead.py --cache out/kitchen-512/path_cache.npz --model out/kitchen-512-torch/model.pt --out out/quality/gate_overhead.json"
+
 [tasks.production-controls]
 description = "E8 gather-time light linking and attenuation report"
 run = "uv run python examples/production_controls.py --out out/production-controls/report.json"
