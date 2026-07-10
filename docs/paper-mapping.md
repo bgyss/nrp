@@ -264,6 +264,9 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   held-out settings. A soft mask-basis proxy also predicts a held-out mask to
   floating-point accuracy. Fully free-form production controls remain limited by the
   chosen control parameterization and training coverage, not by the cache/proxy API.
+  Production-track rung G2 additionally keeps two pixel-level controls (layer-mask
+  linking, first-hit artist attenuation) live *in the browser* against the real
+  T1-scene proxy, gated per frame against identically-controlled GATHERLIGHT.
 - **Extension E6 exported runtime — implemented:** `nrp.torch_backend.engine_runtime`
   exports sphere and quad `TorchNRP` models to TorchScript artifacts and runs parity-
   tested inference through `torch.jit.load`; `mise run viewer` writes headless slider
@@ -301,14 +304,18 @@ All of the paper's stated limitations apply here too: fixed transport after cach
 (no post-hoc attenuation/exclusivity edits), undersampled-region artifacts,
 parameter-count-driven difficulty for complex light types, and in-memory path data.
 Extension and production-track work chips at these limits with light-aware toy-tracer
-sampling for declared placement regions, one-bounce dynamic-geometry cache splicing
-(`nrp.dynamic_geometry`) with an image-space warm-start repair baseline, a
+sampling for declared placement regions, dynamic-geometry cache splicing
+(`nrp.dynamic_geometry`, primary-visibility plus multi-bounce swept-volume
+invalidation) with frozen-base shard-partitioned residual retraining
+(`nrp.torch_backend.residual_dynamic`, rung G1 — E2's 1 dB recovery target still
+unmet, but with out-of-region fidelity structurally preserved), a
 packed tile-sharded caches, streamed TorchNRP pool training, and tiled proxy inference
 (`PathCache.save_sharded(..., packed=True)`, `nrp.torch_backend.streamed_train`,
 `nrp.torch_backend.relight --tile-pixels`). T2 measures this path on the 512² Country
 Kitchen scene at 0.80 GiB training peak RSS, versus 8.45 GiB monolithic. The E3
-open-top-box occluder remains a toy lampshade-style fixture, and multi-bounce dynamic
-invalidation is not implemented. This implementation adds its own: no fused streamed
+open-top-box occluder remains a toy lampshade-style fixture, and dynamic geometry
+remains toy-scale (the Mitsuba exporter has no scene-edit retrace path). This
+implementation adds its own: no fused streamed
 gather kernel, plus Monte Carlo noise floors at low spp that dominate SMAPE on
 near-zero pixels.
 
