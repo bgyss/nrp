@@ -197,6 +197,7 @@ def export_g1_frame(
         "residual_dims": res_dims,
         "pixels": pixels,
         "mask": mask_flat,
+        "composite": torch_composite.astype(np.float32),
         "self_check_max_abs_diff": self_check,
     }
 
@@ -232,6 +233,8 @@ def export_g1(args: argparse.Namespace) -> dict:
         blobs["pixels"].tofile(out_dir / f"pixels_{frame:04d}.bin")
         blobs["mask"].tofile(out_dir / f"region_mask_{frame:04d}.bin")
         target.tofile(out_dir / f"reference_{frame:04d}.bin")
+        # The torch composite, the parity target the WebGPU panel must reproduce.
+        blobs["composite"].tofile(out_dir / f"composite_{frame:04d}.bin")
         frames_meta.append(
             {
                 "frame": frame,

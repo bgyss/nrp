@@ -42,17 +42,21 @@ export function lightAt(keyframes, t) {
 
 const BLIT_WGSL = `
 @group(0) @binding(0) var<storage, read> img: array<f32>;
-@group(0) @binding(1) var<uniform> dims: vec4<u32>;
+// x, y: image size; z: display exposure (a view-only gain before the tonemap,
+// used by the toy-scale G1 panel whose radiances are tiny; kitchen uses 1.0).
+@group(0) @binding(1) var<uniform> dims: vec4<f32>;
 @vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
   var p = array<vec2<f32>, 3>(vec2(-1.0, -3.0), vec2(-1.0, 1.0), vec2(3.0, 1.0));
   return vec4<f32>(p[vi], 0.0, 1.0);
 }
-fn tone(x: f32) -> f32 { let c = max(x, 0.0); return pow(c / (1.0 + c), 1.0 / 2.2); }
+fn tone(x: f32, e: f32) -> f32 { let c = max(x * e, 0.0); return pow(c / (1.0 + c), 1.0 / 2.2); }
 @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-  let ix = min(u32(pos.x), dims.x - 1u);
-  let iy = min(u32(pos.y), dims.y - 1u);
-  let i = (iy * dims.x + ix) * 3u;
-  return vec4<f32>(tone(img[i]), tone(img[i + 1u]), tone(img[i + 2u]), 1.0);
+  let w = u32(dims.x);
+  let ix = min(u32(pos.x), w - 1u);
+  let iy = min(u32(pos.y), u32(dims.y) - 1u);
+  let i = (iy * w + ix) * 3u;
+  let e = dims.z;
+  return vec4<f32>(tone(img[i], e), tone(img[i + 1u], e), tone(img[i + 2u], e), 1.0);
 }
 `;
 
@@ -81,7 +85,7 @@ function computeBGL(device, { demo = false, masked = false } = {}) {
   return device.createBindGroupLayout({ entries });
 }
 
-function blitSetup(device, canvas, imgBuf, width, height, format) {
+function blitSetup(device, canvas, imgBuf, width, height, format, exposure = 1.0) {
   const ctx = canvas.getContext("webgpu");
   ctx.configure({ device, format, alphaMode: "opaque" });
   const module = device.createShaderModule({ code: BLIT_WGSL });
@@ -97,7 +101,7 @@ function blitSetup(device, canvas, imgBuf, width, height, format) {
     fragment: { module, entryPoint: "fs", targets: [{ format }] },
   });
   const dims = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(dims, 0, Uint32Array.from([width, height, 0, 0]));
+  device.queue.writeBuffer(dims, 0, Float32Array.from([width, height, exposure, 0]));
   const bindGroup = device.createBindGroup({
     layout: bgl,
     entries: [
@@ -200,18 +204,20 @@ async function init() {
       new Float32Array(u, 16, 4).set([...light.center, light.radius]);
       device.queue.writeBuffer(gParams, 0, u);
     }
-    const gOut = device.createBuffer({ size: gn * 3 * 4, usage: GPUBufferUsage.STORAGE });
+    const gOut = device.createBuffer({ size: gn * 3 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const gRead = device.createBuffer({ size: gn * 3 * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const gRef = device.createBuffer({ size: gn * 3 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     const baseMlp = mkBuf(device, Float32Array.from(repackMlp(Array.from(await fetchF32(`${EXPORT_G1}/base_mlp.bin`)), m.base.mlp_dims)), GPUBufferUsage.STORAGE);
     const dummyTables = mkBuf(device, new Float32Array([0]), GPUBufferUsage.STORAGE);
     const frames = [];
     for (let f = 0; f < m.frames; f++) {
       const s = String(f).padStart(4, "0");
-      const [px, resMlp, mask, ref] = await Promise.all([
+      const [px, resMlp, mask, ref, composite] = await Promise.all([
         fetchF32(`${EXPORT_G1}/pixels_${s}.bin`),
         fetchF32(`${EXPORT_G1}/residual_mlp_${s}.bin`),
         fetchF32(`${EXPORT_G1}/region_mask_${s}.bin`),
         fetchF32(`${EXPORT_G1}/reference_${s}.bin`),
+        fetchF32(`${EXPORT_G1}/composite_${s}.bin`),
       ]);
       const pxBuf = mkBuf(device, px, GPUBufferUsage.STORAGE);
       frames.push({
@@ -237,12 +243,13 @@ async function init() {
           ],
         }),
         ref,
+        composite,
       });
     }
     g1 = {
-      manifest: m, gn, gw, frames, basePipe, resPipe, gOut, gRef, frame: 0,
-      blit: blitSetup(device, document.getElementById("g1canvas"), gOut, gw, gh, format),
-      refBlit: blitSetup(device, document.getElementById("g1ref"), gRef, gw, gh, format),
+      manifest: m, gn, gw, frames, basePipe, resPipe, gOut, gRead, gRef, frame: 0,
+      blit: blitSetup(device, document.getElementById("g1canvas"), gOut, gw, gh, format, 6.0),
+      refBlit: blitSetup(device, document.getElementById("g1ref"), gRef, gw, gh, format, 6.0),
     };
     device.queue.writeBuffer(gRef, 0, frames[0].ref);
     document.getElementById("g1panel").style.display = "block";
@@ -386,6 +393,23 @@ async function init() {
     setTime(t) { state.t = t; document.getElementById("time").value = String(t); document.getElementById("tlabel").textContent = t.toFixed(2); },
     setControls(c) { state.controls = { ...state.controls, ...c }; },
     setG1Frame(i) { if (g1) { g1.frame = i; device.queue.writeBuffer(g1.gRef, 0, g1.frames[i].ref); } },
+    async g1Parity(i) {
+      // Numerical parity of the panel's GPU composite vs the exporter's torch
+      // composite for frame i (the toy-dims analogue of the T4 parity check).
+      if (!g1) return null;
+      this.setG1Frame(i);
+      await renderFrame();
+      const encoder = device.createCommandEncoder();
+      encoder.copyBufferToBuffer(g1.gOut, 0, g1.gRead, 0, g1.gn * 3 * 4);
+      device.queue.submit([encoder.finish()]);
+      await g1.gRead.mapAsync(GPUMapMode.READ);
+      const got = new Float32Array(g1.gRead.getMappedRange().slice(0));
+      g1.gRead.unmap();
+      const want = g1.frames[i].composite;
+      let maxAbs = 0;
+      for (let k = 0; k < got.length; k++) maxAbs = Math.max(maxAbs, Math.abs(got[k] - want[k]));
+      return maxAbs;
+    },
     hasG1: !!g1,
     lightAt(t) { const l = lightAt(trace.keyframes, t / trace.duration_s); return l; },
     renderFrame,

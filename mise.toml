@@ -143,8 +143,8 @@ description = "E4 textured-quad inverse recovery and texture-resolution report"
 run = "uv run python examples/textured_quad_fit.py --out out/textured-quad-fit/report.json"
 
 [tasks.g2-export]
-description = "G2: export the kitchen demo blobs (controls included) and the G1 moving-object panel blobs"
-run = "uv run python examples/export_webgpu_demo.py && uv run python examples/export_webgpu_demo.py --g1"
+description = "G2: export the kitchen demo blobs (controls included, G2's longer-trained proxy) and the G1 moving-object panel blobs"
+run = "uv run python examples/export_webgpu_demo.py --model out/kitchen-512-torch-g2/model.pt && uv run python examples/export_webgpu_demo.py --g1"
 
 [tasks.g2-serve]
 description = "G2: serve the interactive browser demo (open http://localhost:8791/webgpu/demo/index.html)"

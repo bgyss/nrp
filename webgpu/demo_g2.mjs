@@ -74,6 +74,19 @@ async function main() {
     return { times };
   }, { trace, fps: 60 });
 
+  // Phase 1b: G1-panel parity — the GPU composite must match the exporter's torch
+  // composite per frame (toy-dims analogue of the T4 parity check).
+  let g1Parity = null;
+  if (meta.hasG1) {
+    const g1Manifest = JSON.parse(
+      readFileSync(path.join(repoRoot, "out", "g2-demo", "export-g1", "manifest.json"), "utf8"),
+    );
+    g1Parity = [];
+    for (let f = 0; f < g1Manifest.frames; f++) {
+      g1Parity.push(await page.evaluate(async (f) => window.__demo.g1Parity(f), f));
+    }
+  }
+
   // Phase 2: gate samples — render each sampled state and read the raw buffer back.
   const states = [];
   for (let i = 0; i < trace.gate_samples.length; i++) {
@@ -120,6 +133,7 @@ async function main() {
     adapter: meta.adapter,
     resolution: meta.resolution,
     g1_panel_included: meta.hasG1,
+    g1_panel_parity_max_abs_diff: g1Parity === null ? null : Math.max(...g1Parity),
     trace: "webgpu/demo/trace.json",
     timed_frames: times.length,
     frame_time_ms: {
@@ -144,10 +158,16 @@ async function main() {
   writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 2) + "\n");
   const { frame_times_ms, histogram, ...summary } = report;
   console.log(JSON.stringify(summary, null, 2));
+  let failed = false;
+  if (g1Parity !== null && Math.max(...g1Parity) > 2e-4) {
+    console.error(`FAIL: G1 panel parity ${Math.max(...g1Parity)} > 2e-4`);
+    failed = true;
+  }
   if (!report.meets_p95_33ms) {
     console.error(`FAIL: p95 ${q(0.95).toFixed(1)} ms > ${P95_LIMIT_MS} ms`);
-    process.exit(1);
+    failed = true;
   }
+  if (failed) process.exit(1);
 }
 
 main().catch((err) => {

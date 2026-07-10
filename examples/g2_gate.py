@@ -2,7 +2,10 @@
 
 For every gate-sample frame the trace runner (webgpu/demo_g2.mjs) captured — the raw
 linear-HDR buffer the demo's compute shader wrote, controls included — this script
-renders the matching GATHERLIGHT reference from the T1 kitchen cache, applies the
+renders the matching GATHERLIGHT reference from the T1 kitchen cache, denoises it
+(OIDN by default — the reference class the proxy was *supervised* on, §4.4; the raw
+64-spp gather's MC noise bounds SSIM at ~0.2-0.35 regardless of proxy quality, and
+the raw-reference metrics are recorded per frame for that comparison), applies the
 *identical* control modulations (per-pixel layer-mask linking, first-hit
 linear-distance attenuation, emission tint), and runs the T3 gate at preview tier.
 Both sides apply the same pixel-level control algebra, so the gate measures proxy
@@ -25,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.quality.gate import evaluate_gate  # noqa: E402
+from nrp.torch_backend.denoise import denoise_image, oidn_available  # noqa: E402
 from nrp.torch_backend.gather import TorchPathCache  # noqa: E402
 
 TIER = "preview"
@@ -68,6 +72,14 @@ def main() -> int:
     parser.add_argument(
         "--device", default="cpu", help="torch device for the batched gather (cpu/mps)"
     )
+    parser.add_argument(
+        "--denoise",
+        default="oidn",
+        choices=["oidn", "bilateral", "none"],
+        help="denoiser for the gate reference; the T1 proxy was supervised on "
+        "oidn-denoised gathers, so oidn is the apples-to-apples reference "
+        "(needs the nix devshell for libtbb — run under `nix develop --command`)",
+    )
     args = parser.parse_args()
 
     frames_dir = Path(args.frames_dir)
@@ -77,6 +89,18 @@ def main() -> int:
     export_dir = Path(args.export_dir)
     link_mask = np.fromfile(export_dir / "link_mask.bin", dtype=np.float32).reshape(height, width)
     positions = np.fromfile(export_dir / "positions.bin", dtype=np.float32).reshape(-1, 3)
+    # The denoiser's guides live in the exported pixel blob: per pixel xy(2) +
+    # albedo(3) + depth(1) + normal(3).
+    pixel_blob = np.fromfile(export_dir / "pixels.bin", dtype=np.float32).reshape(-1, 9)
+    albedo = pixel_blob[:, 2:5].astype(np.float64).reshape(height, width, 3)
+    depth = pixel_blob[:, 5].astype(np.float64).reshape(height, width)
+    normal = pixel_blob[:, 6:9].astype(np.float64).reshape(height, width, 3)
+    if args.denoise == "oidn" and not oidn_available():
+        raise SystemExit(
+            "oidn unavailable — run under `nix develop --command` (libtbb), or pass "
+            "--denoise bilateral/none (the gate reference then differs from the "
+            "proxy's supervision target)"
+        )
 
     t0 = time.perf_counter()
     cache = PathCache.load(args.cache)
@@ -92,10 +116,16 @@ def main() -> int:
             .astype(np.float64)
         )
         t0 = time.perf_counter()
-        reference = torch_cache.gather_light(light).cpu().numpy().astype(np.float64)
+        raw = torch_cache.gather_light(light).cpu().numpy().astype(np.float64)
         gather_s = time.perf_counter() - t0
+        if args.denoise == "none":
+            reference = raw
+        else:
+            reference = denoise_image(raw, albedo, normal, depth, method=args.denoise)
         reference = apply_controls(reference, state, link_mask, positions, light.center)
+        raw_controlled = apply_controls(raw, state, link_mask, positions, light.center)
         gate = evaluate_gate(pred, reference, TIER)
+        raw_gate = evaluate_gate(pred, raw_controlled, TIER)
         results.append(
             {
                 "index": state["index"],
@@ -108,6 +138,10 @@ def main() -> int:
                 },
                 "gather_seconds": gather_s,
                 "quality_gate": gate,
+                "raw_reference_metrics": {
+                    name: raw_gate["metrics"][name].get("value")
+                    for name in ("psnr_db", "ssim", "flip")
+                },
             }
         )
         print(f"frame {state['index']:2d} t={state['t']:.1f}s: {gate['verdict']}")
@@ -120,6 +154,14 @@ def main() -> int:
             "vs GATHERLIGHT from the T1 cache with identical pixel-level control algebra"
         ),
         "tier": TIER,
+        "reference": (
+            "raw gather" if args.denoise == "none" else f"{args.denoise}-denoised gather"
+        ),
+        "raw_reference_note": (
+            "raw_reference_metrics per frame quote the same pred against the un-denoised "
+            "64-spp gather; its MC noise bounds SSIM well below the preview threshold "
+            "independently of proxy quality"
+        ),
         "cache": args.cache,
         "cache_load_seconds": load_s,
         "frames": len(results),

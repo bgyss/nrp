@@ -1,0 +1,43 @@
+{
+  "_comment": "G2 (docs/production-track.md): longer training run of the T1-scene proxy for the summit demo. Same scene/cache/architecture as examples/kitchen_512_torch.json (T1), 5x the iterations with a cosine schedule and checkpoints - T1's 3000-iter model tops out at SSIM ~0.78 vs OIDN-denoised references, just under the preview gate's 0.80.",
+  "cache": "../out/kitchen-512/path_cache.npz",
+  "out_dir": "../out/kitchen-512-torch-g2",
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.1,
+    "radius_max": 0.6
+  },
+  "sampling": "segments",
+  "gather_backend": "torch",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "method": "oidn"
+  },
+  "iters": 15000,
+  "batch_pixels": 8192,
+  "lr": 0.005,
+  "lr_schedule": "cosine",
+  "lr_min": 0.0002,
+  "checkpoint": {
+    "every": 5000
+  },
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "encoding": {
+      "levels": 10,
+      "features_per_level": 2,
+      "table_size_log2": 16,
+      "base_resolution": 4,
+      "finest_resolution": 512
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}
