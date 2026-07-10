@@ -28,9 +28,22 @@ stays resident), so a 120-frame 512x512 shot never holds the ~2 GiB of frames.
 
 from __future__ import annotations
 
-import numpy as np
+import argparse
+import json
+import time
+from pathlib import Path
 
-from ..metrics import flip, tonemap_srgb
+import numpy as np
+import torch
+
+from ..metrics import flip, psnr, tonemap_srgb
+from ..path_cache import PathCache
+from ..quality.gate import evaluate_gate
+from .animate import frame_times, interpolate_light_spec, lights_at
+from .denoise import denoise_image, oidn_available
+from .gather import TorchPathCache
+from .model import TorchNRP
+from .relight import relight
 
 TIER_ORDER = ("preview", "draft", "final")
 
@@ -98,3 +111,229 @@ def flickering_baseline_frame(
     per-frame *independent* Gaussian noise at a fixed per-frame PSNR."""
     sigma = noise_sigma_for_psnr(reference_hdr, psnr_db)
     return reference_hdr + rng.normal(0.0, sigma, size=reference_hdr.shape)
+
+
+def light_specs_at(spec: dict, t: float) -> list[dict]:
+    """JSON-ready interpolated light specs at time ``t`` (for the report rows;
+    `lights_at` builds the light objects from the same interpolation)."""
+    tracks = spec.get("lights")
+    if tracks is None:
+        tracks = [{"keyframes": spec["keyframes"]}]
+    return [interpolate_light_spec(track["keyframes"], t) for track in tracks]
+
+
+def render_shot(
+    model: TorchNRP,
+    cache: PathCache,
+    spec: dict,
+    out_dir: Path,
+    denoise_method: str = "bilateral",
+    device: str = "cpu",
+    gate_tier: str = "preview",
+    temporal_excess_max: float = 0.02,
+    baseline_psnr_db: float = 30.0,
+    save_frames: bool = False,
+    seed: int = 0,
+) -> dict:
+    """Render the shot through the tier ladder and write ``out_dir/report.json``.
+
+    Per frame: preview (proxy), draft (raw cached GATHERLIGHT via the torch
+    backend), final (denoised draft; ``denoise_method="none"`` keeps the raw
+    gather), each timed; the T3 gate at ``gate_tier`` scores preview against
+    final, with raw-reference metrics recorded alongside. Temporal FLIP deltas
+    are accumulated streamingly for the preview sequence, the final-tier
+    reference sequence, and the flickering baseline.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    times = frame_times(int(spec["frames"]))
+    torch_cache = TorchPathCache(cache, torch.device(device))
+    rng = np.random.default_rng(seed)
+
+    frames_detail: list[dict] = []
+    tier_ms: dict[str, list[float]] = {tier: [] for tier in TIER_ORDER}
+    deltas: dict[str, list[float]] = {"preview": [], "final": [], "flicker_baseline": []}
+    prev: dict[str, np.ndarray | None] = {k: None for k in deltas}
+    baseline_frame_psnrs: list[float] = []
+
+    for idx, t in enumerate(times):
+        t_f = float(t)
+        lights = lights_at(spec, t_f)
+
+        t0 = time.perf_counter()
+        preview = relight(model, cache, lights)
+        preview_ms = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        draft_t = torch_cache.gather_light(lights[0])
+        for light in lights[1:]:
+            draft_t = draft_t + torch_cache.gather_light(light)
+        draft = draft_t.cpu().numpy().astype(np.float64)
+        draft_ms = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        if denoise_method == "none":
+            final = draft
+        else:
+            final = denoise_image(
+                draft, cache.albedo, cache.normal, cache.depth, method=denoise_method
+            )
+        denoise_ms = (time.perf_counter() - t0) * 1000.0
+
+        gate = evaluate_gate(preview, final, gate_tier)
+        raw_gate = evaluate_gate(preview, draft, gate_tier)
+
+        baseline = flickering_baseline_frame(final, rng, baseline_psnr_db)
+        baseline_frame_psnrs.append(psnr(baseline, final))
+
+        for name, frame in (
+            ("preview", preview),
+            ("final", final),
+            ("flicker_baseline", baseline),
+        ):
+            if prev[name] is not None:
+                deltas[name].append(temporal_flip_delta(prev[name], frame))
+            prev[name] = frame
+
+        tier_ms["preview"].append(preview_ms)
+        tier_ms["draft"].append(draft_ms)
+        tier_ms["final"].append(draft_ms + denoise_ms)  # final renders the gather too
+
+        if save_frames:
+            np.save(out_dir / f"preview_{idx:04d}.npy", preview)
+            np.save(out_dir / f"final_{idx:04d}.npy", final)
+
+        frames_detail.append(
+            {
+                "index": idx,
+                "t": t_f,
+                "lights": light_specs_at(spec, t_f),
+                "tier_ms": {
+                    "preview": preview_ms,
+                    "draft": draft_ms,
+                    "final": draft_ms + denoise_ms,
+                },
+                "quality_gate": gate,
+                "raw_reference_metrics": {
+                    name: raw_gate["metrics"][name].get("value")
+                    for name in ("psnr_db", "ssim", "flip")
+                },
+            }
+        )
+
+    proxy_temporal = temporal_check(deltas["preview"], deltas["final"], temporal_excess_max)
+    baseline_temporal = temporal_check(
+        deltas["flicker_baseline"], deltas["final"], temporal_excess_max
+    )
+    gate_pass_count = sum(row["quality_gate"]["passed"] for row in frames_detail)
+    report = {
+        "rung": "F1",
+        "scope": (
+            "keyframed-light shot through the E9 tier ladder with per-frame T3 "
+            "trust verdicts and a frame-to-frame FLIP temporal-stability check"
+        ),
+        "frames": len(times),
+        "resolution": [cache.width, cache.height],
+        "gate_tier": gate_tier,
+        "denoise": denoise_method,
+        "tier_definitions": {
+            "preview": "proxy inference (relight)",
+            "draft": "raw cached GATHERLIGHT (torch backend)",
+            "final": (
+                "raw cached GATHERLIGHT"
+                if denoise_method == "none"
+                else f"{denoise_method}-denoised cached GATHERLIGHT "
+                "(single-cache scene; supervision-class reference, Sec. 4.4)"
+            ),
+        },
+        "per_frame_gate_pass_count": int(gate_pass_count),
+        "all_frames_pass_gate": bool(gate_pass_count == len(times)),
+        "per_tier_render_ms": {tier: delta_stats(tier_ms[tier]) for tier in TIER_ORDER},
+        "temporal": {
+            "metric": "frame-to-frame FLIP on Reinhard-tonemapped sRGB frames",
+            "per_pair_deltas": deltas,
+            "proxy_check": proxy_temporal,
+            "flicker_baseline_check": baseline_temporal,
+            "flicker_baseline_frame_psnr_db": delta_stats(baseline_frame_psnrs),
+            "baseline_construction": (
+                "final-tier reference + per-frame independent Gaussian noise at "
+                f"~{baseline_psnr_db} dB per-frame PSNR (flicker per-frame PSNR cannot see)"
+            ),
+        },
+        "verification": {
+            "proxy_passes_temporal_check": proxy_temporal["passed"],
+            "flicker_baseline_fails_temporal_check": not baseline_temporal["passed"],
+        },
+        "frames_detail": frames_detail,
+    }
+    (out_dir / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+    return report
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--model", required=True, help="trained model .pt")
+    parser.add_argument("--cache", required=True, help="path cache .npz")
+    parser.add_argument("--keyframes", required=True, help="shot keyframe JSON (E1 format)")
+    parser.add_argument("--out-dir", required=True, help="directory for report.json")
+    parser.add_argument(
+        "--denoise",
+        default="oidn",
+        choices=["oidn", "bilateral", "none"],
+        help="final-tier denoiser; the T1 proxy was supervised on oidn-denoised "
+        "gathers (needs the nix devshell for libtbb — `nix develop --command`)",
+    )
+    parser.add_argument("--device", default="cpu", help="torch device for the gather")
+    parser.add_argument("--gate-tier", default="preview", help="T3 tier for the per-frame gate")
+    parser.add_argument(
+        "--temporal-excess-max",
+        type=float,
+        default=0.02,
+        help="max allowed per-pair FLIP delta excess over the reference sequence",
+    )
+    parser.add_argument(
+        "--baseline-psnr-db",
+        type=float,
+        default=30.0,
+        help="per-frame PSNR of the deliberately flickering baseline",
+    )
+    parser.add_argument("--save-frames", action="store_true")
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+
+    if args.denoise == "oidn" and not oidn_available():
+        raise SystemExit(
+            "oidn unavailable — run under `nix develop --command` (libtbb), or pass "
+            "--denoise bilateral/none (the final tier then differs from the proxy's "
+            "supervision target)"
+        )
+
+    model = TorchNRP.load(args.model)
+    cache = PathCache.load(args.cache)
+    with open(args.keyframes) as f:
+        spec = json.load(f)
+    report = render_shot(
+        model,
+        cache,
+        spec,
+        Path(args.out_dir),
+        denoise_method=args.denoise,
+        device=args.device,
+        gate_tier=args.gate_tier,
+        temporal_excess_max=args.temporal_excess_max,
+        baseline_psnr_db=args.baseline_psnr_db,
+        save_frames=args.save_frames,
+        seed=args.seed,
+    )
+    ok = all(report["verification"].values())
+    print(
+        f"{'PASS' if ok else 'FAIL'}: {report['per_frame_gate_pass_count']}/{report['frames']} "
+        f"frames pass {report['gate_tier']} tier; proxy temporal "
+        f"{report['temporal']['proxy_check']['verdict']}; baseline "
+        f"{report['temporal']['flicker_baseline_check']['verdict']} — "
+        f"wrote {Path(args.out_dir) / 'report.json'}"
+    )
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

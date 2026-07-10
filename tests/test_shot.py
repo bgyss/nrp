@@ -1,4 +1,6 @@
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -7,13 +9,17 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from nrp.metrics import psnr  # noqa: E402
+from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.shot import (  # noqa: E402
     delta_stats,
     flickering_baseline_frame,
+    light_specs_at,
     noise_sigma_for_psnr,
+    render_shot,
     temporal_check,
     temporal_flip_delta,
 )
+from nrp.toy_tracer import trace_path_cache  # noqa: E402
 
 
 def smooth_sequence(n_frames=6, size=32, seed=0):
@@ -79,6 +85,83 @@ class TemporalMetricTests(unittest.TestCase):
             temporal_flip_delta(a, b) for a, b in zip(noised, noised[1:], strict=False)
         ]
         self.assertFalse(temporal_check(noised_deltas, reference_deltas, excess_max=0.02)["passed"])
+
+
+def toy_shot_spec(frames=4):
+    return {
+        "frames": frames,
+        "interpolation": "linear",
+        "lights": [
+            {
+                "keyframes": [
+                    {
+                        "time": 0.0,
+                        "light": {
+                            "type": "sphere",
+                            "center": [-0.3, 0.6, 0.0],
+                            "radius": 0.2,
+                            "rgb": [1.2, 1.0, 0.8],
+                        },
+                    },
+                    {
+                        "time": 1.0,
+                        "light": {
+                            "type": "sphere",
+                            "center": [0.3, 0.6, 0.0],
+                            "radius": 0.2,
+                            "rgb": [0.8, 1.0, 1.2],
+                        },
+                    },
+                ]
+            }
+        ],
+    }
+
+
+class RenderShotTests(unittest.TestCase):
+    def test_light_specs_at_interpolates(self):
+        specs = light_specs_at(toy_shot_spec(), 0.5)
+        self.assertEqual(len(specs), 1)
+        np.testing.assert_allclose(specs[0]["center"], [0.0, 0.6, 0.0])
+
+    def test_render_shot_toy_smoke(self):
+        cache = trace_path_cache(12, 12, 4, 2, seed=3)
+        model = TorchNRP(
+            hidden_width=16,
+            hidden_layers=2,
+            encoding={"levels": 2, "features_per_level": 2, "finest_resolution": 12},
+        )
+        spec = toy_shot_spec(frames=4)
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "shot"
+            report = render_shot(
+                model,
+                cache,
+                spec,
+                out_dir,
+                denoise_method="bilateral",
+                baseline_psnr_db=15.0,
+            )
+            on_disk = json.loads((out_dir / "report.json").read_text())
+            self.assertEqual(on_disk["frames"], 4)
+
+        self.assertEqual(report["rung"], "F1")
+        self.assertEqual(len(report["frames_detail"]), 4)
+        for row in report["frames_detail"]:
+            self.assertIn("quality_gate", row)
+            self.assertIn(row["quality_gate"]["verdict"].split()[0], {"pass", "fail"})
+            self.assertIn("raw_reference_metrics", row)
+            for tier in ("preview", "draft", "final"):
+                self.assertGreater(row["tier_ms"][tier], 0.0)
+            self.assertEqual(len(row["lights"]), 1)
+        for tier in ("preview", "draft", "final"):
+            self.assertEqual(report["per_tier_render_ms"][tier]["count"], 4)
+        temporal = report["temporal"]
+        self.assertEqual(temporal["proxy_check"]["candidate"]["count"], 3)
+        # strong per-frame independent noise must flicker even at toy scale
+        self.assertFalse(temporal["flicker_baseline_check"]["passed"])
+        self.assertIn("proxy_passes_temporal_check", report["verification"])
+        self.assertTrue(report["verification"]["flicker_baseline_fails_temporal_check"])
 
 
 if __name__ == "__main__":
