@@ -1,7 +1,10 @@
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
@@ -78,6 +81,39 @@ class MitsubaExporterTests(unittest.TestCase):
                 firsts[px] = self.cache.seg_throughput[i]
         for tp in firsts.values():
             np.testing.assert_allclose(tp, [1.0, 1.0, 1.0])
+
+    def test_cli_optional_report_records_peak_rss_and_hardware(self):
+        from nrp.mitsuba_exporter import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = Path(tmp) / "cache.npz"
+            report_path = Path(tmp) / "report.json"
+            argv = [
+                "nrp.mitsuba_exporter",
+                "--scene",
+                "builtin:cornell-box",
+                "--width",
+                "4",
+                "--height",
+                "4",
+                "--spp",
+                "1",
+                "--bounces",
+                "2",
+                "--mode",
+                "scalar",
+                "--out",
+                str(cache_path),
+                "--report",
+                str(report_path),
+            ]
+            with mock.patch.object(sys, "argv", argv):
+                main()
+            report = json.loads(report_path.read_text())
+        self.assertEqual(report["resolution"], [4, 4])
+        self.assertEqual(report["mode"], "scalar")
+        self.assertGreater(report["peak_rss_bytes"], 0)
+        self.assertIn("machine", report["hardware"])
 
 
 @unittest.skipUnless(_have_jit_variant(), "no working Mitsuba JIT variant")

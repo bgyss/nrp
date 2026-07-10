@@ -702,6 +702,51 @@ caveat is that streaming cost is currently I/O- and Python-loop-bound rather tha
 compute-bound, which is an engineering distance (a batched/vectorized streaming
 gather, analogous to `TorchPathCache`, would close it), not a structural blocker.
 
+### T2 real-scene packed streaming (Country Kitchen, 512×512 / 64 spp)
+
+`mise run t2` is the complete reproducible workflow: it measures full and reduced
+exports, then `mise run t2-streaming` re-proves the E5 machinery on the T1 Country Kitchen cache
+with 64×64 tiles and the paper's packed fp16 geometry + shared-exponent rgb9e5
+throughput. Report: `out/t2-streaming/report.json`. The run used CPU, seed 0, an
+eight-image raw target pool, 300 iterations, and an explicit **8 GiB peak-RSS
+budget**. Each phase runs in a fresh process so its `ru_maxrss` is attributable.
+Measurements are from an Apple M1 Max (10 CPU cores, 64 GiB RAM, macOS 26.6).
+The exporter writes its own configuration/timing/RSS/hardware JSON via `--report`;
+the two source reports are `out/t2-streaming/export_512x512_64spp.json` and
+`out/t2-streaming/export_128x128_64spp.json`.
+
+| check | monolithic | packed streamed |
+|---|---:|---:|
+| on-disk cache | 2.09 GB | 630.20 MB (3.32× smaller) |
+| training peak RSS | **9.07 GB / 8.45 GiB (over budget)** | **0.85 GB / 0.80 GiB** |
+| pool build | 8.37 s | 37.18 s |
+| total train phase | 35.62 s | 100.18 s |
+| held-out PSNR vs packed GATHERLIGHT | 21.873 dB | 21.873 dB |
+| PSNR gap (criterion ≤ 0.1 dB) | — | **0.000 dB, pass** |
+| 512² tiled inference | 235.5 ms | 224.3 ms |
+| inference peak RSS | — | 1.19 GB / 1.11 GiB |
+
+The actual 512²/64-spp wavefront SAMPLEPATHS export took 182.4 s end to end
+(20.4 s trace plus serialization) and peaked at **10.33 GB / 9.62 GiB**, over budget.
+Following T2's required fallback, a 128²/64-spp scalar export establishes a passing
+ceiling at 3.26 GB / 3.04 GiB peak RSS (63.0 s end to end; 52.5 s trace). The
+intermediate 512²/48-spp measurement was not available, so the bracket is reported
+rather than inferred. Packed-shard conversion of the full 512² T1 cache took 115.0 s
+and peaked at 8.33 GB / 7.76 GiB, under the
+8 GiB budget. The largest decoded shard is 79.1 MB. Streamed supervision processed
+segments at **11.24 million segments/s**. Across six fixed fresh lights, packed vs
+float64 GATHERLIGHT fidelity is 59.72 dB mean and **44.90 dB minimum**. This is the
+committed cache-size/quality curve: 2.09 GB float64 is the reference point; the
+630.20 MB packed point retains ≥44.90 dB image fidelity.
+
+The full monolithic comparison was run (rather than silently subsampled) and exceeded
+the budget by 0.45 GiB. The packed streamed training and inference phases remain far
+inside it, so T2's production path succeeds while documenting the monolithic ceiling.
+The cost is a 4.4× slower pool build from scalar shard visits; this is the next
+optimization target. T2 therefore records an export ceiling rather than claiming the
+full T1 export fits; packed streaming keeps the subsequent full-resolution phases
+within budget.
+
 ## Dynamic geometry cache invalidation (extensions E2, one-bounce slice)
 
 `nrp.dynamic_geometry` identifies pixels whose first-hit G-buffer changes after the

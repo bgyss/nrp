@@ -1,0 +1,176 @@
+{
+  "rung": "T2",
+  "scene": "Mitsuba Country Kitchen (T1)",
+  "resolution": [
+    512,
+    512
+  ],
+  "spp": 64,
+  "config": {
+    "seed": 0,
+    "device": "cpu",
+    "light_type": "sphere",
+    "light_bounds": {
+      "radius_min": 0.1,
+      "radius_max": 0.6
+    },
+    "sampling": "bbox",
+    "denoise": {
+      "enabled": false
+    },
+    "pool": {
+      "size": 8,
+      "replace_count": 1,
+      "replace_every": 25
+    },
+    "model": {
+      "hidden_width": 128,
+      "hidden_layers": 4,
+      "encoding": {
+        "levels": 10,
+        "features_per_level": 2,
+        "table_size_log2": 16,
+        "base_resolution": 4,
+        "finest_resolution": 512
+      }
+    },
+    "lr": 0.005,
+    "batch_pixels": 8192,
+    "iters": 300
+  },
+  "memory_budget_bytes": 8589934592,
+  "export_measurements": {
+    "t1_full": {
+      "scene": "examples/scenes/kitchen/scene.xml",
+      "resolution": [
+        512,
+        512
+      ],
+      "spp": 64,
+      "bounces": 4,
+      "seed": 0,
+      "mode": "wavefront",
+      "variant": "metal_ad_rgb",
+      "segments": 52264226,
+      "trace_seconds": 20.4,
+      "wall_seconds": 182.39,
+      "cache_bytes": 2092571573,
+      "peak_rss_bytes": 10329554944,
+      "measurement_method": "/usr/bin/time -l around nrp.mitsuba_exporter; future runs use --report",
+      "command": "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 512 --height 512 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache.npz --report out/t2-streaming/export_512x512_64spp.json",
+      "hardware": {
+        "platform": "darwin",
+        "machine": "arm64",
+        "cpu": "Apple M1 Max",
+        "cpu_count": 10,
+        "memory_bytes": 68719476736
+      },
+      "within_8gb": false
+    },
+    "verified_in_budget_ceiling": {
+      "scene": "examples/scenes/kitchen/scene.xml",
+      "resolution": [
+        128,
+        128
+      ],
+      "spp": 64,
+      "bounces": 4,
+      "seed": 0,
+      "mode": "scalar",
+      "variant": "scalar_rgb",
+      "segments": 3266799,
+      "trace_seconds": 52.5,
+      "wall_seconds": 63.02,
+      "cache_bytes": 137490528,
+      "peak_rss_bytes": 3259236352,
+      "measurement_method": "resource.getrusage(RUSAGE_SELF) around nrp.mitsuba_exporter; future runs use --report",
+      "command": "uv run python -m nrp.mitsuba_exporter --scene examples/scenes/kitchen/scene.xml --width 128 --height 128 --spp 64 --bounces 4 --out out/t2-streaming/export_path_cache_128.npz --report out/t2-streaming/export_128x128_64spp.json",
+      "hardware": {
+        "platform": "darwin",
+        "machine": "arm64",
+        "cpu": "Apple M1 Max",
+        "cpu_count": 10,
+        "memory_bytes": 68719476736
+      },
+      "within_8gb": true
+    },
+    "finding": "512x512/64spp exceeds the budget; 128x128/64spp is the verified passing ceiling. No intermediate configuration is inferred."
+  },
+  "packed_cache_conversion": {
+    "peak_rss_bytes": 8327774208,
+    "within_8gb": true
+  },
+  "cache_size_quality_curve": [
+    {
+      "layout": "float64_npz",
+      "bytes": 2092571573,
+      "reference": true
+    },
+    {
+      "layout": "fp16_rgb9e5_packed_shards",
+      "bytes": 630198054,
+      "gather_psnr_db_min": 44.90374893119341,
+      "gather_psnr_db_mean": 59.71767034363404
+    }
+  ],
+  "packing_quality": {
+    "n_lights": 6,
+    "gather_psnr_db_min": 44.90374893119341,
+    "gather_psnr_db_mean": 59.71767034363404,
+    "seconds": 34.89609329199993,
+    "peak_rss_bytes": 9352970240
+  },
+  "sharding": {
+    "seconds": 115.00305958299987,
+    "peak_rss_bytes": 8327774208,
+    "segments": 52264226,
+    "packed_shard_bytes": 630198054
+  },
+  "monolithic": {
+    "seconds": 35.62219208300007,
+    "peak_rss_bytes": 9070952448,
+    "pool_seconds": 8.366108666999935,
+    "train_seconds": 18.712640542000145,
+    "loss_first": 0.9378214478492737,
+    "loss_last": 1.7033991813659668,
+    "peak_segment_bytes_loaded": null,
+    "segments_per_second": null
+  },
+  "streamed": {
+    "seconds": 100.18231512500006,
+    "peak_rss_bytes": 854851584,
+    "pool_seconds": 37.18302829200002,
+    "train_seconds": 62.09281587500004,
+    "loss_first": 0.937824547290802,
+    "loss_last": 1.7106612920761108,
+    "peak_segment_bytes_loaded": 79077768,
+    "segments_per_second": 11244348.692753015
+  },
+  "evaluation": {
+    "monolithic_psnr_db": 21.87315623847248,
+    "streamed_psnr_db": 21.87315623847248,
+    "psnr_gap_db": 0.0,
+    "inference_ms": {
+      "monolithic": 235.47062500006177,
+      "streamed": 224.2966249998517
+    },
+    "peak_rss_bytes": 1189150720
+  },
+  "passes": {
+    "psnr_parity_within_0p1_db": true,
+    "full_export_within_8gb": false,
+    "reduced_export_within_8gb": true,
+    "packed_cache_conversion_within_8gb": true,
+    "monolithic_within_8gb": false,
+    "streamed_training_within_8gb": true,
+    "inference_within_8gb": true
+  },
+  "hardware": {
+    "platform": "darwin",
+    "platform_release": "25.6.0",
+    "machine": "arm64",
+    "cpu": "Apple M1 Max",
+    "cpu_count": 10,
+    "memory_bytes": 68719476736
+  }
+}
