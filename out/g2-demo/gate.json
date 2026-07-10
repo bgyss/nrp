@@ -1,0 +1,793 @@
+{
+  "rung": "G2",
+  "scope": "per-frame preview-tier gate: browser demo output (controls applied in-shader) vs GATHERLIGHT from the T1 cache with identical pixel-level control algebra",
+  "tier": "preview",
+  "reference": "oidn-denoised gather",
+  "raw_reference_note": "raw_reference_metrics per frame quote the same pred against the un-denoised 64-spp gather; its MC noise bounds SSIM well below the preview threshold independently of proxy quality",
+  "cache": "out/kitchen-512/path_cache.npz",
+  "cache_load_seconds": 12.646814375002577,
+  "frames": 12,
+  "all_passed": true,
+  "results": [
+    {
+      "index": 0,
+      "t": 0,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -0.64,
+          2.19,
+          -0.22
+        ],
+        "radius": 0.3,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.6493272079969756,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 32.06920144004657,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.887846271690894,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.07266868462559468,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.1795533330005128,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 30.74388491306931,
+        "ssim": 0.2966487893693487,
+        "flip": 0.09335595132226737
+      }
+    },
+    {
+      "index": 1,
+      "t": 0.6,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -0.905909090909091,
+          2.0854545454545454,
+          -0.2177272727272727
+        ],
+        "radius": 0.29545454545454547,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.5917419159959536,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 35.20576557253137,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.891005902358822,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.07066966069038973,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.15311154200026067,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 33.386962348516136,
+        "ssim": 0.3049497102910812,
+        "flip": 0.09118249164723596
+      }
+    },
+    {
+      "index": 2,
+      "t": 1.4,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -1.2604545454545455,
+          1.9460606060606058,
+          -0.21469696969696972
+        ],
+        "radius": 0.2893939393939394,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.5219730419994448,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 35.546431747797605,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.8862254576411942,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.07307753259223099,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.14930966600513784,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 33.21840962930339,
+        "ssim": 0.3171220418873264,
+        "flip": 0.09231431773206526
+      }
+    },
+    {
+      "index": 3,
+      "t": 2.2,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": true
+      },
+      "light": {
+        "center": [
+          -1.6150000000000002,
+          1.8066666666666666,
+          -0.21166666666666664
+        ],
+        "radius": 0.2833333333333333,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.4788247920005233,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 34.2802487343649,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.9064801072638272,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.06132882004338867,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.14802891699946485,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 32.940185980031245,
+        "ssim": 0.3925240620801032,
+        "flip": 0.08074043559355021
+      }
+    },
+    {
+      "index": 4,
+      "t": 3,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": true
+      },
+      "light": {
+        "center": [
+          -1.771818181818182,
+          1.875909090909091,
+          -0.2672727272727273
+        ],
+        "radius": 0.2922727272727273,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.476124417000392,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 35.32362051688835,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.9034634074217965,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.06185078346796424,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.14928791699639987,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 34.57876631063184,
+        "ssim": 0.3934227061668019,
+        "flip": 0.08111906797092462
+      }
+    },
+    {
+      "index": 5,
+      "t": 3.8,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -1.6869696969696972,
+          2.200151515151515,
+          -0.39454545454545453
+        ],
+        "radius": 0.3195454545454546,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.4879027920032968,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 33.74332436403516,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.8826310093473229,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.07044012362068888,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.147342625001329,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 32.514744441478,
+        "ssim": 0.32500580946193797,
+        "flip": 0.09085267311320847
+      }
+    },
+    {
+      "index": 6,
+      "t": 4.8,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0.08,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -1.580909090909091,
+          2.605454545454545,
+          -0.5536363636363636
+        ],
+        "radius": 0.35363636363636364,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.47878191599738784,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 34.80047499472268,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.8916597637771376,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.06566452316466122,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.1486295830036397,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 33.448545391011564,
+        "ssim": 0.36959145847355446,
+        "flip": 0.0832130670522106
+      }
+    },
+    {
+      "index": 7,
+      "t": 5.6,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0.08,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -1.425294117647059,
+          2.7282352941176473,
+          -0.5817647058823531
+        ],
+        "radius": 0.36176470588235293,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.47425087499868823,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 35.402097571555636,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.8905248081322933,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.06638683256287328,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.14991779200499877,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 33.95291869652617,
+        "ssim": 0.3641371324173062,
+        "flip": 0.08421593652383919
+      }
+    },
+    {
+      "index": 8,
+      "t": 6.2,
+      "controls": {
+        "rgb": [
+          1,
+          0.85,
+          0.7
+        ],
+        "attenuation_k": 0.08,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -1.2289705882352941,
+          2.5936764705882354,
+          -0.4913235294117647
+        ],
+        "radius": 0.3463235294117647,
+        "rgb": [
+          1.0,
+          0.85,
+          0.7
+        ]
+      },
+      "gather_seconds": 0.47550575000059325,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 37.34262352946326,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.9008983227866283,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.06355395251734526,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.14893716600636253,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 35.07677619465194,
+        "ssim": 0.39673902327936844,
+        "flip": 0.08012389016641712
+      }
+    },
+    {
+      "index": 9,
+      "t": 6.8,
+      "controls": {
+        "rgb": [
+          1,
+          0.85,
+          0.7
+        ],
+        "attenuation_k": 0.08,
+        "link": true
+      },
+      "light": {
+        "center": [
+          -1.0326470588235295,
+          2.4591176470588234,
+          -0.4008823529411765
+        ],
+        "radius": 0.33088235294117646,
+        "rgb": [
+          1.0,
+          0.85,
+          0.7
+        ]
+      },
+      "gather_seconds": 0.47867145799682476,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 36.63545215473476,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.9110991770794318,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.061308240296161415,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.14752045900240773,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 34.56689269962893,
+        "ssim": 0.43819041638811235,
+        "flip": 0.07628876266489769
+      }
+    },
+    {
+      "index": 10,
+      "t": 7.4,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -0.8363235294117646,
+          2.3245588235294115,
+          -0.3104411764705882
+        ],
+        "radius": 0.3154411764705882,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.4715787090026424,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 33.25302803688924,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.8880809364208241,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.07476116880925725,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.15018083399627358,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 31.650577362057422,
+        "ssim": 0.3013735758270419,
+        "flip": 0.09462951990310423
+      }
+    },
+    {
+      "index": 11,
+      "t": 8,
+      "controls": {
+        "rgb": [
+          1,
+          1,
+          1
+        ],
+        "attenuation_k": 0,
+        "link": false
+      },
+      "light": {
+        "center": [
+          -0.64,
+          2.19,
+          -0.22
+        ],
+        "radius": 0.3,
+        "rgb": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "gather_seconds": 0.4749822910016519,
+      "quality_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 32.06920144004657,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.887846271690894,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "flip": {
+            "value": 0.07266868462559468,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": true,
+        "verdict": "pass at preview tier",
+        "evaluation_seconds": 0.149511874995369,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      },
+      "raw_reference_metrics": {
+        "psnr_db": 30.74388491306931,
+        "ssim": 0.2966487893693487,
+        "flip": 0.09335595132226737
+      }
+    }
+  ]
+}

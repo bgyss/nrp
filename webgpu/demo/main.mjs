@@ -392,7 +392,13 @@ async function init() {
     },
     setTime(t) { state.t = t; document.getElementById("time").value = String(t); document.getElementById("tlabel").textContent = t.toFixed(2); },
     setControls(c) { state.controls = { ...state.controls, ...c }; },
-    setG1Frame(i) { if (g1) { g1.frame = i; device.queue.writeBuffer(g1.gRef, 0, g1.frames[i].ref); } },
+    setG1Frame(i) {
+      if (!g1) return;
+      g1.frame = i;
+      device.queue.writeBuffer(g1.gRef, 0, g1.frames[i].ref);
+      document.getElementById("g1frame").value = String(i);
+      document.getElementById("g1label").textContent = String(i);
+    },
     async g1Parity(i) {
       // Numerical parity of the panel's GPU composite vs the exporter's torch
       // composite for frame i (the toy-dims analogue of the T4 parity check).
