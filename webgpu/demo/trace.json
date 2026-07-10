@@ -1,0 +1,31 @@
+{
+  "description": "G2 committed interaction trace: an 8 s light orbit between two well-fitting T1 validation lights, with the two E8 controls toggled mid-trace. gate_samples are the per-frame preview-tier gate points (examples/g2_gate.py).",
+  "duration_s": 8,
+  "keyframes": [
+    { "time": 0.0, "light": { "type": "sphere", "center": [1.1013827278970769, 1.7832808639587876, 3.6100218748619595], "radius": 0.38, "rgb": [1.0, 1.0, 1.0] } },
+    { "time": 0.5, "light": { "type": "sphere", "center": [1.4263372190598425, 0.9426201125859632, -2.083608189598129], "radius": 0.45, "rgb": [1.0, 1.0, 1.0] } },
+    { "time": 1.0, "light": { "type": "sphere", "center": [1.1013827278970769, 1.7832808639587876, 3.6100218748619595], "radius": 0.38, "rgb": [1.0, 1.0, 1.0] } }
+  ],
+  "events": [
+    { "t": 0.0, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 2.0, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": true } },
+    { "t": 3.5, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 4.5, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.08, "link": false } },
+    { "t": 6.0, "controls": { "rgb": [1.0, 0.85, 0.7], "attenuation_k": 0.08, "link": false } },
+    { "t": 7.0, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } }
+  ],
+  "gate_samples": [
+    { "t": 0.0, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 0.6, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 1.4, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 2.2, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": true } },
+    { "t": 3.0, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": true } },
+    { "t": 3.8, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 4.8, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.08, "link": false } },
+    { "t": 5.6, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.08, "link": false } },
+    { "t": 6.2, "controls": { "rgb": [1.0, 0.85, 0.7], "attenuation_k": 0.08, "link": false } },
+    { "t": 6.8, "controls": { "rgb": [1.0, 0.85, 0.7], "attenuation_k": 0.08, "link": true } },
+    { "t": 7.4, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } },
+    { "t": 8.0, "controls": { "rgb": [1.0, 1.0, 1.0], "attenuation_k": 0.0, "link": false } }
+  ]
+}
