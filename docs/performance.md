@@ -1339,3 +1339,39 @@ fixtures' `hand_authored: false`. Test coverage:
 provenance flags, end-to-end CLI report).
 
 This closes E7's last open criterion at toy scale.
+
+## Perceptual quality gates (production track, rung T3)
+
+`nrp.quality.gate` promotes SSIM/FLIP/PSNR from ablation tooling to named pass/fail
+gates (preview / draft / final thresholds, repo conventions embedded in every gate
+result) with a CLI that gates image pairs or re-emits existing report JSONs with
+`quality_gate` verdicts attached. Two existing reports were re-emitted with
+conclusions unchanged: the E9 toy quality ladder (`mise run quality-tiers`, gate now
+built in — untrained preview and 8 spp draft fail their tiers honestly; the final
+tier and the residual-identity approval frame pass at final tier) and the E10
+ablation report (`out/ablation/report_gated.json` — every smoke-scale cell fails the
+preview SSIM bar, consistent with that report's stated scale limits). A deliberately
+degraded render failing the gate is unit-tested (`tests/test_quality_gate.py`,
+19 tests).
+
+Gate evaluation overhead at 512×512, measured on the T1 kitchen cache/model
+(`mise run gate-overhead`, `out/quality/gate_overhead.json`, Apple M1 Max CPU,
+min over 3 repeats):
+
+| quantity | seconds |
+|---|---:|
+| preview render (proxy inference) | 0.120 |
+| draft render (cached GATHERLIGHT, 52.3 M segments) | 1.711 |
+| final-tier reference render (same-cache gather) | 1.672 |
+| gate evaluation (tonemap + PSNR + SSIM + FLIP) | 0.146 |
+
+A gate consumes a rendered pair (gated image + reference), so overhead is
+gate / (gated render + reference render): **4.3%** for the E9 approval flow (draft
+gated against a final reference) — under the 5% target, and conservative because
+the same-cache reference understates true final-tier cost. Stated plainly rather
+than rounded away: against a *single* draft render the ratio is 8.5%, and the
+preview proxy render (0.120 s) is faster than the gate itself, so per-frame gating
+of interactive previews needs cheaper metrics (a G2/T4 concern). Getting here
+required a real optimization: `nrp.metrics` separable convolutions now use
+`sliding_window_view` + matvec instead of per-tap Python sums (identical results to
+≤1e-15; full gate evaluation 0.22 s → 0.15 s, SSIM/FLIP tests unchanged).

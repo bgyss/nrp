@@ -68,9 +68,9 @@ def _filter_sep(img: np.ndarray, k: np.ndarray) -> np.ndarray:
     """Separable 2D correlation with edge-replicate padding, (H,W) image."""
     r = len(k) // 2
     p = np.pad(img, ((r, r), (0, 0)), mode="edge")
-    img = sum(k[i] * p[i : i + img.shape[0]] for i in range(len(k)))
+    img = np.lib.stride_tricks.sliding_window_view(p, len(k), axis=0) @ k
     p = np.pad(img, ((0, 0), (r, r)), mode="edge")
-    return sum(k[i] * p[:, i : i + img.shape[1]] for i in range(len(k)))
+    return np.lib.stride_tricks.sliding_window_view(p, len(k), axis=1) @ k
 
 
 def ssim(
@@ -214,9 +214,7 @@ def _correlate_axis(img: np.ndarray, k: np.ndarray, axis: int) -> np.ndarray:
     pad = [(0, 0), (0, 0)]
     pad[axis] = (r, r)
     p = np.pad(img, pad, mode="edge")
-    if axis == 0:
-        return sum(k[i] * p[i : i + img.shape[0], :] for i in range(len(k)))
-    return sum(k[i] * p[:, i : i + img.shape[1]] for i in range(len(k)))
+    return np.lib.stride_tricks.sliding_window_view(p, len(k), axis=axis) @ k
 
 
 def flip_error_map(pred: np.ndarray, ref: np.ndarray, ppd: float = 67.02) -> np.ndarray:
