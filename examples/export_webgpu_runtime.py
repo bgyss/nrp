@@ -112,11 +112,13 @@ def numpy_forward(
     level_meta: list[dict] | None,
     features_per_level: int,
     table_size: int,
+    output_activation: str = "softplus",
 ) -> np.ndarray:
     """Reimplement the exported forward pass from the flat blobs alone (float32).
 
-    This is the format's semantic contract: the WGSL shader in bench_t4.mjs mirrors
-    this function, and the exporter self-checks it against the torch module.
+    This is the format's semantic contract: the WGSL shader (webgpu/shader_gen.mjs)
+    mirrors this function, and the exporters self-check it against the torch module.
+    ``output_activation`` is "softplus" (TorchNRP) or "linear" (G1's ResidualNRP).
     """
     if tables_flat is not None:
         feats = []
@@ -166,6 +168,8 @@ def numpy_forward(
         h = h @ w.T + b
         if layer < n_layers - 1:
             h = np.maximum(h, 0.0)
+    if output_activation == "linear":
+        return h
     return np.log1p(np.exp(np.minimum(h, 30.0))) + np.maximum(h - 30.0, 0.0)  # stable softplus
 
 
