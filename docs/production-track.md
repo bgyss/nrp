@@ -25,8 +25,8 @@ Design rationale and decision record: `docs/plans/2026-07-09-production-track-de
 | T4 | Runtime baseline lock | **done** | `out/t4-runtime/baseline.json` + `out/t4-runtime/report.json` (T1-scene proxy, hashgrid in WGSL, real Chrome: parity 1.2e-6; 512² p95 23.3 ms = 43 fps p95, 30 fps floor holds; `mise run t4-check` regression gate); `docs/performance.md` |
 | G1 | Dynamic geometry, second attempt | **done (honest negative, changed failure mode)** | `out/g1-residual/report.json` (regime (d) 37.15 dB, gap 7.7 dB vs the 1 dB target — but out-of-mask fidelity 54.9 dB vs E2's 22.95 dB forgetting, per-frame floor 25.3 dB vs 10.6 dB, median gap −1.17 dB, 0.60× wall-clock); `docs/performance.md` |
 | G2 | Summit: live relight + controls in the browser | **done** | `out/g2-demo/report.json` (481 frames under interaction: p95 30.7 ms ≤ 33 ms at 512²; G1-panel parity 4.8e-7); `out/g2-demo/gate.json` (12/12 trace frames pass preview tier vs OIDN-denoised controlled GATHERLIGHT, SSIM ≥ 0.883); `out/g2-demo/recording.webm` + `webgpu/demo/trace.json`; moving object included at G1's toy scale; `docs/performance.md` |
-| F1 | Shot harness with temporal stability | not started | — |
-| F2 | Summit: final-tier shot | not started | — |
+| F1 | Shot harness with temporal stability | **done** | `out/f1-shot/report.json` (120/120 frames pass preview tier, 31.6–37.8 dB / SSIM ≥ 0.881; proxy temporal FLIP-delta check passes at worst excess 0.0019 ≤ 0.02 while a 30 dB/frame flickering baseline fails at 0.165); `nrp/torch_backend/shot.py` + `tests/test_shot.py`; `docs/performance.md` |
+| F2 | Summit: final-tier shot | **done** | `out/f2-shot/report.json` (120/120 frames pass final tier via fp16-stored residual-identity reconstruction, ≥ 105.9 dB; 118× wall-clock amortization vs per-frame re-export; storage honest negative: residuals 1.17× raw frames); `out/f2-shot/shot.mp4` committed; `docs/performance.md` |
 | V1 | Production light rig | not started | — |
 | V2 | Summit: art-direction loop | not started | — |
 

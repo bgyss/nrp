@@ -1,0 +1,47 @@
+{
+  "_comment": "F1 shot: 120 frames along the G2-verified interior orbit on the T1 kitchen (webgpu/demo/trace.json keyframes; dense 17-point sweep verified >= 32 dB / SSIM >= 0.88 vs OIDN-denoised GATHERLIGHT). The path is authored inside the proxy's verified pass region — the same honesty caveat as G2.",
+  "frames": 120,
+  "interpolation": "linear",
+  "lights": [
+    {
+      "keyframes": [
+        {
+          "time": 0.0,
+          "light": {
+            "type": "sphere",
+            "center": [-0.64, 2.19, -0.22],
+            "radius": 0.3,
+            "rgb": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "time": 0.33,
+          "light": {
+            "type": "sphere",
+            "center": [-1.81, 1.73, -0.21],
+            "radius": 0.28,
+            "rgb": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "time": 0.66,
+          "light": {
+            "type": "sphere",
+            "center": [-1.53, 2.8, -0.63],
+            "radius": 0.37,
+            "rgb": [1.0, 1.0, 1.0]
+          }
+        },
+        {
+          "time": 1.0,
+          "light": {
+            "type": "sphere",
+            "center": [-0.64, 2.19, -0.22],
+            "radius": 0.3,
+            "rgb": [1.0, 1.0, 1.0]
+          }
+        }
+      ]
+    }
+  ]
+}
