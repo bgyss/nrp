@@ -49,6 +49,7 @@ from nrp.gather_light import gather_lights  # noqa: E402
 from nrp.lights import QuadLight, SphereLight, TexturedQuadLight  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.quality.gate import evaluate_gate  # noqa: E402
+from nrp.torch_backend.denoise import denoise_image, oidn_available  # noqa: E402
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.rig import LightRig, RigLight, light_type_of, train_monolithic  # noqa: E402
 from nrp.torch_backend.train import pixel_tensors, train  # noqa: E402
@@ -202,6 +203,7 @@ def build_and_evaluate_rig(
     gate_tier: str = "preview",
     overhead_frames: int = 10,
     overhead_warmup: int = 2,
+    denoise_method: str = "bilateral",
 ) -> dict:
     """Core report logic (no argparse/IO beyond writing under out_dir): trains one
     per-light proxy per rig light, assembles the LightRig, checks additivity against
@@ -264,27 +266,57 @@ def build_and_evaluate_rig(
     with open(rig_path, "w") as f:
         json.dump(rig_manifest, f, indent=2)
 
-    # Additivity: rig.render (sum of trained per-light proxies) vs the physical
-    # multi-light GATHERLIGHT reference for the same 8 lights (Eq. 1 linearity).
-    reference = gather_lights(cache, [rl.light for rl in rig.active_lights()])
+    # Additivity: rig.render (sum of trained per-light proxies) vs the multi-light
+    # GATHERLIGHT reference for the same 8 lights (Eq. 1 linearity). Each per-light
+    # proxy was supervised on denoised pool targets (base_cfg["denoise"]), so the
+    # additivity reference must be denoised the same way -- gating a denoise-trained
+    # proxy sum against the raw, MC-noisy gather is an apples-to-oranges comparison
+    # that caps SSIM/FLIP regardless of proxy quality (see nrp/torch_backend/shot.py
+    # module docstring and the G2 gate for the same documented choice).
+    reference_raw = gather_lights(cache, [rl.light for rl in rig.active_lights()])
+    if denoise_method == "none":
+        reference = reference_raw
+    else:
+        reference = denoise_image(
+            reference_raw, cache.albedo, cache.normal, cache.depth, method=denoise_method
+        )
     predicted = rig.render(cache)
     additivity_gate = evaluate_gate(predicted, reference, tier=gate_tier)
     additivity_gate["tier_requested"] = gate_tier
+    additivity_gate_vs_raw = evaluate_gate(predicted, reference_raw, tier=gate_tier)
+    additivity_gate_vs_raw["tier_requested"] = gate_tier
+
+    # The monolithic baseline and its gate below are unaffected by this fix (kept
+    # against the raw reference, matching the previous behavior of this script).
+    reference = reference_raw
 
     # Monolithic baseline: one non-relightable MLP fit directly to the same fixed
     # 8-light composite, matched total iteration budget for a fair size comparison.
-    t0 = time.perf_counter()
-    mono_model, mono_loss_curve = train_monolithic(
-        cache,
-        reference,
-        hidden_width=monolithic_hidden_width,
-        hidden_layers=monolithic_hidden_layers,
-        iters=monolithic_iters,
-        lr=monolithic_lr,
-    )
-    monolithic_train_seconds = time.perf_counter() - t0
     monolithic_path = os.path.join(out_dir, "monolithic.pt")
-    mono_model.save(monolithic_path)
+    existing_report_path = os.path.join(out_dir, "report.json")
+    if os.path.exists(monolithic_path) and os.path.exists(existing_report_path):
+        # Resume: a previous run already trained the monolithic baseline with an
+        # identical config; reuse it (re-evaluation-only runs, e.g. re-gating
+        # additivity with a corrected reference, should not pay for a full retrain).
+        with open(existing_report_path) as f:
+            prev_report = json.load(f)
+        prev_mono = prev_report["monolithic_baseline"]
+        mono_model = TorchNRP.load(monolithic_path)
+        mono_loss_curve = [prev_mono["loss_first"], prev_mono["loss_last"]]
+        monolithic_train_seconds = prev_mono["train_seconds"]
+        print(f"skipping monolithic baseline: reusing existing {monolithic_path}")
+    else:
+        t0 = time.perf_counter()
+        mono_model, mono_loss_curve = train_monolithic(
+            cache,
+            reference,
+            hidden_width=monolithic_hidden_width,
+            hidden_layers=monolithic_hidden_layers,
+            iters=monolithic_iters,
+            lr=monolithic_lr,
+        )
+        monolithic_train_seconds = time.perf_counter() - t0
+        mono_model.save(monolithic_path)
 
     with torch.no_grad():
         xy, aux = pixel_tensors(cache, torch.device("cpu"))
@@ -328,8 +360,22 @@ def build_and_evaluate_rig(
         "per_light_training": per_light_reports,
         "additivity_gate": {
             **additivity_gate,
-            "reference": "gather_lights(cache, active rig lights) (physical GATHERLIGHT)",
+            "reference": (
+                "gather_lights(cache, active rig lights) denoised (oidn/bilateral) -- "
+                "matches the denoised pool targets each per-light proxy was supervised on "
+                f"(denoise_method={denoise_method!r})"
+            ),
             "predicted": "LightRig.render(cache) (sum of 8 trained per-light proxies)",
+            "raw_reference_metrics": {
+                name: additivity_gate_vs_raw["metrics"][name].get("value")
+                for name in ("psnr_db", "ssim", "flip")
+            },
+            "raw_reference_note": (
+                "raw_reference_metrics quote the same predicted rig sum against the "
+                "un-denoised gather_lights output; its MC noise bounds SSIM/FLIP well "
+                "below the preview threshold independently of proxy quality (see "
+                "nrp/torch_backend/shot.py module docstring)"
+            ),
         },
         "monolithic_baseline": {
             "hidden_width": monolithic_hidden_width,
@@ -378,7 +424,23 @@ def main() -> None:
         help="monolithic baseline iters (default: 8 * --iters, matched total budget)",
     )
     parser.add_argument("--gate-tier", default="preview", choices=("preview", "draft", "final"))
+    parser.add_argument(
+        "--denoise",
+        default="oidn",
+        choices=["oidn", "bilateral", "none"],
+        help="denoiser for the additivity-gate reference; each per-light proxy was "
+        "supervised on oidn-denoised pool targets (base_cfg['denoise']), so oidn is "
+        "the apples-to-apples reference here too (needs the nix devshell for libtbb "
+        "-- run under `nix develop --command`)",
+    )
     args = parser.parse_args()
+
+    if args.denoise == "oidn" and not oidn_available():
+        raise SystemExit(
+            "oidn unavailable -- run under `nix develop --command` (libtbb), or pass "
+            "--denoise bilateral/none (the additivity reference then differs from the "
+            "per-light proxies' oidn-denoised supervision target)"
+        )
 
     cache = PathCache.load(args.cache)
     lights = default_rig_lights()
@@ -417,6 +479,7 @@ def main() -> None:
         monolithic_iters=monolithic_iters,
         monolithic_lr=0.005,
         gate_tier=args.gate_tier,
+        denoise_method=args.denoise,
     )
 
 

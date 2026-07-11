@@ -973,19 +973,19 @@
     },
     "metrics": {
       "psnr_db": {
-        "value": 25.435724637697973,
+        "value": 25.61395913380522,
         "threshold": 20.0,
         "sense": "min",
         "verdict": "pass"
       },
       "ssim": {
-        "value": 0.11681334935986964,
+        "value": 0.6225021252241981,
         "threshold": 0.8,
         "sense": "min",
         "verdict": "fail"
       },
       "flip": {
-        "value": 0.3602757763356573,
+        "value": 0.35208626203447935,
         "threshold": 0.15,
         "sense": "max",
         "verdict": "fail"
@@ -994,11 +994,17 @@
     "metrics_evaluated": 3,
     "passed": false,
     "verdict": "fail at preview tier: ssim, flip",
-    "evaluation_seconds": 0.19456437500775792,
+    "evaluation_seconds": 0.16855920899251942,
     "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP",
     "tier_requested": "preview",
-    "reference": "gather_lights(cache, active rig lights) (physical GATHERLIGHT)",
-    "predicted": "LightRig.render(cache) (sum of 8 trained per-light proxies)"
+    "reference": "gather_lights(cache, active rig lights) denoised (oidn/bilateral) -- matches the denoised pool targets each per-light proxy was supervised on (denoise_method='oidn')",
+    "predicted": "LightRig.render(cache) (sum of 8 trained per-light proxies)",
+    "raw_reference_metrics": {
+      "psnr_db": 25.435724637697973,
+      "ssim": 0.11681334935986964,
+      "flip": 0.3602757763356573
+    },
+    "raw_reference_note": "raw_reference_metrics quote the same predicted rig sum against the un-denoised gather_lights output; its MC noise bounds SSIM/FLIP well below the preview threshold independently of proxy quality (see nrp/torch_backend/shot.py module docstring)"
   },
   "monolithic_baseline": {
     "hidden_width": 128,
@@ -1038,7 +1044,7 @@
       "metrics_evaluated": 3,
       "passed": false,
       "verdict": "fail at preview tier: ssim",
-      "evaluation_seconds": 0.21237487500184216,
+      "evaluation_seconds": 0.16160870899329893,
       "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP",
       "tier_requested": "preview"
     }
@@ -1052,39 +1058,39 @@
     "rows": [
       {
         "n_lights": 1,
-        "ms": 123.63520840008277
+        "ms": 141.16557920060586
       },
       {
         "n_lights": 2,
-        "ms": 220.6578333003563
+        "ms": 299.9769499991089
       },
       {
         "n_lights": 3,
-        "ms": 332.0245666007395
+        "ms": 327.2204042004887
       },
       {
         "n_lights": 4,
-        "ms": 438.8459750000038
+        "ms": 446.07967089978047
       },
       {
         "n_lights": 5,
-        "ms": 556.7932000005385
+        "ms": 555.3732792002847
       },
       {
         "n_lights": 6,
-        "ms": 693.2080708007561
+        "ms": 683.1706500001019
       },
       {
         "n_lights": 7,
-        "ms": 802.9516833994421
+        "ms": 797.2319166990928
       },
       {
         "n_lights": 8,
-        "ms": 943.1054749991745
+        "ms": 949.9629458994605
       }
     ],
-    "fit_slope_ms_per_light": 117.25308159868638,
-    "fit_intercept_ms": -13.736115631452217
+    "fit_slope_ms_per_light": 111.0119136439434,
+    "fit_intercept_ms": 25.469063114620024
   },
   "hardware": {
     "platform": "macOS-26.6-arm64-arm-64bit",
