@@ -1745,8 +1745,18 @@ optimization entirely.
 **Zero-gradient caveat — read before citing the convergence gate below.**
 `colorable_light_raw_output_magnitude` in the report shows `window`,
 `ceiling_panel`, and `practical` each produce exactly zero raw proxy output on
-this cache (`mean: 0.0, max: 0.0`), inherited from their V1 per-light training
-(reduced 800-iteration budget, see the V1 section above). With zero raw
+this cache (`mean: 0.0, max: 0.0`), inherited from their V1 per-light
+training. The root cause is not the reduced 800-iteration training budget:
+all 6 colorable lights trained for the identical 800 iterations, and `rim`
+(a `SphereLight`, one of the 3 genuinely-recovered lights below) has the
+*worst* val PSNR of all 6 at 17.04 dB — worse than all 3 zero-output lights
+(`window` 20.38 dB, `ceiling_panel` 20.33 dB, `practical` 22.35 dB, per
+`out/v1-rig/report.json`'s `per_light_training`), which rules out iteration
+count as the explanation. The pattern the data does support: all 3
+zero-output lights are `QuadLight`, all 3 nonzero-output lights are
+`SphereLight` — a clean type correlation whose deeper cause (e.g. something
+about how `QuadLight` inputs interact with this proxy/cache) is not yet
+diagnosed. With zero raw
 output, `u_rgb` receives zero gradient for these three lights throughout
 `optimize_colors`, so their `recovered_rgbs` above are simply the untouched
 neutral initial guess `[1.0, 1.0, 1.0]` — not a genuine recovery of the
