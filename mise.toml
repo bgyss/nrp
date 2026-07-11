@@ -158,6 +158,14 @@ run = "cd webgpu && npm install --silent && npx playwright install chrome && nod
 description = "G2: gate every sampled trace frame at preview tier against controlled GATHERLIGHT references"
 run = "uv run python examples/g2_gate.py"
 
+[tasks.f1-shot]
+description = "F1: 120-frame keyframed-light shot on the T1 kitchen through the tier ladder — per-frame T3 verdicts + temporal FLIP-delta check (needs the nix devshell for OIDN)"
+run = "uv run python -m nrp.torch_backend.shot --model out/kitchen-512-torch-g2/model.pt --cache out/kitchen-512/path_cache.npz --keyframes examples/f1_shot_kitchen.json --out-dir out/f1-shot"
+
+[tasks.f2-shot]
+description = "F2 summit: the F1 shot at final tier — fp16 residual-identity frames, per-frame final-tier gate, committed MP4, storage + amortization accounting (needs the nix devshell for OIDN)"
+run = "uv run python examples/f2_final_shot.py --model out/kitchen-512-torch-g2/model.pt --cache out/kitchen-512/path_cache.npz --keyframes examples/f1_shot_kitchen.json --out-dir out/f2-shot"
+
 [tasks.g1-residual]
 description = "G1: E2-fixture recovery comparison — frozen base + shard-partitioned residual vs E2's fine-tune regimes"
 run = "uv run python examples/residual_dynamic.py"
