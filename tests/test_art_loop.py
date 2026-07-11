@@ -199,5 +199,71 @@ class SliderLoopTests(unittest.TestCase):
         self.assertLess(brightness[1], brightness[2])
 
 
+class RunArtLoopSmokeTests(unittest.TestCase):
+    """Fast smoke test for examples/v2_art_loop.py's core `run_art_loop` at toy
+    scale: a 2-light mixed rig (sphere + quad, tiny untrained proxies), a tiny
+    step count, and a short scripted slider sequence -- just enough to exercise
+    target-authoring -> optimize_colors -> gate -> save/reload check ->
+    slider_loop end to end without paying for the real V1 rig/cache."""
+
+    def test_run_art_loop_smoke(self):
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
+        from v2_art_loop import run_art_loop  # noqa: E402
+
+        cache = tiny_cache(seed=7)
+        rig = make_two_light_rig(sphere_rgb=[2.0, 1.0, 0.3], quad_rgb=[0.4, 1.0, 2.0])
+        target_rgbs = {"key": [3.0, 0.5, 0.2], "fill": [0.2, 2.0, 3.0]}
+        adjustments = [
+            {"light": "key", "rgb": [0.5, 0.5, 0.5]},
+            {"light": "fill", "rgb": [1.0, 0.5, 0.5]},
+            {"light": "key", "rgb": [1.5, 1.0, 0.5]},
+            {"light": "fill", "rgb": [0.5, 1.5, 1.0]},
+        ]
+
+        report = run_art_loop(
+            rig,
+            cache,
+            target_rgbs,
+            steps=15,
+            lr=0.05,
+            adjustments=adjustments,
+            gate_tier="draft",
+            fallback_tier="preview",
+        )
+
+        for key in (
+            "steps",
+            "lr",
+            "proxy_loss_first",
+            "proxy_loss_last",
+            "convergence_gate",
+            "convergence_gate_used_fallback",
+            "wall_clock_seconds",
+            "reload_identical",
+            "slider_loop",
+            "recovered_rgbs",
+            "colorable_light_raw_output_magnitude",
+            "recovery_caveats",
+        ):
+            self.assertIn(key, report)
+
+        self.assertTrue(np.isfinite(report["proxy_loss_first"]))
+        self.assertTrue(np.isfinite(report["proxy_loss_last"]))
+        self.assertTrue(np.isfinite(report["proxy_vs_target_psnr_db"]))
+        self.assertTrue(report["reload_identical"])
+        self.assertEqual(report["slider_loop"]["n_adjustments"], len(adjustments))
+        self.assertGreater(report["slider_loop"]["latency_ms_mean"], 0.0)
+        self.assertEqual(set(report["recovered_rgbs"]), set(target_rgbs))
+        self.assertEqual(set(report["colorable_light_raw_output_magnitude"]), set(target_rgbs))
+        # This toy rig's untrained tiny models have real (non-degenerate) output on
+        # the toy cache, so no light should be flagged as having zero gradient signal.
+        self.assertEqual(report["recovery_caveats"], [])
+        self.assertIn("optimized_rig", report)
+        self.assertIn("target", report)
+
+
 if __name__ == "__main__":
     unittest.main()

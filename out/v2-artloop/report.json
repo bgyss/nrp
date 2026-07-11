@@ -1,0 +1,233 @@
+{
+  "steps": 500,
+  "lr": 0.05,
+  "seed": 0,
+  "art_direction_target_rgb": {
+    "key": [
+      4.5,
+      3.5,
+      2.5
+    ],
+    "fill": [
+      0.6,
+      0.8,
+      1.8
+    ],
+    "rim": [
+      0.8,
+      1.2,
+      2.5
+    ],
+    "window": [
+      2.5,
+      2.0,
+      1.2
+    ],
+    "ceiling_panel": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "practical": [
+      3.5,
+      2.0,
+      0.5
+    ]
+  },
+  "neutral_guess_rgb": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "proxy_loss_first": 0.000639229838270694,
+  "proxy_loss_last": 1.4730240442442205e-16,
+  "proxy_loss_curve": [
+    0.000639229838270694,
+    0.0003853425441775471,
+    0.00023222934396471828,
+    0.0001425441587343812,
+    8.726155647309497e-05,
+    5.360902287065983e-05,
+    3.345144432387315e-05,
+    2.1286303308443166e-05,
+    1.3675397894985508e-05,
+    8.843830073601566e-06,
+    5.7731035667529795e-06,
+    3.7847905787202762e-06,
+    2.4858320557541447e-06,
+    1.6301734149237745e-06,
+    1.06436607438809e-06,
+    6.904733709234279e-07,
+    4.4416438527150603e-07,
+    2.8285910502745537e-07,
+    1.780874328005666e-07,
+    1.1072503980358306e-07,
+    6.791706397279995e-08,
+    4.106595952180214e-08,
+    2.4457721181647685e-08,
+    1.4335820530675392e-08,
+    8.264497530774406e-09,
+    4.682607634975966e-09,
+    2.60525645501275e-09,
+    1.4226122502236649e-09,
+    7.615798547355723e-10,
+    3.994438391163868e-10,
+    2.0511510545606626e-10,
+    1.0298025626687135e-10,
+    5.0527776407349734e-11,
+    2.4198398493324724e-11,
+    1.1285049283937809e-11,
+    5.122829244141869e-12,
+    2.2564292014720655e-12,
+    9.64772857957319e-13,
+    3.9951318620522203e-13,
+    1.6013167354611557e-13,
+    6.210708488295358e-14,
+    2.2885500393084006e-14,
+    8.24114099174083e-15,
+    2.7246400817628304e-15,
+    8.728297591794037e-16,
+    2.3981554144688374e-16,
+    1.4634163083421925e-16,
+    1.484388579418413e-16,
+    1.4630436138454006e-16,
+    1.4530479633233099e-16
+  ],
+  "proxy_vs_target_psnr_db": 154.41312233809737,
+  "proxy_vs_target_ssim": 0.9999999999999901,
+  "convergence_gate": {
+    "tier": "draft",
+    "thresholds": {
+      "psnr_db_min": 30.0,
+      "ssim_min": 0.9,
+      "flip_max": 0.08
+    },
+    "metrics": {
+      "psnr_db": {
+        "value": 154.54033756174135,
+        "threshold": 30.0,
+        "sense": "min",
+        "verdict": "pass"
+      },
+      "ssim": {
+        "value": 0.9999999999999992,
+        "threshold": 0.9,
+        "sense": "min",
+        "verdict": "pass"
+      },
+      "flip": {
+        "value": 8.446833261282475e-07,
+        "threshold": 0.08,
+        "sense": "max",
+        "verdict": "pass"
+      }
+    },
+    "metrics_evaluated": 3,
+    "passed": true,
+    "verdict": "pass at draft tier",
+    "evaluation_seconds": 0.16357224999228492,
+    "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP",
+    "tier_requested": "draft"
+  },
+  "convergence_gate_fallback": null,
+  "convergence_gate_used_fallback": false,
+  "wall_clock_seconds": 1320.7290032080055,
+  "reload_identical": true,
+  "slider_loop": {
+    "n_adjustments": 10,
+    "latency_ms": [
+      921.8285409879172,
+      945.4808330046944,
+      914.7377500048606,
+      1014.7081250033807,
+      1007.3342499963474,
+      947.2842500108527,
+      920.6102499883855,
+      923.9095829980215,
+      956.1036670056637,
+      949.2793750105193
+    ],
+    "latency_ms_mean": 950.1276624010643,
+    "latency_ms_p95": 1011.3898812502157
+  },
+  "recovered_rgbs": {
+    "key": [
+      4.499997615814209,
+      3.4999990463256836,
+      2.4999992847442627
+    ],
+    "fill": [
+      0.6000000238418579,
+      0.8000000715255737,
+      1.7999999523162842
+    ],
+    "rim": [
+      0.8000001311302185,
+      1.2000001668930054,
+      2.500000476837158
+    ],
+    "window": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "ceiling_panel": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "practical": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "colorable_light_raw_output_magnitude": {
+    "key": {
+      "mean": 0.010090772062540054,
+      "max": 1.136186957359314
+    },
+    "fill": {
+      "mean": 0.02143275737762451,
+      "max": 1.2986383438110352
+    },
+    "rim": {
+      "mean": 0.00096703547751531,
+      "max": 0.34433460235595703
+    },
+    "window": {
+      "mean": 0.0,
+      "max": 0.0
+    },
+    "ceiling_panel": {
+      "mean": 0.0,
+      "max": 0.0
+    },
+    "practical": {
+      "mean": 0.0,
+      "max": 0.0
+    }
+  },
+  "recovery_caveats": [
+    {
+      "light": "window",
+      "reason": "proxy raw output on this cache is ~0 (max=0.000e+00); u_rgb has no gradient, so this light's recovered_rgb below is the untouched neutral guess, not a verified recovery"
+    },
+    {
+      "light": "ceiling_panel",
+      "reason": "proxy raw output on this cache is ~0 (max=0.000e+00); u_rgb has no gradient, so this light's recovered_rgb below is the untouched neutral guess, not a verified recovery"
+    },
+    {
+      "light": "practical",
+      "reason": "proxy raw output on this cache is ~0 (max=0.000e+00); u_rgb has no gradient, so this light's recovered_rgb below is the untouched neutral guess, not a verified recovery"
+    }
+  ],
+  "hardware": {
+    "platform": "macOS-26.6-arm64-arm-64bit",
+    "torch_num_threads": 8
+  },
+  "files": {
+    "recovered_rig": "recovered_rig.json",
+    "target": "target.npy"
+  }
+}

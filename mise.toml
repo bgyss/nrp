@@ -249,3 +249,7 @@ run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt -
 [tasks.v1-rig]
 description = "V1: 8-light production rig on the T1 kitchen — per-light layered proxies, solo/mute, additivity vs monolithic baseline"
 run = "uv run python examples/v1_rig.py --cache out/kitchen-512/path_cache.npz --out-dir out/v1-rig"
+
+[tasks.v2-artloop]
+description = "V2 summit: E7 color recovery driving the full V1 rig toward a hand-authored target, then a headless interactive-grading loop"
+run = "uv run python examples/v2_art_loop.py --rig out/v1-rig/rig.json --models-dir out/v1-rig/models --cache out/kitchen-512/path_cache.npz --out-dir out/v2-artloop"
