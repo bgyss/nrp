@@ -311,7 +311,15 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   toy targets. The toy stylized target is explicitly reported as not exactly
   realizable by one sphere light; a true hand-authored or external generative image
   fixture remains open (requires an external asset this environment cannot produce
-  unprompted).
+  unprompted). **Closed by production-track rung V2** (`nrp/torch_backend/art_loop.py`,
+  `out/v2-artloop/report.json`): a hand-authored rgb target across the full V1
+  8-light rig, mixed light types (sphere + quad + textured-quad), driving
+  `optimize_colors` to a draft-tier image-space convergence pass (154.5 dB /
+  0.9999999999999992 SSIM / 8.4e-7 FLIP). Caveated: only 3 of the 6 colorable
+  lights (key/fill/rim) are genuinely gradient-recovered — the other 3
+  (window/ceiling_panel/practical) have zero-gradient proxies on this cache and
+  their reported "recovery" is just the untouched initial guess; see
+  `docs/performance.md`'s V2 section for the full breakdown.
 
 ## §7 Limitations — shared
 

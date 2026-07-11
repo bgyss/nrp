@@ -1722,3 +1722,75 @@ intercept (measured directly from `out/v1-rig/report.json`'s
 number).
 
 Hardware: macOS-26.6-arm64-arm-64bit, CPU torch (8 threads).
+
+## Summit demo: art-direction loop (production track, rung V2)
+
+E7's image-target optimization driving the full V1 rig: `mise run v2-artloop`
+(report: `out/v2-artloop/report.json`; harness: `nrp/torch_backend/art_loop.py`;
+unit tests: `tests/test_art_loop.py`). A hand-authored target changed the 6
+colorable V1 lights' rgb (`optimize_colors`, 500 Adam steps, lr 0.05); the 2
+`TexturedQuadLight` lights (`neon_sign`, `tv_glow`) have no color concept —
+their emission is baked into a fixed texture — and were excluded from the
+optimization entirely.
+
+| light | V1 (neutral guess) rgb | art-direction target rgb | recovered rgb | genuinely recovered? |
+|---|---|---|---|---|
+| key | [1.0, 1.0, 1.0] | [4.5, 3.5, 2.5] | [4.500, 3.500, 2.500] | **yes** — gradient recovery |
+| fill | [1.0, 1.0, 1.0] | [0.6, 0.8, 1.8] | [0.600, 0.800, 1.800] | **yes** — gradient recovery |
+| rim | [1.0, 1.0, 1.0] | [0.8, 1.2, 2.5] | [0.800, 1.200, 2.500] | **yes** — gradient recovery |
+| window | [1.0, 1.0, 1.0] | [2.5, 2.0, 1.2] | [1.0, 1.0, 1.0] | **no** — zero-gradient proxy, see caveat |
+| ceiling_panel | [1.0, 1.0, 1.0] | [1.0, 1.0, 1.0] | [1.0, 1.0, 1.0] | **no** — zero-gradient proxy, see caveat |
+| practical | [1.0, 1.0, 1.0] | [3.5, 2.0, 0.5] | [1.0, 1.0, 1.0] | **no** — zero-gradient proxy, see caveat |
+
+**Zero-gradient caveat — read before citing the convergence gate below.**
+`colorable_light_raw_output_magnitude` in the report shows `window`,
+`ceiling_panel`, and `practical` each produce exactly zero raw proxy output on
+this cache (`mean: 0.0, max: 0.0`), inherited from their V1 per-light training
+(reduced 800-iteration budget, see the V1 section above). With zero raw
+output, `u_rgb` receives zero gradient for these three lights throughout
+`optimize_colors`, so their `recovered_rgbs` above are simply the untouched
+neutral initial guess `[1.0, 1.0, 1.0]` — not a genuine recovery of the
+hand-authored target, even though they happen to contribute nothing to the
+rendered image either way. Only `key`, `fill`, and `rim` were genuinely,
+verifiably recovered via gradient descent: their `recovered_rgbs` match
+`art_direction_target_rgb` to five significant figures and their raw-output
+magnitudes are nonzero (mean 0.001–0.021, max 0.34–1.30). **This is 3 of 6
+colorable lights recovered, not "all 8 lights" or "all 6 colorable lights" —**
+do not cite this result as unqualified convergence across the rig.
+
+**Convergence gate (image-space, all 8 lights composited).** Because the
+proxy-vs-target comparison is on the *composited render*, and the 3
+zero-gradient lights contribute nothing to that render regardless of their
+color, the overall image-space metric still reads as a clean pass — this is
+"image-space-vacuous" for those three lights specifically, not evidence they
+converged:
+
+| tier | thresholds (PSNR / SSIM / FLIP) | measured | verdict |
+|---|---|---|---|
+| draft | ≥ 30 dB / ≥ 0.90 / ≤ 0.08 | 154.5 dB / 0.9999999999999992 / 8.4e-7 | **pass** (no fallback to preview tier needed) |
+
+`reload_identical: true` — the recovered rig round-trips through
+`LightRig.save`/`load` bit-identically.
+
+**Interactive grading latency.** The headless slider loop (10 adjustments,
+re-rendering the composited 512² rig per adjustment) measured
+`latency_ms_mean` **950.1 ms**, `latency_ms_p95` **1011.4 ms** — this is the
+per-adjustment interactive-grading-latency datapoint the rung asks for; it is
+well above real-time (30 fps ≈ 33 ms) at this CPU-torch, 8-light, 512² scale.
+
+**Wall-clock to convergence.** The full `optimize_colors` run (500 Adam
+steps) took **1320.7 s (~22.0 min)** wall-clock. This is slower than a plan
+assumption expected (the original Task 4 brief assumed full-batch rendering
+at rig scale would be fast). A code review found an avoidable inefficiency,
+not fixed here (it lives in already-approved Task 4 code, out of scope for
+this task): the loop gives the 2 `TexturedQuadLight` lights (`neon_sign`,
+`tv_glow`) a full proxy forward pass on every one of the 500 steps even
+though their output has zero gradient with respect to `u_rgb` and is
+otherwise constant across the optimization — roughly 2/8 of the per-step
+compute is spent on lights that could have had their contribution hoisted
+out of the loop as a one-time constant. The 1320.7 s figure should be read as
+a measured cost with a known, unaddressed, avoidable-inefficiency root
+cause — not as an inherent lower bound on this optimization's cost.
+
+Hardware: macOS-26.6-arm64-arm-64bit, CPU torch (8 threads) — same machine/run
+as the V1 section above.
