@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch.nn import functional as F  # noqa: N812
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
@@ -15,6 +16,7 @@ from nrp.torch_backend.denoise import joint_bilateral_denoise  # noqa: E402
 from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
 from nrp.torch_backend.model import (  # noqa: E402
     TorchNRP,
+    inverse_softplus,
     quad_params,
     relative_mse_loss,
     sphere_params,
@@ -208,6 +210,19 @@ class ModelTests(unittest.TestCase):
         self.assertTrue(metadata["residual_applied"])
         self.assertEqual(metadata["source"], "proxy_plus_cached_residual")
 
+    def test_init_output_scale_sets_output_to_target_scale(self):
+        # H1 fix (docs/hardening-track.md): the output head should start near a
+        # given scale instead of nn.Linear's default softplus(~0) ~= 0.69.
+        model = TorchNRP(hidden_width=16, hidden_layers=2, use_encoding=False)
+        model.init_output_scale(0.0123)
+        out = model(torch.rand(11, 2), torch.rand(11, 7), torch.rand(11, 4))
+        torch.testing.assert_close(out, torch.full_like(out, 0.0123), atol=1e-6, rtol=0)
+
+    def test_inverse_softplus_roundtrips_softplus(self):
+        for y in (1e-4, 0.005, 0.5, 3.0):
+            z = inverse_softplus(y)
+            self.assertAlmostEqual(float(F.softplus(torch.tensor(z))), y, places=5)
+
     def test_relight_metadata_sidecar_is_written(self):
         image = np.zeros((2, 2, 3))
         metadata = {"quality": "draft", "source": "gatherlight_cached"}
@@ -378,6 +393,67 @@ class TrainingSmokeTests(unittest.TestCase):
             report = train(load_config(str(cfg_path)))
             self.assertEqual(report["config"]["light_type"], "textured_quad")
             self.assertIn("val_psnr_db_vs_raw_mean", report)
+
+
+class QuadZeroCollapseTests(unittest.TestCase):
+    """H1 (docs/hardening-track.md): pins the dying-softplus collapse diagnosed on
+    the kitchen-512 QuadLight rig lights and the fix (TorchNRP.init_output_scale).
+    Mirrors the failure's real conditions without a slow PathCache/gather: a pool
+    of targets shaped like the kitchen cache's QuadLight pool (median ~0.005,
+    3% of slots ~100x brighter) at the rig's real architecture/lr, which drives
+    nn.Linear's default output-head init (softplus(~0) ~= 0.69, ~130x the target
+    median) into a persistent negative-gradient walk that Adam (per-step
+    displacement ~lr, confirmed independent of eps/grad-clipping) carries past
+    float32's softplus-derivative-underflow point within a normal training budget."""
+
+    def _make_pool(self, seed=0, n_px=48 * 48, n_pool=32):
+        gen = torch.Generator().manual_seed(seed)
+        bright = torch.rand(n_pool, n_px, 1, generator=gen) < 0.03
+        dim = torch.rand(n_pool, n_px, 1, generator=gen) * 0.01
+        bright_val = 0.3 + torch.rand(n_pool, n_px, 1, generator=gen) * 1.0
+        targets = torch.where(bright, bright_val, dim).expand(-1, -1, 3).contiguous()
+        xy = torch.rand(n_px, 2, generator=gen)
+        aux = torch.rand(n_px, 7, generator=gen)
+        light_params = torch.rand(n_pool, 8, generator=gen)
+        return targets, xy, aux, light_params
+
+    def _train(self, targets, xy, aux, light_params, init_fix, iters=100, batch=2048, lr=0.005):
+        torch.manual_seed(1)
+        enc = {
+            "levels": 10,
+            "features_per_level": 2,
+            "table_size_log2": 16,
+            "base_resolution": 4,
+            "finest_resolution": 512,
+        }
+        model = TorchNRP(light_type="quad", hidden_width=128, hidden_layers=4, encoding=enc)
+        if init_fix:
+            model.init_output_scale(float(targets.mean(dim=-1).median().item()))
+        opt = torch.optim.Adam(model.parameters(), lr=lr)
+        n_pool, n_px = targets.shape[0], targets.shape[1]
+        for _ in range(iters):
+            pool_ids = torch.randint(0, n_pool, (batch,))
+            pixel_ids = torch.randint(0, n_px, (batch,))
+            pred = model(xy[pixel_ids], aux[pixel_ids], light_params[pool_ids])
+            loss = relative_mse_loss(pred, targets[pool_ids, pixel_ids])
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        with torch.no_grad():
+            return model(xy, aux, light_params[0].expand(n_px, -1))
+
+    def test_collapses_without_fix(self):
+        # Documents the bug: pins that it reproduces (would fail loudly, not
+        # silently, if the pool/model/optimizer setup above ever stops
+        # reproducing it -- the assertion is on the un-fixed path, not the fix).
+        targets, xy, aux, light_params = self._make_pool()
+        pred = self._train(targets, xy, aux, light_params, init_fix=False)
+        self.assertEqual(float(pred.mean()), 0.0)
+
+    def test_init_output_scale_prevents_collapse(self):
+        targets, xy, aux, light_params = self._make_pool()
+        pred = self._train(targets, xy, aux, light_params, init_fix=True)
+        self.assertGreater(float(pred.mean()), 1e-4)
 
 
 class InverseOptimizationTests(unittest.TestCase):

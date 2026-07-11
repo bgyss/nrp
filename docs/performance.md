@@ -1832,3 +1832,101 @@ cause — not as an inherent lower bound on this optimization's cost.
 
 Hardware: macOS-26.6-arm64-arm-64bit, CPU torch (8 threads) — same machine/run
 as the V1 section above.
+
+## QuadLight zero-collapse diagnosis and fix (hardening track, rung H1)
+
+V1/V2 established that 3 of the kitchen rig's 8 proxies (`window`,
+`ceiling_panel`, `practical` — all `QuadLight`) produce exactly-zero raw
+output at their authored parameters (`out/v1-rig/report.json`,
+`out/v2-artloop/report.json`), leaving only 5/8 rig lights genuinely
+contributing and making 3/6 of V2's "recovered" colors vacuous (the untouched
+neutral guess, never actually gradient-updated). The 2026-07-11 audit
+(`docs/status/2026-07-11.md`) ruled out training budget (`rim`, a working
+`SphereLight`, has the *worst* val PSNR of the working lights) and confirmed
+the supervision target itself is nonzero at the authored params (numpy
+`gather_throughput_quad` gives mean 0.0028–0.0053, 13–30% of pixels lit — the
+same order as `rim`'s 0.0082/27%), narrowing the failure to the training
+loop. Full report and per-hypothesis evidence: `out/h1-quad-fix/report.json`.
+
+**Discriminating experiment matrix** (all on `out/kitchen-512/path_cache.npz`,
+the rig's real architecture: hidden_width 128, 4 layers, the paper's
+hashgrid encoding, lr 0.005, ε 0.01, batch 8192, pool 64):
+
+| variable changed | collapses within budget? | what it rules in/out |
+|---|---|---|
+| ε 0.01 → 1.0 (150 iters) | yes | not a denominator-magnitude effect |
+| global grad-norm clip 1.0 (150 iters) | yes | not a single large-gradient spike — Adam already normalizes step size, so clipping the aggregated gradient after the fact changes nothing |
+| quad normal restricted to a 15° cone around the authored normal (150 iters) | yes | not "rare bright outlier from unconstrained full-sphere normal sampling" — collapses even when the pool's brightest target is capped at 0.31 (vs 1.0 unrestricted) |
+| lr 0.005 → 0.0005, 10× lower (150 iters) | **no** | LR magnitude is the actual lever |
+| hidden ReLU → LeakyReLU(0.01), lr unchanged (150 iters) | yes | the dead zone is the **output softplus**, not hidden-layer dying ReLUs — a saturated final activation blocks gradient regardless of what the hidden layers do |
+| LR warmup (100 of 800 iters), same final lr | delayed, not prevented (mean 1.4e-21 by iter 800) | warmup only postpones crossing the dead zone over a long enough budget, it doesn't remove the underlying drift |
+| **sphere `rim` at the identical unmodified config** (150 iters) | **same drift, not yet fatal** (raw_pre_min −246 vs quad's −916; pred mean decays 2.6e-6 → 1.1e-33) | the mechanism is shared by both light types — quad crosses the dead zone within budget on this cache, sphere's shallower drift usually doesn't, which is why `rim` survives as the working rig's worst performer, not why quads are uniquely broken |
+| output bias initialized to `inverse_softplus(pool target median)` instead of nn.Linear's default | **no**, for both quad and sphere, over the full 800-iter budget | the fix |
+
+**Mechanism.** `nn.Linear`'s default bias init gives `softplus(~0) ≈ 0.69` at
+step 0, regardless of scene — but this cache's true pool-target median is
+~0.001–0.005, roughly 130–700× dimmer. Because most pool samples are near
+that dim median, the relative-MSE loss (Eq. 4, stop-gradient-of-prediction
+denominator) has a persistently negative-signed gradient for most steps.
+Adam's per-step displacement is ≈lr *independent of raw gradient magnitude*
+(the ε and grad-clip ablations above confirm this — changing gradient scale
+by 100× or capping its norm does not change the drift trajectory), so this
+one-directional signal marches the pre-softplus logit toward −∞ at a roughly
+constant per-iteration rate. Once it passes float32's softplus-derivative-
+underflow point (`sigmoid(z) → 0` for `z ≲ −100`), the chain rule multiplies
+every upstream gradient by exactly 0 and the network is permanently frozen —
+this happens for `window` within the first ~50 of 800 training iterations.
+The failure is not quad-specific: `rim` (`sphere`) walks the identical path,
+just more slowly, which is exactly why it is the rig's lowest-PSNR *working*
+light — it is deep into the same decay curve without (yet) having crossed
+the underflow threshold within its 800-iteration budget.
+
+**Fix** (`nrp/torch_backend/model.py`): `TorchNRP.init_output_scale(scale)`
+zeros the output layer's weight and sets its bias to
+`inverse_softplus(scale)`, so training starts near the true target scale
+instead of traversing several orders of magnitude under a one-directional
+gradient. `nrp/torch_backend/train.py::train` calls it once, immediately
+after the pool is built (non-resume path), with
+`scale = pool.targets.mean(dim=-1).median()`. Measured overhead: **0.14 s**
+(one median over the full 512² × 64-slot pool) against a ~320 s per-light
+train — negligible. Unit tests: `tests/test_torch_backend.py`'s
+`QuadZeroCollapseTests` pin a fast (≈4 s) synthetic reproduction shaped like
+the kitchen pool's target distribution — one test asserts it still collapses
+without the fix (documents the bug so a future refactor that accidentally
+"fixes" the repro doesn't go unnoticed), the other asserts the fix prevents
+it; `ModelTests` adds direct unit coverage of `init_output_scale` and
+`inverse_softplus`.
+
+**Verification on the real cache** (`out/h1-quad-fix/`, same 800-iter budget
+and architecture as `examples/v1_rig.py`; **oidn was unavailable in this
+shell** — not run under `nix develop` — so both the fixed quads and freshly
+retrained spheres below use `denoise.method=bilateral`, an apples-to-apples
+comparison with each other but not directly with `out/v1-rig/report.json`'s
+oidn numbers):
+
+| light | type | raw output mean | raw output max | val PSNR vs raw (dB) | train s (+pool s) |
+|---|---|---|---|---|---|
+| window | quad | 9.10e-3 | 1.418 | 15.51 | 324.6 (+61.9) |
+| ceiling_panel | quad | 4.02e-3 | 0.553 | 15.52 | 330.3 (+61.8) |
+| practical | quad | 1.82e-3 | 0.100 | 11.65 | 338.4 (+62.2) |
+| key | sphere | 1.19e-2 | 1.216 | 16.22 | 319.0 (+60.2) |
+| fill | sphere | 4.96e-2 | 2.827 | 15.98 | 328.0 (+61.8) |
+| rim | sphere | 3.33e-3 | 0.707 | 12.07 | 314.5 (+64.2) |
+
+All 3 previously-collapsed quads now produce nonzero raw output at their
+authored parameters, at the order of magnitude `gather_throughput_quad`
+predicts (§ above, 0.0028–0.0053 mean), and their val PSNR (11.65–15.52 dB)
+falls in the same range as the freshly retrained spheres (12.07–16.22 dB) —
+the systematic quad-vs-sphere gap is gone. Note the *pre-fix* `out/v1-rig/
+report.json` actually reported deceptively high val PSNR for these same
+three collapsed quads (20.33–22.35 dB): the fixed held-out validation lights
+are drawn from the same `sample_light()` distribution as the training pool
+(mostly near-black targets), so an all-zero predictor scores well against
+mostly-dark targets. Per-light val PSNR alone cannot detect this collapse —
+only a direct raw-output-magnitude probe at the light's own authored params
+can, which is why H1's verify criterion is framed that way rather than as a
+PSNR threshold. Training wall-clock is ~100 s higher across the board here
+than the original oidn-denoised V1 run; per the 0.14 s fix-overhead
+measurement above, that gap is attributable to bilateral vs. oidn denoising
+in this shell, not the fix — H2 should re-measure under oidn (`nix develop`)
+for a clean budget comparison.
