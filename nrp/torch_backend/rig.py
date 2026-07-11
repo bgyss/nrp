@@ -90,7 +90,13 @@ class LightRig:
     def render_per_light(
         self, cache: PathCache, device: torch.device | None = None
     ) -> dict[str, np.ndarray]:
-        """One (H, W, 3) image per active light: `model(xy, aux, params) * light.rgb`."""
+        """One (H, W, 3) image per active light: `model(xy, aux, params) * light.rgb`.
+
+        `TexturedQuadLight` has no `.rgb` (nrp.lights): its texture already carries
+        the full per-texel emission (`gather_textured_quad` bakes it into the
+        GATHERLIGHT target the proxy was trained against, unlike sphere/quad whose
+        pool targets are unit-emission and get scaled by `.rgb` at render time), so
+        its proxy's raw output is used as-is with no separate emission multiply."""
         device = device or torch.device("cpu")
         xy, aux = pixel_tensors(cache, device)
         images: dict[str, np.ndarray] = {}
@@ -100,8 +106,10 @@ class LightRig:
                 params = torch.as_tensor(
                     light_param_vector(rl.light), dtype=torch.float32, device=device
                 ).expand(n_px, -1)
-                rgb = torch.as_tensor(rl.light.rgb, dtype=torch.float32, device=device)
-                out = self.models[rl.name](xy, aux, params) * rgb
+                out = self.models[rl.name](xy, aux, params)
+                if hasattr(rl.light, "rgb"):
+                    rgb = torch.as_tensor(rl.light.rgb, dtype=torch.float32, device=device)
+                    out = out * rgb
                 images[rl.name] = (
                     out.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)
                 )

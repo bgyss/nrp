@@ -245,3 +245,7 @@ run = "uv run python examples/ablation.py --out out/ablation/report.json"
 [tasks.bench-gather]
 description = "Benchmark GATHERLIGHT: numpy vs batched torch (cpu/mps) on three cache sizes"
 run = "uv run python -m nrp.torch_backend.bench --model out/toy-torch/model.pt --resolutions 48 --gather-caches out/toy/path_cache.npz out/mitsuba/path_cache_128.npz out/mitsuba/path_cache_256.npz --out out/gather-bench.json"
+
+[tasks.v1-rig]
+description = "V1: 8-light production rig on the T1 kitchen — per-light layered proxies, solo/mute, additivity vs monolithic baseline"
+run = "uv run python examples/v1_rig.py --cache out/kitchen-512/path_cache.npz --out-dir out/v1-rig"

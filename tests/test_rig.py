@@ -188,5 +188,70 @@ class TrainMonolithicTests(unittest.TestCase):
         np.testing.assert_allclose(out_a.numpy(), out_b.numpy())
 
 
+class V1ReportSmokeTests(unittest.TestCase):
+    """Fast smoke test for examples/v1_rig.py's core function at toy scale: a tiny
+    cache, tiny iteration counts, and one light per type (not the full 8-light T1
+    rig), just enough to exercise the per-light train -> LightRig -> additivity
+    gate -> monolithic baseline -> compositing overhead pipeline end to end,
+    including the textured_quad path (LightRig.render_per_light has no `.rgb` to
+    multiply by for TexturedQuadLight, unlike sphere/quad)."""
+
+    def test_build_and_evaluate_rig_smoke(self):
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
+        from v1_rig import build_and_evaluate_rig  # noqa: E402
+
+        cache = tiny_cache(seed=4)
+        lights = [
+            RigLight(name="a", light=make_sphere(0)),
+            RigLight(name="b", light=make_quad(1)),
+            RigLight(name="c", light=make_textured_quad(2)),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_path = str(Path(tmp) / "path_cache.npz")
+            cache.save(cache_path)
+            base_cfg = {
+                "cache": cache_path,
+                "sampling": "segments",
+                "gather_backend": "numpy",
+                "pool": {"size": 4, "replace_every": 5, "replace_count": 1},
+                "denoise": {"enabled": True, "method": "bilateral"},
+                "batch_pixels": 32,
+                "lr": 0.01,
+                "model": {"hidden_width": 8, "hidden_layers": 1, "encoding": TINY_ENCODING},
+                "n_val_lights": 2,
+                "seed": 0,
+                "device": "cpu",
+            }
+            report = build_and_evaluate_rig(
+                cache,
+                lights,
+                out_dir=tmp,
+                base_cfg=base_cfg,
+                iters=3,
+                monolithic_hidden_width=8,
+                monolithic_hidden_layers=1,
+                monolithic_iters=3,
+                monolithic_lr=0.01,
+                gate_tier="preview",
+                overhead_frames=2,
+                overhead_warmup=1,
+            )
+        for key in (
+            "rig",
+            "per_light_training",
+            "additivity_gate",
+            "monolithic_baseline",
+            "sizes_bytes",
+            "compositing_overhead_ms",
+            "hardware",
+        ):
+            self.assertIn(key, report)
+        self.assertTrue(np.isfinite(report["additivity_gate"]["metrics"]["psnr_db"]["value"]))
+
+
 if __name__ == "__main__":
     unittest.main()
