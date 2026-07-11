@@ -245,9 +245,13 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   3 `QuadLight` + 2 `TexturedQuadLight`), one independent per-light proxy each,
   with solo/mute per light. Additivity (rig-sum vs `gather_lights` on the same
   active lights) is an honest negative at preview tier — PSNR passes, SSIM and
-  FLIP fail — attributed to the reduced 800-iteration-per-light training
-  budget compounding additively across 8 lights, not to the compositing
-  mechanism itself. Numbers in `docs/performance.md`.
+  FLIP fail. Not attributable to the compositing mechanism itself, nor (as an
+  earlier draft claimed) to the 800-iteration-per-light training budget
+  compounding across 8 lights: 3 of the 8 per-light proxies (the `QuadLight`s)
+  produce exactly zero raw output on this cache regardless of iteration
+  count, while a `SphereLight` proxy with the worst val PSNR in the rig still
+  contributes nonzero output — see `docs/performance.md`'s V2 section for the
+  root-cause investigation. Numbers in `docs/performance.md`.
 - **§6.2 art-directed edits — implemented**: `examples/make_art_target.py` builds a
   painted objective + emphasis mask + protected region; `--mask` / `--protect` /
   `--protect-base` / `--protect-lambda` implement weighted objectives and

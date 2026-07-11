@@ -1663,6 +1663,17 @@ at this reduced 800-iteration budget — expected given the harder,
 higher-frequency target and the same iteration count as the simpler light
 types.
 
+**Val PSNR does not mean genuine proxy quality for all 8 lights.** The 3
+`QuadLight` proxies (`window`, `ceiling_panel`, `practical`) score 20–22 dB
+val PSNR above — on par with or better than the spheres — but produce
+*exactly zero* raw output on this cache (verified in the V2 section below via
+`out/v2-artloop/report.json`'s `colorable_light_raw_output_magnitude`); their
+PSNR is a zero-output proxy scoring well against a near-dark target, not
+learned quality. The two `TexturedQuadLight` proxies (12.3–13.4 dB, lowest in
+the rig) are nonzero-output and genuinely contributing, making them — not the
+quads — the real low-quality drivers among this rig's per-light proxies. See
+the V2 section's "Zero-gradient caveat" for the full investigation.
+
 **Additivity gate — honest negative.** The rig's composited render
 (`LightRig.render`, sum of the 8 trained per-light proxies) was checked
 against `gather_lights` for the full active rig at T3's preview tier (PSNR ≥
@@ -1686,12 +1697,29 @@ FLIP both **fail** (0.622 < 0.80; 0.352 > 0.15) — `"fail at preview tier:
 ssim, flip"`. The methodology fix mattered (SSIM moved from 0.117 to 0.622,
 an order-of-magnitude-meaningful jump once MC noise stopped dominating the
 metric) but the underlying result is a genuine preview-tier failure, not an
-artifact of a broken evaluation: at an 800-iteration-per-light training
-budget (vs T1's 3000), individual per-light proxy quality is itself low
-(12–22 dB val PSNR per light above), and those per-light errors compound
-additively across all 8 lights in the composited sum. This is reported as-is,
-per the shared convention that honest negatives are deliverables, not
-something to spin as a pass.
+artifact of a broken evaluation.
+
+**Correction:** an earlier draft of this paragraph attributed the SSIM/FLIP
+failure to "the reduced 800-iteration-per-light training budget... those
+per-light errors compound additively across all 8 lights." That causal claim
+is wrong and has been withdrawn. The V2 section below (art-direction loop)
+diagnoses the actual mechanism on this same rig: 3 of the 8 per-light proxies
+— `window`, `ceiling_panel`, `practical`, all `QuadLight` — produce exactly
+zero raw output on this cache (`colorable_light_raw_output_magnitude` in
+`out/v2-artloop/report.json`, `mean: 0.0, max: 0.0` for all three), while
+`rim` (a `SphereLight`) has the *worst* val PSNR of the rig at 17.04 dB and
+still contributes nonzero output — ruling out iteration-count/PSNR as the
+explanation for the additivity error. See the V2 section's "Zero-gradient
+caveat" for the full investigation (the root cause of the `QuadLight`
+zero-output pattern itself is not yet diagnosed). The additivity-relevant
+quality story for V1's rig is instead the two genuinely-contributing but
+lowest-scoring proxies, the `TexturedQuadLight`s `neon_sign` (12.35 dB) and
+`tv_glow` (13.35 dB) — nonzero output, low val PSNR — which are the real
+drivers of whatever proxy-quality-driven component the additivity error has.
+Effectively, the "8-light" composite has only 5 genuinely-contributing
+per-light proxies on this cache (3 spheres + 2 textured quads), not 8; the
+SSIM/FLIP failure is still reported as-is, per the shared convention that
+honest negatives are deliverables, not something to spin as a pass.
 
 **Sizes: per-light rig vs monolithic baseline.** A monolithic (non-relightable)
 baseline was trained on the combined 8-light image with a matched total
