@@ -1617,3 +1617,108 @@ construction* in float64 — the per-frame check verifies the stored fp16
 artifact, which is what a pipeline would actually keep; the amortization
 figure is an estimate built on the measured T2 export wall-clock, not a
 120-frame re-export. Hardware: Apple M1 Max, CPU torch gather + OIDN.
+
+## Production light rig (production track, rung V1)
+
+An 8-light rig on the T1 kitchen scene, one independent per-light
+`TorchNRP` proxy per light, composited with `nrp.torch_backend.rig.LightRig`
+(scaling the E1/roadmap per-layer-compositing machinery from 2 layers to N
+lights): `mise run v1-rig` (report: `out/v1-rig/report.json`; harness:
+`nrp/torch_backend/rig.py`; unit tests: `tests/test_rig.py`). Each light was
+trained at a reduced 800-iteration budget (vs T1's 3000) to fit N=8
+independent proxies in the rung's time budget.
+
+Rig composition — 3 `SphereLight` + 3 `QuadLight` + 2 `TexturedQuadLight`
+(8×8 texel emission grids):
+
+| light | type | role |
+|---|---|---|
+| key | sphere | primary sphere key light |
+| fill | sphere | cool fill sphere |
+| rim | sphere | warm rim/kicker sphere |
+| window | quad | ceiling-adjacent window panel |
+| ceiling_panel | quad | overhead panel |
+| practical | quad | warm practical wall fixture |
+| neon_sign | textured_quad | checkerboard-textured emitter |
+| tv_glow | textured_quad | smooth radial-gradient textured emitter |
+
+Per-light training (800 iters each, val PSNR/SSIM/FLIP vs the raw
+gather-lights mean for that light in isolation):
+
+| light | type | train wall-clock (s) | val PSNR (dB) | val SSIM | val FLIP | params | model size |
+|---|---|---:|---:|---:|---:|---:|---:|
+| key | sphere | 219.2 | 20.59 | 0.217 | 0.205 | 409,189 | 1.57 MiB |
+| fill | sphere | 228.5 | 19.39 | 0.221 | 0.232 | 409,189 | 1.57 MiB |
+| rim | sphere | 202.7 | 17.04 | 0.248 | 0.180 | 409,189 | 1.57 MiB |
+| window | quad | 201.3 | 20.38 | 0.238 | 0.268 | 409,701 | 1.57 MiB |
+| ceiling_panel | quad | 207.6 | 20.33 | 0.264 | 0.253 | 409,701 | 1.57 MiB |
+| practical | quad | 215.8 | 22.35 | 0.416 | 0.204 | 409,701 | 1.57 MiB |
+| neon_sign | textured_quad | 713.4 | 12.35 | 0.264 | 0.562 | 434,277 | 1.66 MiB |
+| tv_glow | textured_quad | 760.8 | 13.35 | 0.242 | 0.541 | 434,277 | 1.66 MiB |
+
+The two textured-quad lights train ~3.4× slower per iteration than the
+sphere/quad lights (the 8×8 texture adds a per-texel emission lookup to the
+GATHERLIGHT target) and land at the lowest val PSNR of the rig (12.3–13.4 dB)
+at this reduced 800-iteration budget — expected given the harder,
+higher-frequency target and the same iteration count as the simpler light
+types.
+
+**Additivity gate — honest negative.** The rig's composited render
+(`LightRig.render`, sum of the 8 trained per-light proxies) was checked
+against `gather_lights` for the full active rig at T3's preview tier (PSNR ≥
+20 dB, SSIM ≥ 0.80, FLIP ≤ 0.15). The reference image matters here: an
+earlier draft of this check compared the rig sum against the **raw**
+(un-denoised) GATHERLIGHT render, which bounds SSIM well below any
+proxy-quality ceiling from MC noise alone (the same phenomenon documented in
+`nrp/torch_backend/shot.py`'s module docstring) — raw-reference SSIM was
+0.117, uninformative about proxy quality. Fixed (commit `e1af7fb`) by
+denoising the reference to match what each per-light proxy was actually
+supervised against (`denoise_method="oidn"`), matching the pool-training
+target class of §4.4:
+
+| reference | PSNR (dB) | SSIM | FLIP |
+|---|---:|---:|---:|
+| raw (un-denoised) gather_lights — pre-fix, uninformative | 25.44 | 0.117 | 0.360 |
+| OIDN-denoised gather_lights — post-fix (matches training target) | **25.61** | **0.622** | **0.352** |
+
+Post-fix verdict at preview tier: PSNR **passes** (25.6 ≥ 20 dB), SSIM and
+FLIP both **fail** (0.622 < 0.80; 0.352 > 0.15) — `"fail at preview tier:
+ssim, flip"`. The methodology fix mattered (SSIM moved from 0.117 to 0.622,
+an order-of-magnitude-meaningful jump once MC noise stopped dominating the
+metric) but the underlying result is a genuine preview-tier failure, not an
+artifact of a broken evaluation: at an 800-iteration-per-light training
+budget (vs T1's 3000), individual per-light proxy quality is itself low
+(12–22 dB val PSNR per light above), and those per-light errors compound
+additively across all 8 lights in the composited sum. This is reported as-is,
+per the shared convention that honest negatives are deliverables, not
+something to spin as a pass.
+
+**Sizes: per-light rig vs monolithic baseline.** A monolithic (non-relightable)
+baseline was trained on the combined 8-light image with a matched total
+iteration budget (6400 iters = 8 × 800):
+
+| | bytes | MiB |
+|---|---:|---:|
+| per-light rig (8 proxies, total) | 13,350,808 | 12.73 |
+| monolithic baseline (1 proxy) | 553,013 | 0.53 |
+| **ratio (rig / monolithic)** | | **24.1×** |
+
+The per-light rig is ~24.1× larger in total than the single non-relightable
+baseline — the cost of per-light relightability (solo/mute, independent
+per-light edits) versus one proxy that only reproduces the fixed 8-light
+composite.
+
+**Compositing overhead vs active light count.** Wall-clock to render the
+composited rig at 512² as active lights are added one at a time (1→8),
+measured by `LightRig.render`:
+
+| n_lights | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| ms | 141.2 | 300.0 | 327.2 | 446.1 | 555.4 | 683.2 | 797.2 | 950.0 |
+
+Roughly linear in light count: least-squares fit ≈ 111.0 ms/light + 25.5 ms
+intercept (measured directly from `out/v1-rig/report.json`'s
+`compositing_overhead_ms` — do not use any other document's copy of this
+number).
+
+Hardware: macOS-26.6-arm64-arm-64bit, CPU torch (8 threads).

@@ -239,6 +239,15 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   writes the composited-edit demo; `nrp.torch_backend.composite` is the CLI that
   relights one layer while holding the other layer's image fixed. Numbers in
   `docs/performance.md`.
+- **§6.1 per-layer compositing generalized to N-light rigs (production track,
+  rung V1) — implemented**: `nrp.torch_backend.rig.LightRig` generalizes
+  `composite.py`'s 2-layer sum to an 8-light production rig (3 `SphereLight` +
+  3 `QuadLight` + 2 `TexturedQuadLight`), one independent per-light proxy each,
+  with solo/mute per light. Additivity (rig-sum vs `gather_lights` on the same
+  active lights) is an honest negative at preview tier — PSNR passes, SSIM and
+  FLIP fail — attributed to the reduced 800-iteration-per-light training
+  budget compounding additively across 8 lights, not to the compositing
+  mechanism itself. Numbers in `docs/performance.md`.
 - **§6.2 art-directed edits — implemented**: `examples/make_art_target.py` builds a
   painted objective + emphasis mask + protected region; `--mask` / `--protect` /
   `--protect-base` / `--protect-lambda` implement weighted objectives and
