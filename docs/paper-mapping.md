@@ -108,7 +108,11 @@ normal (3). Pixel coordinates go through a 2D multiresolution hashgrid [MESK22]
 other inputs are raw, as the paper found encodings for them unhelpful.
 
 *Deviation:* softplus output head (the paper does not specify a head; softplus keeps
-contributions positive and smooth).
+contributions positive and smooth). Its default `nn.Linear` init predicts ~0.69
+regardless of scene, which can be orders of magnitude brighter than a cache's true
+pool-target scale and drive training into a permanent zero-output basin (hardening
+track rung H1, `docs/performance.md`); `TorchNRP.init_output_scale` re-inits the
+output head near the pool's actual target scale to avoid it.
 
 *numpy-backend deviation (by design):* sinusoidal encoding instead of a hashgrid, plus
 derived geometric features (center − position, distance) that a compact MLP needs

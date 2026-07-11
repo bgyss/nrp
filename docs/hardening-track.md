@@ -15,8 +15,8 @@ every prior phase.
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| H1 | Diagnose and fix the QuadLight zero-collapse | not started | — |
-| H2 | Re-earn the V1/V2 summit claims | not started (blocked on H1) | — |
+| H1 | Diagnose and fix the QuadLight zero-collapse | done | `out/h1-quad-fix/report.json`, `docs/performance.md#quadlight-zero-collapse-diagnosis-and-fix-hardening-track-rung-h1` |
+| H2 | Re-earn the V1/V2 summit claims | not started (unblocked) | — |
 | H3 | Textured-quad proxy quality | not started | — |
 | H4 | Rig compositing on the WebGPU runtime | not started (partially blocked on H2) | — |
 | H5 | Real-scene dynamic geometry (exporter retrace path) | not started | — |

@@ -290,6 +290,11 @@ def train(cfg: dict, resume: bool = False) -> dict:
         t_pool0 = time.perf_counter()
         pool = ImagePool(cache, cfg, rng, device)
         pool_seconds = time.perf_counter() - t_pool0
+        # H1 fix (docs/hardening-track.md): start the output head near the pool's
+        # actual target scale instead of nn.Linear's default ~0.69, which is far
+        # brighter than typical QuadLight targets on some caches and otherwise
+        # drives a zero-collapse (see TorchNRP.init_output_scale docstring).
+        model.init_output_scale(float(pool.targets.mean(dim=-1).median().item()))
 
     batch = cfg.get("batch_pixels", 4096)
     replace_every = cfg["pool"]["replace_every"]

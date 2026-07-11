@@ -20,6 +20,8 @@ so training/relighting/inverse code is variant-agnostic; disabled inputs are ign
 
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
@@ -34,6 +36,12 @@ def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.0
     """Relative MSE of Müller et al. [MRNK21] as used in Eq. 4: the denominator is the
     stop-gradient of the *prediction*, ε = 0.01 (both paper-exact)."""
     return ((pred - target) ** 2 / (pred.detach() ** 2 + eps)).mean()
+
+
+def inverse_softplus(y: float, floor: float = 1e-6) -> float:
+    """softplus^-1(y), floored so y=0 doesn't hit log(0)."""
+    y = max(float(y), floor)
+    return math.log(math.expm1(y)) if y < 20.0 else y
 
 
 class TorchNRP(nn.Module):
@@ -80,6 +88,23 @@ class TorchNRP(nn.Module):
     @property
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())
+
+    def init_output_scale(self, target_scale: float) -> None:
+        """Re-init the output head so predictions start near `target_scale` instead
+        of nn.Linear's default (softplus(~0) ~= 0.69 regardless of scene). Root cause
+        (H1, docs/hardening-track.md): when true supervision targets are far dimmer
+        than that default -- e.g. QuadLight pool targets on the kitchen cache, median
+        ~0.001-0.005 -- the loss gradient is persistently negative-signed for most
+        pool samples, and Adam's per-step displacement is ~lr regardless of gradient
+        magnitude (confirmed: neither eps nor grad-norm clipping change the drift).
+        Over a normal training budget this walks the pre-softplus logit past
+        float32's softplus-derivative-underflow point, permanently zeroing the
+        network. Starting near the true scale removes the sustained one-directional
+        push before it can reach that point."""
+        last = self.mlp[-1]
+        with torch.no_grad():
+            last.weight.zero_()
+            last.bias.fill_(inverse_softplus(target_scale))
 
     def forward(
         self, pixel_xy: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
