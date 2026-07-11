@@ -1582,3 +1582,38 @@ Per-tier render time per frame at 512² (ms, mean / p95, Apple M1 Max, CPU
 torch gather): preview 231 / 336, draft 722 / 854, final 806 / 933 (final =
 draft gather + OIDN). Gate + temporal metrics run on top of that per frame;
 the 120-frame shot completed in ~4 min wall-clock end to end.
+
+## Summit demo: final-tier shot (production track, rung F2)
+
+The F1 shot rendered at final tier with residual-identity frames: `mise run
+f2-shot` under the nix devshell (report: `out/f2-shot/report.json`; video:
+`out/f2-shot/shot.mp4`, 120 frames at 512², 24 fps, h264 crf 18 — both
+committed; script: `examples/f2_final_shot.py`, unit tests:
+`tests/test_f2_final_shot.py`). Per frame the pipeline stores what production
+would store: the shared proxy plus an fp16 compressed residual against the
+final-tier reference (OIDN-denoised GATHERLIGHT — single-cache scene, the
+supervision-class reference); the *stored* reconstruction is gated at T3 final
+tier per frame, so the fp16 quantization is the only error source being gated.
+
+| check | result |
+|---|---:|
+| final-tier gate (40 dB / SSIM 0.98 / FLIP 0.02) | **120/120 frames pass** (≥ 105.9 dB, SSIM ≥ 0.9999999, FLIP ≤ 7.0e-5); flagged: none |
+| exact residual identity (float64) | ≤ 1.1e-19 max abs, all frames |
+| fp16-stored reconstruction error | ≤ 4.9e-4 max abs (tolerance 1.4e-3 = 1e-3 × max residual) |
+| shot wall-clock (cache reuse) | 185.3 s total; 1.54 s/frame mean, 1.90 p95 |
+| re-render-every-frame estimate | 21 887 s (120 × 182.39 s measured T2 export wall-clock) — **118× amortization** |
+| storage: proxy + residuals vs raw frames | 165.7 MiB vs 142.0 MiB (**1.17× — residuals cost *more***, fp16 npz both sides) |
+| MP4 | 0.22 MiB |
+
+The storage row is an honest negative: at this proxy quality the per-frame
+residual is dominated by reference noise/detail at fp16 mantissa scale and
+compresses *worse* than the frames themselves, so proxy+residual storage only
+wins if residuals are kept for a subset of frames (approval frames) or
+quantized more aggressively — the win here is the 118× wall-clock
+amortization, not bytes. Honest caveats: the final tier is the denoised 64-spp
+gather, not a higher-spp ground truth (the kitchen ships one cache; the T2
+report records the export ceiling); the residual-identity gate is exact *by
+construction* in float64 — the per-frame check verifies the stored fp16
+artifact, which is what a pipeline would actually keep; the amortization
+figure is an estimate built on the measured T2 export wall-clock, not a
+120-frame re-export. Hardware: Apple M1 Max, CPU torch gather + OIDN.

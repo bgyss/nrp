@@ -254,7 +254,13 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   cornell-box caches (32spp export, 128spp converged reference) with a genuinely
   trained (not intentionally-untrained) streamed proxy, reaching the same
   qualitative trust verdict. This is pipeline plumbing around the paper's
-  proxy/GATHERLIGHT split, not a paper mechanism.
+  proxy/GATHERLIGHT split, not a paper mechanism. The F1/F2 production-track
+  rungs extend the ladder to shot level on the T1 kitchen:
+  `nrp.torch_backend.shot` adds a per-frame T3 trust verdict plus a
+  frame-to-frame FLIP temporal-stability check (`out/f1-shot/report.json`),
+  and `examples/f2_final_shot.py` renders the shot at final tier with
+  fp16-stored residual-identity frames and a committed MP4
+  (`out/f2-shot/report.json`).
 - **Extension E8 production controls — toy-scale conditioned proxies implemented:**
   `gather_light_controlled` can exclude first-hit-owned pixels for light linking and
   apply a linear-distance artist attenuation curve to sphere-light gathers. This
