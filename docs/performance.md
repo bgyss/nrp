@@ -1549,3 +1549,36 @@ unrelated processes. Both hold the 33 ms criterion; the T4 single-proxy bench
 coverage: `tests/test_g2_demo.py` (real-Chrome render + G1 parity, skips
 without the browser toolchain), `tests/test_export_webgpu_demo.py`,
 `tests/test_g2_gate.py`.
+
+## Shot harness with temporal stability (production track, rung F1)
+
+A 120-frame keyframed-light shot on the T1 kitchen — the G2-verified interior
+orbit (`examples/f1_shot_kitchen.json`; authored inside the proxy's verified
+pass region, same caveat as G2) — through the E9 tier ladder with a per-frame
+T3 trust verdict. Tier mapping on this single-cache scene: preview = proxy
+inference, draft = raw cached GATHERLIGHT, final = OIDN-denoised GATHERLIGHT
+(the supervision-class reference, §4.4). `mise run f1-shot` under the nix
+devshell (report: `out/f1-shot/report.json`, committed; harness:
+`nrp/torch_backend/shot.py`, unit tests: `tests/test_shot.py`).
+
+Per-frame trust verdict at preview tier: **120/120 frames pass**
+(31.6–37.8 dB / SSIM 0.881–0.898 / FLIP 0.065–0.081 vs the denoised
+reference). Raw-reference metrics recorded per frame as in G2: vs the
+un-denoised 64-spp gather the same frames score 30.4–34.5 dB but SSIM
+0.298–0.356 — the MC-noise bound, not proxy quality.
+
+Temporal stability — the metric the ladder lacked: frame-to-frame FLIP between
+consecutive tonemapped frames, checked as *excess over the reference
+sequence's own per-pair deltas* (the light moves; flicker is change the
+reference doesn't have). Named repo convention: excess_max = 0.02 per pair.
+
+| sequence | FLIP delta mean / p95 / max | verdict |
+|---|---:|---|
+| final-tier reference | 0.0155 / 0.0184 / 0.0188 | (baseline for excess) |
+| proxy (preview) | 0.0150 / 0.0189 / 0.0191 | **pass** — worst excess 0.0019; mean excess −0.0004 (the proxy is slightly *smoother* than the denoised reference) |
+| flickering baseline (reference + per-frame independent noise, 30.0 dB/frame) | 0.1681 / 0.1789 / 0.1816 | **fails** — worst excess 0.165; per-frame PSNR alone cannot see this |
+
+Per-tier render time per frame at 512² (ms, mean / p95, Apple M1 Max, CPU
+torch gather): preview 231 / 336, draft 722 / 854, final 806 / 933 (final =
+draft gather + OIDN). Gate + temporal metrics run on top of that per frame;
+the 120-frame shot completed in ~4 min wall-clock end to end.
