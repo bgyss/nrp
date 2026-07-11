@@ -27,12 +27,17 @@ Full docs live in [docs/](docs/):
 
 | doc | what's there |
 |---|---|
+| [tracks.md](docs/tracks.md) | **start here** — the five-phase milestone progression and how the docs below connect |
 | [quickstart.md](docs/quickstart.md) | every CLI, copy-pasteable, from `uv sync` to inverse lighting |
 | [architecture.md](docs/architecture.md) | pipeline diagram, path-cache schema, module-by-module notes, training-config reference |
 | [paper-mapping.md](docs/paper-mapping.md) | section-by-section paper coverage, faithful vs. substituted vs. out of scope, and the known-deviations list |
-| [performance.md](docs/performance.md) | benchmark methodology and every measured result |
-| [roadmap.md](docs/roadmap.md) | the ten-item improvement roadmap, written as ready-to-run goal prompts |
-| [status/](docs/status/) | dated status reports tracking roadmap progress |
+| [performance.md](docs/performance.md) | benchmark methodology and every measured result, with hardware context |
+| [roadmap.md](docs/roadmap.md) | phase 1 (complete): the ten-item replication roadmap, written as ready-to-run goal prompts |
+| [extensions.md](docs/extensions.md) | phase 2 (complete): the E1–E9 program stress-testing the decoupling as a real-time-pipeline building block |
+| [pipeline-feasibility.md](docs/pipeline-feasibility.md) | phase 3 (complete): the E10 verdict per target audience (games / film / VFX), every claim traced to a report |
+| [production-track.md](docs/production-track.md) | phase 4 (complete): the trunk-and-branches ladder attacking the verdict's blockers, ending in three summit demos |
+| [hardening-track.md](docs/hardening-track.md) | phase 5 (in progress): fixing what phase 4 surfaced, re-earning the caveated claims, refreshing the verdict |
+| [status/](docs/status/) | dated status reports, including the [2026-07-11 full audit](docs/status/2026-07-11.md) |
 
 ## Toolchain (nix + mise + uv)
 
@@ -69,27 +74,55 @@ and inverse lighting are all in **[docs/quickstart.md](docs/quickstart.md)**.
 
 ## Status
 
-All ten roadmap items are complete — see [docs/status/2026-07-02.md](docs/status/2026-07-02.md)
-for the full before/after picture and [docs/paper-mapping.md](docs/paper-mapping.md)
-for section-by-section coverage. Headline numbers (toy scene, laptop CPU, none
-quoted from the paper — see [docs/performance.md](docs/performance.md) for
-methodology and every measured result):
+The project has progressed through four completed phases beyond the initial
+implementation — replication, extensions, a feasibility verdict, and a
+production track ending in one summit demo per target audience — and is now in
+a fifth (hardening). [docs/tracks.md](docs/tracks.md) is the spine; the
+[2026-07-11 audit](docs/status/2026-07-11.md) is the current full picture.
+Every number below is measured on a single Apple Silicon laptop (no CUDA) and
+traces to a committed report — none are quoted from the paper (see
+[docs/performance.md](docs/performance.md)).
 
-- **Decoupling validated:** GATHERLIGHT over the cache agrees with an independently
-  re-traced reference to PSNR 29.3 dB / 0.03% mean radiance.
-- **Paper-scale quality ceiling:** 8×256 hashgrid MLP, 50k iterations →
-  **35.19 dB** held-out PSNR on the Mitsuba cornell box (up from 25.87 dB at 3k
-  iterations).
-- **GPU path is real:** batched torch GATHERLIGHT is 5–7× faster than numpy on MPS
-  at ≥128²; inference sustains the paper's ~30–60 Hz interactive range up to 512×512
-  on this laptop's GPU.
-- **Compactness, demonstrated three ways:** packed fp16/rgb9e5 caches (3.2–4.2×
-  smaller), multi-view proxies (0.76 MB for 3 views vs 10.5 MB of caches), and
-  per-layer compositing proxies (latency-neutral vs. a full-scene relight).
-- **One honest negative result:** the paper's data-efficiency claim (Fig. 6) does
-  *not* reproduce at toy scale — a fixed image dataset beats the rolling training
-  pool by 1.8 dB at matched budget, traced to pool-size-limited light diversity
-  rather than smoothed over.
+**Phase 1 — Replication (complete).** All ten roadmap items: decoupling
+validated against an independently re-traced reference (29.3 dB / 0.03% mean
+radiance); paper-scale training to **35.19 dB** held-out PSNR on the Mitsuba
+cornell box; packed fp16/rgb9e5 caches (3.2–4.2× smaller); multi-view and
+per-layer compositing proxies. Plus an honest negative: the paper's
+data-efficiency claim (Fig. 6) does not reproduce at toy scale.
+
+**Phase 2 — Extensions (complete).** E1–E9 stress-tested the decoupling
+against production questions: animated lights, dynamic geometry, out-of-core
+scale (streamed training at 512×512/128 spp), engine runtimes (the exported
+proxy as a WebGPU compute shader in real Chrome, 2.4e-7 parity vs PyTorch),
+inverse art direction, production controls, and quality tiers. Two negative
+results were the most useful deliverables: segment-local proxy fine-tuning
+after a geometry change misses its recovery target by 11–20 dB (a settled
+structural finding), and a native WebGPU binding's segfault was bisected to
+the binding itself, not the shader.
+
+**Phase 3 — Verdict (complete).** [pipeline-feasibility.md](docs/pipeline-feasibility.md)
+grades games / animated film / feature VFX each "partly viable" and names the
+blocker per audience.
+
+**Phase 4 — Production track (complete).** Ten rungs attacking those blockers,
+ending in three summit demos: **games** — the real 409k-param kitchen proxy
+(hashgrid in WGSL) relit live in real Chrome with production controls, p95
+30.7 ms at 512² under interaction, 12/12 frames passing the perceptual gate;
+**film** — a 120-frame shot at final tier via proxy + fp16 residual identity,
+118× wall-clock amortization vs re-rendering (honest negative: residual
+storage costs 1.17× the raw frames); **VFX** — an 8-light rig with per-light
+proxies, solo/mute, and a gradient-based art-direction loop. Three rungs
+closed as honest negatives or partials, including the track's biggest open
+finding: three `QuadLight` proxies trained to exactly-zero output, making the
+rig's 154.5 dB inverse-convergence score half vacuous (only 3 of 6 colorable
+lights genuinely recovered).
+
+**Phase 5 — Hardening track (in progress).**
+[hardening-track.md](docs/hardening-track.md) root-causes the quad
+zero-collapse (the 2026-07-11 audit showed the training targets are nonzero,
+so the failure is training-side), re-earns the caveated rig claims, ports rig
+compositing to the proven WebGPU runtime, adds real-scene dynamic geometry,
+attacks the storage negative, and then re-issues the feasibility verdict.
 
 ## Known deviations from the paper
 
@@ -106,11 +139,18 @@ readability.
 nrp/                 numpy reference backend + shared vocabulary (cache, lights, gather)
 nrp/mitsuba_exporter.py  Mitsuba 3 scene -> path cache (optional extra; wavefront + scalar loops)
 nrp/export_bench.py  exporter throughput benchmark (scalar vs wavefront)
-nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench)
-examples/            training configs + art-directed target builder
+nrp/torch_backend/   paper-architecture backend (hashgrid, pool training, inverse, bench,
+                     streaming, shot/rig/art-loop harnesses, residual dynamic geometry)
+nrp/quality/         perceptual pass/fail gates (preview/draft/final tiers, PSNR/SSIM/FLIP)
+webgpu/              WGSL runtime: shader generator, browser bench, interactive demo viewer,
+                     and the documented native-binding negative result
+examples/            training configs, demo/report scripts per rung, art-directed target builder
 examples/scenes/     gallery-scene download script (assets never committed)
-tests/               unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter, OIDN, smokes)
-docs/                architecture, paper mapping, performance, status reports, roadmap
+tests/               unit tests (geometry, gather, hashgrid, loss gradients, reparam, exporter,
+                     OIDN, quality gates, rig/shot/art-loop, WebGPU export, smokes)
+docs/                the five-phase track docs, architecture, paper mapping, performance
+                     ledger, dated status reports, social drafts
+out/                 committed JSON reports + demo artifacts every measured claim cites
 flake.nix / mise.toml / .envrc   toolchain
 ```
 

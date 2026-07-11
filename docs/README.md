@@ -5,7 +5,7 @@ everything below together.
 
 ## The tracks (in order)
 
-- [tracks.md](tracks.md) — the spine: four phases, their status, and how they
+- [tracks.md](tracks.md) — the spine: five phases, their status, and how they
   connect.
 - [roadmap.md](roadmap.md) — phase 1 (complete): the ten-item replication
   roadmap, each written as a ready-to-run goal prompt with built-in
@@ -15,9 +15,13 @@ everything below together.
   neural rendering pipeline.
 - [pipeline-feasibility.md](pipeline-feasibility.md) — phase 3 (complete): the
   E10 verdict per target audience, with every claim traced to a report.
-- [production-track.md](production-track.md) — phase 4 (in progress): the
+- [production-track.md](production-track.md) — phase 4 (complete): the
   trunk-and-branches ladder attacking the verdict's named blockers, ending in
-  three summit demos.
+  three summit demos — three rungs closed as honest negatives/partials.
+- [hardening-track.md](hardening-track.md) — phase 5 (in progress): fixing what
+  phase 4 surfaced — the QuadLight zero-collapse first — re-earning the
+  caveated V1/V2 claims, and refreshing the verdict. Motivating audit:
+  [status/2026-07-11.md](status/2026-07-11.md).
 
 ## Reference
 

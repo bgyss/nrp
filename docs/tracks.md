@@ -9,7 +9,8 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 1 | Replication | [roadmap.md](roadmap.md) | ✅ Complete — 10/10 items, paper-scale training at 35.2 dB held-out PSNR |
 | 2 | Extensions | [extensions.md](extensions.md) | ✅ Complete — E1–E9 measured, including the settled E2 negative result and the real-Chrome WebGPU runtime |
 | 3 | Verdict | [pipeline-feasibility.md](pipeline-feasibility.md) | ✅ Complete — E10 decision document: "partly viable" for all three targets, blockers named |
-| 4 | Production track | [production-track.md](production-track.md) | 🚧 In progress — trunk T1–T4 + three summit-demo branches attacking the named blockers |
+| 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
+| 5 | Hardening track | [hardening-track.md](hardening-track.md) | 🚧 In progress — fix the diagnosed failures (quad zero-collapse first), re-earn the caveated V1/V2 claims, refresh the verdict |
 
 ## How the phases connect
 
@@ -24,9 +25,18 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 3. **Verdict** (`pipeline-feasibility.md`) is the E10 decision document: per
    target audience (games / animated film / feature VFX), what's measured,
    what blocks, and what a production team would still have to build.
-4. **Production track** (`production-track.md`) attacks the verdict's named
+4. **Production track** (`production-track.md`) attacked the verdict's named
    blockers as a balanced ladder — each rung pairs a scale/robustness proof
    with a performance target — ending in one summit demo per target audience.
+   All 10 rungs are measured; the honest negatives (G1's remaining gap, V1's
+   additivity fail, F2's storage cost) and the undiagnosed quad zero-collapse
+   became the next phase's work items.
+5. **Hardening track** (`hardening-track.md`) fixes what the production track
+   surfaced — root-causing the QuadLight zero-collapse, re-earning the V1/V2
+   summit claims with a fully-contributing rig, porting rig compositing to the
+   proven WebGPU runtime, real-scene dynamic geometry, storage — then
+   re-issues the feasibility verdict. Motivating audit:
+   `status/2026-07-11.md`.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware
