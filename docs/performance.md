@@ -2251,3 +2251,47 @@ before declaring this rung fully closed: batch the two heavy textured_quad
 dispatches into their own pass, or profile whether their large per-light
 storage buffers (hashgrid tables sized for a 200+-dim input) are the actual
 bottleneck vs. the MLP forward pass itself.
+
+## Textured-quad proxy quality (hardening track, rung H3)
+
+V1's `neon_sign`/`tv_glow` `TexturedQuadLight` proxies were the rig's
+genuinely-contributing low scorers (12.35/13.35 dB at 800 iters, 3.4x slower
+per iter than sphere/quad on the CPU path -- their pool targets fall back to
+the numpy gather backend, `examples/v1_rig.py`). H3 swept both levers this
+rung names, per-light, on the real kitchen-512 cache
+(`examples/h3_textured_quad_sweep.py`, `out/h3-textured-quad/report.json`):
+
+| light | 800 iters | 1600 iters | 3200 iters | 2x capacity (256 wide, 3200 iters) |
+|---|---:|---:|---:|---:|
+| neon_sign | 13.84 dB | 13.62 dB | 14.43 dB | 15.35 dB |
+| tv_glow | 13.15 dB | 13.29 dB | 14.44 dB | **13.74 dB (worse)** |
+
+**Neither lever closes the gap.** The iteration sweep plateaus almost
+immediately -- 4x V1's original budget buys neon_sign +0.6 dB and tv_glow
++1.3 dB, nowhere near H2's post-retrain sphere/quad envelope (18.3-20.5 dB).
+The capacity fallback arm (this rung's own named next step once budget alone
+plateaus) helps neon_sign a little more (+0.9 dB over its 3200-iter run,
+15.35 dB) but actually **regresses tv_glow** (13.74 dB, down from 14.44 dB at
+the same iteration count) -- 2x the hidden width did not reliably help even
+within this rung's own tested range, let alone close a 3-4 dB gap. Chosen
+operating point per `meets_envelope`: neither light clears the 18 dB
+sphere/quad envelope at any budget/capacity combination tested (`out/h3-
+textured-quad/report.json["chosen_operating_point"]`, both `false`).
+
+**This is an honest negative, not a partial win**: iteration budget and
+capacity, the two levers this rung named, do not bring `TexturedQuadLight`
+proxy quality into the rig's working envelope. The rung's fallback clause
+("or land a documented finding about why texture conditioning needs a
+different input scheme") is the live conclusion here. The two levers tested
+change *how hard* the network trains against the existing input
+representation; they don't change *what* it's conditioned on. `light_param_
+vector` flattens the whole 8x8x3 texture into 192 raw floats appended to the
+model's input (`nrp/torch_backend/train.py::light_param_vector`) -- the
+network has to learn spatial structure in that texture from scratch, per
+light, with no positional encoding or convolutional structure on the texture
+channels themselves (only the *pixel* xy gets the paper's hashgrid encoding;
+the light's own texture is fed in raw). A genuinely different conditioning
+scheme -- e.g. a small per-texel encoding, or querying the texture at the
+proxy's own sample point instead of flattening the whole texture into every
+query -- is the concrete next step this finding points to, not a bigger MLP
+or a longer training run on the current input representation.
