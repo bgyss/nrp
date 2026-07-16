@@ -67,6 +67,17 @@ def main() -> None:
     parser.add_argument("--cache", required=True)
     parser.add_argument("--out-dir", default="out/h3-textured-quad")
     parser.add_argument(
+        "--kernel-iters",
+        type=int,
+        nargs="*",
+        default=[800, 3200],
+        help="iteration budgets for the texture-kernel conditioning arm "
+        "(model.texture_conditioning='kernel': the MLP predicts a per-texel "
+        "throughput kernel contracted with the texture at the output, instead "
+        "of consuming the flattened texture as input -- the 'different input "
+        "scheme' this rung's honest-negative finding pointed to)",
+    )
+    parser.add_argument(
         "--sphere-quad-envelope-db",
         type=float,
         default=17.0,
@@ -189,25 +200,71 @@ def main() -> None:
                 f"val_psnr={report['val_psnr_db_vs_raw_mean']:.2f} dB"
             )
 
+    # Texture-kernel conditioning arm (H3 finding follow-up): gather_textured_quad
+    # is linear in the texture, so the model predicts a per-texel kernel and
+    # contracts it with the texture at the output (TorchNRP texture_kernel=True).
+    kernel_rows = []
+    for name in TEXTURED_QUAD_LIGHTS:
+        rl = lights_by_name[name]
+        for iters in args.kernel_iters:
+            kernel_cfg_base = copy.deepcopy(base_cfg)
+            kernel_cfg_base["model"]["texture_conditioning"] = "kernel"
+            run_dir = os.path.join(args.out_dir, "train", f"{name}_kernel_iters{iters}")
+            cfg = build_per_light_config(kernel_cfg_base, rl, run_dir, iters)
+            model_path = os.path.join(run_dir, "model.pt")
+            report_path = os.path.join(run_dir, "torch_train_report.json")
+            if os.path.exists(model_path) and os.path.exists(report_path):
+                with open(report_path) as f:
+                    report = json.load(f)
+                print(f"skipping {name} kernel iters={iters}: reusing existing {model_path}")
+            else:
+                t0 = time.perf_counter()
+                report = train(cfg)
+                report["_measured_train_seconds"] = time.perf_counter() - t0
+                with open(report_path, "w") as f:
+                    json.dump(report, f, indent=2)
+            gate = _light_full_image_gate(model_path, cache, cfg, rl)
+            kernel_rows.append(
+                {
+                    "light": name,
+                    "iters": iters,
+                    "hidden_width": 128,
+                    "texture_conditioning": "kernel",
+                    "val_psnr_db_vs_raw_mean": report["val_psnr_db_vs_raw_mean"],
+                    "val_ssim_vs_raw_mean": report["val_ssim_vs_raw_mean"],
+                    "val_flip_vs_raw_mean": report["val_flip_vs_raw_mean"],
+                    "train_seconds": report.get(
+                        "train_seconds", report.get("_measured_train_seconds")
+                    ),
+                    "full_image_gate": gate,
+                }
+            )
+            print(
+                f"{name} kernel iters={iters}: "
+                f"val_psnr={report['val_psnr_db_vs_raw_mean']:.2f} dB, "
+                f"train_s={kernel_rows[-1]['train_seconds']:.1f}"
+            )
+
     best_by_light = {}
     for name in TEXTURED_QUAD_LIGHTS:
-        candidates = [r for r in rows + capacity_rows if r["light"] == name]
+        candidates = [r for r in rows + capacity_rows + kernel_rows if r["light"] == name]
         best_by_light[name] = max(candidates, key=lambda r: r["val_psnr_db_vs_raw_mean"])
 
     report = {
         "rung": "H3",
         "scope": (
-            "iteration-budget (+ capacity fallback) sweep for the V1 rig's 2 "
-            "textured_quad proxies"
+            "iteration-budget (+ capacity fallback) sweep for the V1 rig's 2 textured_quad proxies"
         ),
         "sphere_quad_envelope_db": args.sphere_quad_envelope_db,
         "iters_sweep": rows,
         "capacity_sweep": capacity_rows,
+        "kernel_conditioning_sweep": kernel_rows,
         "iteration_sweep_plateaued": plateaued,
         "chosen_operating_point": {
             name: {
                 "iters": best_by_light[name]["iters"],
                 "hidden_width": best_by_light[name]["hidden_width"],
+                "texture_conditioning": best_by_light[name].get("texture_conditioning", "flat"),
                 "val_psnr_db_vs_raw_mean": best_by_light[name]["val_psnr_db_vs_raw_mean"],
                 "meets_envelope": bool(
                     best_by_light[name]["val_psnr_db_vs_raw_mean"] >= args.sphere_quad_envelope_db

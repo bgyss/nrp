@@ -347,11 +347,13 @@ concrete updates from the hardening track on top of that real-scene base:
   `recovery_caveats` check reports (`out/h2-v2-artloop/report.json`; the
   sixth light's raw output is technically nonzero but 4-5 orders of
   magnitude dimmer than the other five, a false negative in that check's
-  fixed epsilon). H3 additionally establishes that the rig's two
-  `TexturedQuadLight` proxies cannot be brought into the sphere/quad quality
-  envelope by more iterations or more model capacity — a different texture-
-  conditioning input scheme is the concrete next step
-  (`out/h3-textured-quad/report.json`).
+  fixed epsilon). H3 establishes that the rig's two `TexturedQuadLight`
+  proxies cannot be brought into the sphere/quad quality envelope by more
+  iterations or more model capacity — but the different texture-conditioning
+  scheme that finding pointed to closes the gap: a per-texel kernel head
+  (exploiting GATHERLIGHT's linearity in the texture, Eq. 1) lands both
+  proxies inside the 18.3–20.5 dB envelope at 19.64/19.99 dB
+  (`out/h3-textured-quad/report.json["kernel_conditioning_sweep"]`).
 - **Net effect on the verdict.** Production light rigs on real shot
   complexity remain the named blocker, exactly as the original table said —
   but it is no longer a *missing measurement*: the rig has been retrained
@@ -364,7 +366,7 @@ concrete updates from the hardening track on top of that real-scene base:
 | target | verdict | why |
 |---|---|---|
 | Games | Not the right primitive as a core renderer yet (unchanged, now on real-scene evidence) | WebGPU rig compositing is now genuinely real-time for the 8-light scripted session (H4: clean parity; cached-contribution compositing gives 1.3 ms p95 rgb nudges, 30.9 ms p95 worst-case param edits — both beat the 33 ms stretch target). The remaining blocker is structural, not latency: dynamic geometry is confirmed at real scale (H5: neither tested regime meets the 1 dB recovery target on a real re-traced scene). |
-| Animated film | Viable component (unchanged), with the "cornell-box only" caveat resolved | T1-F2 proved the full pipeline on a real Mitsuba gallery scene, not a procedural cornell box. F2's storage negative is flipped (H6: 0.589x raw, zero quality cost, at the swept crossover). The remaining gap — production light rigs — is now precisely measured rather than attributed to a bug: 8/8 proxies contribute post-H1-fix, additivity still misses preview tier, and the textured-quad quality floor is diagnosed (input representation, not budget/capacity). |
+| Animated film | Viable component (unchanged), with the "cornell-box only" caveat resolved | T1-F2 proved the full pipeline on a real Mitsuba gallery scene, not a procedural cornell box. F2's storage negative is flipped (H6: 0.589x raw, zero quality cost, at the swept crossover). The remaining gap — production light rigs — is now precisely measured rather than attributed to a bug: 8/8 proxies contribute post-H1-fix, additivity still misses preview tier, and the textured-quad quality floor is fixed at the diagnosed root cause (per-texel kernel conditioning: 19.64/19.99 dB, inside the sphere/quad envelope). |
 | Feature VFX | Viable component (unchanged), same real-scene/storage/rig updates as animated film | Per-shot caches and art-direction loops are proven on the real kitchen scene; art-direction color recovery is genuinely 5/6, not the automatically-reported 6/6, once checked against the authored targets by hand — a concrete, actionable finding for anyone reusing this pipeline's own quality-gate machinery, not just a footnote. |
 
 ## Status of E1-E9 (per-extension, for completeness)

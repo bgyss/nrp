@@ -2289,20 +2289,54 @@ operating point per `meets_envelope`: neither light clears the 18 dB
 sphere/quad envelope at any budget/capacity combination tested (`out/h3-
 textured-quad/report.json["chosen_operating_point"]`, both `false`).
 
-**This is an honest negative, not a partial win**: iteration budget and
+**The original close was an honest negative**: iteration budget and
 capacity, the two levers this rung named, do not bring `TexturedQuadLight`
-proxy quality into the rig's working envelope. The rung's fallback clause
-("or land a documented finding about why texture conditioning needs a
-different input scheme") is the live conclusion here. The two levers tested
+proxy quality into the rig's working envelope. The two levers tested
 change *how hard* the network trains against the existing input
 representation; they don't change *what* it's conditioned on. `light_param_
 vector` flattens the whole 8x8x3 texture into 192 raw floats appended to the
 model's input (`nrp/torch_backend/train.py::light_param_vector`) -- the
 network has to learn spatial structure in that texture from scratch, per
-light, with no positional encoding or convolutional structure on the texture
-channels themselves (only the *pixel* xy gets the paper's hashgrid encoding;
-the light's own texture is fed in raw). A genuinely different conditioning
-scheme -- e.g. a small per-texel encoding, or querying the texture at the
-proxy's own sample point instead of flattening the whole texture into every
-query -- is the concrete next step this finding points to, not a bigger MLP
-or a longer training run on the current input representation.
+light. The rung's fallback clause ("a documented finding about why texture
+conditioning needs a different input scheme") pointed at exactly this.
+
+**Follow-up: the different input scheme, found and measured.** The structure
+the flat input ignores: `gather_textured_quad` is *linear in the texture* --
+each texel is an independent constant emitter (Eq. 1), so the true function
+is `target(px) = Σ_texels K(px, texel) ⊙ T[texel]` with a fixed per-pixel
+throughput kernel `K`. And in §4.4 pool sampling for textured quads the quad
+geometry is *fixed* (only the texture is random per pool light), so the flat
+scheme was asking the MLP to learn a bilinear contraction against 192
+concatenated inputs -- the root cause of the plateau, and consistent with 2x
+capacity failing to help. `TorchNRP(texture_kernel=True)` (config:
+`model.texture_conditioning: "kernel"`) bakes the structure in instead: the
+MLP sees pixel features + quad geometry only and predicts a non-negative
+per-texel kernel, contracted with the texture at the output. Texture
+generalization becomes structural rather than learned, the output stays
+exactly linear (and differentiable) in the texture for §5.3, and `forward`
+keeps its `(xy, aux, params)` signature so every existing call site works
+unchanged. Same sweep, kernel arm (`--kernel-iters 800 3200`,
+`out/h3-textured-quad/report.json["kernel_conditioning_sweep"]`):
+
+| light | flat, best of all arms | kernel, 800 iters | kernel, 3200 iters |
+|---|---:|---:|---:|
+| neon_sign | 15.35 dB (3200 it, 2x width) | 17.86 dB | **19.64 dB** |
+| tv_glow | 14.44 dB (3200 it) | 18.62 dB | **19.99 dB** |
+
+Both lights land **inside H2's 18.3-20.5 dB sphere/quad envelope**
+(`chosen_operating_point.meets_envelope` now true for both) -- at 800 iters
+the kernel head already beats every flat arm including 2x capacity at 4x the
+budget. Costs are comparable: ~434k params either way (the input savings
+roughly pay for the 192-wide kernel head), train wall-clock within 8%
+(3076/2915 s vs 2835/2876 s at 3200 iters); CPU full-frame inference is
+~1.4x the flat model (136.9/138.3 ms vs 101.4/99.3 ms at 512²) from the
+wider output layer plus contraction. Caveats, stated honestly: the
+single-light full-image preview gate at the authored params still fails on
+SSIM/FLIP -- as it does for *every* arm including all flat baselines (raw
+single-light gathers are near-black, which the display-referred metrics
+punish); the kernel arms improve it without flipping it (tv_glow SSIM 0.451
+vs 0.066 flat at 3200 iters). And the WGSL runtime's shader generator still
+assumes a 3-output head, so a kernel-head proxy needs a small shader
+extension (predict kernel, contract with a texture uniform) before it can
+replace the flat textured_quad models in the H4 rig export -- follow-up
+work, not blocking this rung's quality finding.

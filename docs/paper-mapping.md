@@ -107,6 +107,17 @@ normal (3). Pixel coordinates go through a 2D multiresolution hashgrid [MESK22]
 (dense-when-fits, hashed otherwise, bilinear interpolation, geometric level growth);
 other inputs are raw, as the paper found encodings for them unhelpful.
 
+*Deviation (opt-in):* texture-kernel head for `textured_quad` proxies
+(`model.texture_conditioning: "kernel"`, hardening track rung H3). Instead of
+appending the flattened texture to the input (which plateaus 4-6 dB below the
+sphere/quad envelope regardless of budget/capacity), the MLP consumes pixel
+features + quad geometry only and predicts a non-negative per-texel kernel
+contracted with the texture at the output — exploiting GATHERLIGHT's exact
+linearity in the texture (each texel is an independent constant emitter,
+Eq. 1). 19.64/19.99 dB vs 15.35/14.44 dB flat on the kitchen rig's two
+textured quads (`out/h3-textured-quad/report.json`); the paper does not
+describe textured emitters, so both schemes are extensions.
+
 *Deviation:* softplus output head (the paper does not specify a head; softplus keeps
 contributions positive and smooth). Its default `nn.Linear` init predicts ~0.69
 regardless of scene, which can be orders of magnitude brighter than a cache's true

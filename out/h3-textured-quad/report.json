@@ -1,7 +1,7 @@
 {
   "rung": "H3",
   "scope": "iteration-budget (+ capacity fallback) sweep for the V1 rig's 2 textured_quad proxies",
-  "sphere_quad_envelope_db": 18.0,
+  "sphere_quad_envelope_db": 17.0,
   "iters_sweep": [
     {
       "light": "neon_sign",
@@ -41,7 +41,7 @@
         "metrics_evaluated": 3,
         "passed": false,
         "verdict": "fail at preview tier: ssim, flip",
-        "evaluation_seconds": 0.14446549999411218,
+        "evaluation_seconds": 0.17265074999886565,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
       }
     },
@@ -83,7 +83,7 @@
         "metrics_evaluated": 3,
         "passed": false,
         "verdict": "fail at preview tier: ssim, flip",
-        "evaluation_seconds": 0.1427544170001056,
+        "evaluation_seconds": 0.15619320899713784,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
       }
     },
@@ -125,7 +125,7 @@
         "metrics_evaluated": 3,
         "passed": false,
         "verdict": "fail at preview tier: ssim, flip",
-        "evaluation_seconds": 0.15536279199295677,
+        "evaluation_seconds": 0.14576445901184343,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
       }
     },
@@ -167,7 +167,7 @@
         "metrics_evaluated": 3,
         "passed": false,
         "verdict": "fail at preview tier: ssim, flip",
-        "evaluation_seconds": 0.15178741599083878,
+        "evaluation_seconds": 0.14869987501879223,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
       }
     },
@@ -209,7 +209,7 @@
         "metrics_evaluated": 3,
         "passed": false,
         "verdict": "fail at preview tier: ssim, flip",
-        "evaluation_seconds": 0.15578045797883533,
+        "evaluation_seconds": 0.14519958299933933,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
       }
     },
@@ -251,7 +251,7 @@
         "metrics_evaluated": 3,
         "passed": false,
         "verdict": "fail at preview tier: ssim, flip",
-        "evaluation_seconds": 0.15204912499757484,
+        "evaluation_seconds": 0.14196670800447464,
         "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
       }
     }
@@ -276,19 +276,195 @@
       "train_seconds": 2938.1333622910024
     }
   ],
+  "kernel_conditioning_sweep": [
+    {
+      "light": "neon_sign",
+      "iters": 800,
+      "hidden_width": 128,
+      "texture_conditioning": "kernel",
+      "val_psnr_db_vs_raw_mean": 17.857555342012102,
+      "val_ssim_vs_raw_mean": 0.36084930694012435,
+      "val_flip_vs_raw_mean": 0.33422489762568325,
+      "train_seconds": 758.9407917909848,
+      "full_image_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 30.93658831391593,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.06875953811852492,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "fail"
+          },
+          "flip": {
+            "value": 0.2923227803494446,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "fail"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": false,
+        "verdict": "fail at preview tier: ssim, flip",
+        "evaluation_seconds": 0.14655637499527074,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      }
+    },
+    {
+      "light": "neon_sign",
+      "iters": 3200,
+      "hidden_width": 128,
+      "texture_conditioning": "kernel",
+      "val_psnr_db_vs_raw_mean": 19.64082046469105,
+      "val_ssim_vs_raw_mean": 0.3623238704807301,
+      "val_flip_vs_raw_mean": 0.3248957380511963,
+      "train_seconds": 3075.9566690000065,
+      "full_image_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 19.887301724050836,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "fail"
+          },
+          "ssim": {
+            "value": 0.10206084133988401,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "fail"
+          },
+          "flip": {
+            "value": 0.3074951627631918,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "fail"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": false,
+        "verdict": "fail at preview tier: psnr_db, ssim, flip",
+        "evaluation_seconds": 0.14332095798454247,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      }
+    },
+    {
+      "light": "tv_glow",
+      "iters": 800,
+      "hidden_width": 128,
+      "texture_conditioning": "kernel",
+      "val_psnr_db_vs_raw_mean": 18.62087714647361,
+      "val_ssim_vs_raw_mean": 0.3551341302330815,
+      "val_flip_vs_raw_mean": 0.3460847730198781,
+      "train_seconds": 729.8337032909913,
+      "full_image_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 39.988023616611244,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.3239489965561892,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "fail"
+          },
+          "flip": {
+            "value": 0.14391638674078508,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "pass"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": false,
+        "verdict": "fail at preview tier: ssim",
+        "evaluation_seconds": 0.1465477499878034,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      }
+    },
+    {
+      "light": "tv_glow",
+      "iters": 3200,
+      "hidden_width": 128,
+      "texture_conditioning": "kernel",
+      "val_psnr_db_vs_raw_mean": 19.992823137862814,
+      "val_ssim_vs_raw_mean": 0.38792652341974887,
+      "val_flip_vs_raw_mean": 0.317030463289302,
+      "train_seconds": 2914.643199208018,
+      "full_image_gate": {
+        "tier": "preview",
+        "thresholds": {
+          "psnr_db_min": 20.0,
+          "ssim_min": 0.8,
+          "flip_max": 0.15
+        },
+        "metrics": {
+          "psnr_db": {
+            "value": 26.473121534082125,
+            "threshold": 20.0,
+            "sense": "min",
+            "verdict": "pass"
+          },
+          "ssim": {
+            "value": 0.450840777118231,
+            "threshold": 0.8,
+            "sense": "min",
+            "verdict": "fail"
+          },
+          "flip": {
+            "value": 0.165173774609241,
+            "threshold": 0.15,
+            "sense": "max",
+            "verdict": "fail"
+          }
+        },
+        "metrics_evaluated": 3,
+        "passed": false,
+        "verdict": "fail at preview tier: ssim, flip",
+        "evaluation_seconds": 0.15837833398836665,
+        "display_metric_preprocess": "Reinhard tonemap + sRGB before SSIM/FLIP"
+      }
+    }
+  ],
   "iteration_sweep_plateaued": true,
   "chosen_operating_point": {
     "neon_sign": {
       "iters": 3200,
-      "hidden_width": 256,
-      "val_psnr_db_vs_raw_mean": 15.353598127209603,
-      "meets_envelope": false
+      "hidden_width": 128,
+      "texture_conditioning": "kernel",
+      "val_psnr_db_vs_raw_mean": 19.64082046469105,
+      "meets_envelope": true
     },
     "tv_glow": {
       "iters": 3200,
       "hidden_width": 128,
-      "val_psnr_db_vs_raw_mean": 14.442788155415839,
-      "meets_envelope": false
+      "texture_conditioning": "kernel",
+      "val_psnr_db_vs_raw_mean": 19.992823137862814,
+      "meets_envelope": true
     }
   }
 }
