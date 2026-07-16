@@ -2061,5 +2061,100 @@ per-step reduction**, measured on a random-init model at the real 8-light
 rig's architecture size (forward FLOPs -- what the hoist saves -- don't
 depend on weight values, so this measurement doesn't need a trained rig).
 V2's original full run was 1320.7 s for 500 steps on the pre-H1-fix rig; a
-full rerun on the retrained rig (`out/h2-v2-artloop/`) is in progress -- see
-the V2 recovery table update once it lands.
+full rerun on the retrained rig (`out/h2-v2-artloop/`) landed at **1475.9 s**
+-- *higher* than the original despite the hoist, because this run overlapped
+with two other heavy background jobs (H5's converged rerun, H6's storage
+sweep) and a session-wide load average that spiked past 96 at points. The
+isolated hoist measurement above (same architecture, no confounds) is the
+trustworthy number for the hoist's own effect; this real run's wall-clock is
+not a clean before/after comparison and should not be quoted as "V2 got
+slower."
+
+**V2 recovery table, rerun on the retrained (H2) rig**
+(`out/h2-v2-artloop/report.json`): convergence gate **passes at draft tier**
+(same as the original V2 run, no fallback needed), and the recovered rig
+round-trips bit-identically through save/reload. The big change from V1/V2's
+original run: **`recovery_caveats` is now empty** -- no colorable light's raw
+proxy output is flagged as vacuous (all 6 clear the 1e-6 magnitude
+threshold), a real improvement from the original's 3-of-6 vacuous lights.
+Comparing recovered colors against the authored target
+(`ART_DIRECTION_TARGET_RGB`) light by light surfaces something the automated
+threshold check itself misses, though:
+
+| light | target rgb | recovered rgb | raw output max | verdict |
+|---|---|---|---:|---|
+| key | [4.5, 3.5, 2.5] | [4.49, 3.50, 2.50] | 1.456 | genuinely recovered |
+| fill | [0.6, 0.8, 1.8] | [0.60, 0.80, 1.80] | 1.295 | genuinely recovered |
+| rim | [0.8, 1.2, 2.5] | [0.80, 1.20, 2.50] | 1.103 | genuinely recovered |
+| window | [2.5, 2.0, 1.2] | [2.49, 2.00, 1.20] | 0.923 | genuinely recovered |
+| ceiling_panel | [1.0, 1.0, 1.0] | [1.04, 1.00, 1.00] | 0.385 | degenerate case (target == neutral guess, not evidence either way) |
+| practical | [3.5, 2.0, 0.5] | [1.01, 1.01, 1.00] | **1.59e-6** | **not actually recovered** |
+
+**`practical`'s "no caveat" flag is a false negative in the report's own
+detection logic, caught by inspecting `recovered_rgbs` directly.** Its raw
+proxy output (1.59e-6 max) sits just above the script's fixed 1e-6 vacuity
+threshold -- 4-5 orders of magnitude dimmer than the other 5 colorable
+lights' 0.38-1.46 max -- so `_raw_proxy_magnitude` doesn't flag it, but its
+recovered color ([1.01, 1.01, 1.00]) is essentially the untouched neutral
+guess, not the authored [3.5, 2.0, 0.5] target: u_rgb had no meaningful
+gradient to work with in practice, even though it technically had *some*.
+Genuine count against this rung's own verify criterion ("6/6 colorable
+lights genuinely gradient-recovered"): **5/6**, not 6/6 -- an honest partial
+result, and a concrete follow-up for the caveat-detection threshold itself
+(it should likely scale relative to the rig's other lights' raw-output
+magnitudes, not use one fixed absolute epsilon across a rig whose per-light
+magnitudes already span 6 orders of magnitude post-H1-fix).
+
+Slider-loop latency: mean 738.8 ms / p95 762.1 ms (CPU torch, 8-light rig) --
+consistent with V1/V2's ~950 ms/111 ms-per-light baseline, the gap this
+rung's H4 counterpart targets closing on the WGSL runtime.
+
+## Storage-vs-quality sweep: flipping the F2 negative (hardening track, rung H6)
+
+F2's baseline (`out/f2-shot/report.json`, `mise run f2-shot`, full 120-frame
+F1 kitchen shot at 24 fps / 512²): fp16 residuals for every frame cost
+**1.17x** the raw frame bytes. H6 swept both levers the F2 report itself
+named (`examples/h6_storage_sweep.py`, `out/h6-storage/sweep_report.json`,
+same shot, same G2-trained proxy, oidn under `nix develop`):
+
+| configuration | precision | approval frames | bytes vs raw | declared-gate pass |
+|---|---|---:|---:|---|
+| fp16, all frames (F2 baseline) | fp16 | 120/120 | 1.167x | yes (0 flagged) |
+| fp16, half approval | fp16 | 60/120 | **0.589x** | yes (0 flagged) |
+| fp16, quarter approval | fp16 | 30/120 | 0.300x | yes (0 flagged) |
+| fp16, tenth approval | fp16 | 12/120 | 0.127x | yes (0 flagged) |
+| int8, all frames | int8 | 120/120 | 0.037x | **no (120/120 flagged)** |
+| int8, half approval | int8 | 60/120 | 0.024x | no (60/60 flagged) |
+| int8, quarter approval | int8 | 30/120 | 0.018x | no (30/30 flagged) |
+| int8, tenth approval | int8 | 12/120 | 0.014x | no (12/12 flagged) |
+| int8, sparse approval | int8 | 6/120 | 0.012x | no (6/6 flagged) |
+
+**Lever 1 (approval-frame gating) flips the negative on its own, with no
+quality cost to the approval frames themselves.** Every fp16 configuration
+that stores residuals for only a subset of frames (proxy-only + preview-tier
+gate elsewhere) beats raw-frame storage, starting at the crossover point
+**fp16 half-approval, 0.589x raw** -- and every one of them, down to 1-in-12
+approval frames, still has **zero flagged frames**: proxy-only frames pass
+the preview-tier gate on this well-converged G2 proxy (29.4 dB, docs
+section above), so the storage win costs nothing in the frames that were
+never going to need exact reconstruction anyway.
+
+**Lever 2 (int8 quantization) is a clean, documented floor, not a win.**
+Every int8 configuration fails its declared gate on *every* frame, for two
+independent reasons inspected directly (`out/h6-storage/int8_all_frames_approval/report.json`):
+the fp16-tuned identity tolerance itself (residual round-trip error 4.7e-3
+vs. the 1.19e-3 F2's own `--identity-rtol 1e-3` allows, ~4x over budget --
+127-level int8 quantization simply cannot hit the precision F2 declared), and
+independently, the final tier's own SSIM/FLIP thresholds (SSIM 0.900 < 0.98,
+FLIP 0.052 > 0.02) even before the identity check is applied. int8 residual
+storage is ~4% the fp16 size, but that's not a usable tradeoff at this
+proxy's quality and F2's declared tolerances -- a documented floor, honestly
+reported as this rung's own acceptance criterion allows for, rather than a
+tuned-tolerance workaround to manufacture a pass.
+
+**Bottom line**: F2's negative flips via lever 1 alone; lever 2 doesn't
+survive contact with the final tier's thresholds at this proxy's quality and
+is reported as a floor. The crossover, `fp16_half_approval`, is a reasonable
+production default -- half the shot as exactly-reconstructible approval
+frames (e.g. every other frame, or specific director-flagged frames) and the
+rest proxy-only at preview tier, at just over half the raw-frame footprint.

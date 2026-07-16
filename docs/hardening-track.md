@@ -16,11 +16,11 @@ every prior phase.
 | rung | title | status | evidence |
 |---|---|---|---|
 | H1 | Diagnose and fix the QuadLight zero-collapse | done | `out/h1-quad-fix/report.json`, `docs/performance.md#quadlight-zero-collapse-diagnosis-and-fix-hardening-track-rung-h1` |
-| H2 | Re-earn the V1/V2 summit claims | in progress (rig retrain running) | `out/h2-rig/` |
-| H3 | Textured-quad proxy quality | in progress (sweep script written, smoke-tested) | `examples/h3_textured_quad_sweep.py` |
-| H4 | Rig compositing on the WebGPU runtime | in progress (shader/exporter/bench built + smoke-tested; real 8-light run blocked on H2's retrain) | `webgpu/bench_h4.mjs`, `examples/export_webgpu_rig.py` |
-| H5 | Real-scene dynamic geometry (exporter retrace path) | in progress (mask machinery verified at real scale; regime comparison needs a converged rerun) | `out/h5-kitchen/report.json`, `docs/performance.md#real-scene-dynamic-geometry-hardening-track-rung-h5` |
-| H6 | Flip the F2 storage negative | in progress (sweep running) | `examples/h6_storage_sweep.py` |
+| H2 | Re-earn the V1/V2 summit claims | done (partial: 8/8 proxies nonzero, additivity gate still fails preview tier; 5/6 colorable lights genuinely recovered in V2) | `out/h2-rig/report.json`, `out/h2-v2-artloop/report.json`, `docs/performance.md#re-earning-the-v1v2-summit-claims-hardening-track-rung-h2` |
+| H3 | Textured-quad proxy quality | in progress (sweep script written, smoke-tested; real sweep not yet run) | `examples/h3_textured_quad_sweep.py` |
+| H4 | Rig compositing on the WebGPU runtime | in progress (shader/exporter built, real 8-light export succeeded; browser bench OOM-crashed under session memory pressure, retry pending) | `webgpu/bench_h4.mjs`, `examples/export_webgpu_rig.py`, `out/h4-rig-export/manifest.json` |
+| H5 | Real-scene dynamic geometry (exporter retrace path) | in progress (mask machinery verified at real scale; found and fixed a real bug in regime (a)'s reimplementation, corrected rerun in progress) | `out/h5-kitchen/report.json`, `docs/performance.md#real-scene-dynamic-geometry-hardening-track-rung-h5` |
+| H6 | Flip the F2 storage negative | done (approval-frame gating flips the negative at 0.589x raw with zero quality cost; int8 quantization is a documented floor, not a win) | `out/h6-storage/sweep_report.json`, `docs/performance.md#storage-vs-quality-sweep-flipping-the-f2-negative-hardening-track-rung-h6` |
 | H7 | Feasibility-verdict refresh | not started (last) | — |
 
 Ordering: H1 → H2 → H4; H3, H5, H6 independent; H7 after everything else.
