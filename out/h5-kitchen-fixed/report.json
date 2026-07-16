@@ -1,0 +1,72 @@
+{
+  "rung": "H5",
+  "scene": "examples/scenes/kitchen/scene.xml (T1 Country Kitchen)",
+  "moved_shape": "ChoppingBoard",
+  "translate": [
+    0.2,
+    0.0,
+    0.0
+  ],
+  "resolution": [
+    512,
+    512
+  ],
+  "light": "key (V1 rig SphereLight)",
+  "masks": {
+    "primary_visibility_invalid_pixels": 2065,
+    "swept_volume_invalid_pixels": 162542,
+    "union_invalid_pixels": 162544,
+    "total_pixels": 262144,
+    "shard_size": 32,
+    "shard_region_pixels": 262144,
+    "n_invalidated_shards": 256
+  },
+  "mask_correctness_spot_check": {
+    "out_of_mask_depth_max_abs_diff": 0.0,
+    "in_mask_depth_mean_abs_diff": 0.00396065754135802
+  },
+  "budget": {
+    "iters": 1600,
+    "lr": 0.005,
+    "denoise": "bilateral"
+  },
+  "regimes": {
+    "a_full_retrace_retrain": {
+      "psnr_vs_full_db": 69.93901914181036,
+      "psnr_in_mask_db": 69.88064491744494,
+      "seconds": 458.2631316249899
+    },
+    "b_incremental_finetune": {
+      "psnr_vs_full_db": 55.40855329532655,
+      "psnr_in_mask_db": 55.76325595188183,
+      "seconds": 492.54158820799785
+    },
+    "c_stale": {
+      "psnr_vs_full_db": 22.473200959206544,
+      "psnr_in_mask_db": 22.968797289765824,
+      "seconds": 0.1407556670019403
+    },
+    "d_frozen_base_plus_residual": {
+      "psnr_vs_full_db": 29.321872962764623,
+      "psnr_in_mask_db": 30.01873560214107,
+      "seconds": 34.98901824999484,
+      "residual_parameter_count": 1603
+    }
+  },
+  "wall_clock_seconds": {
+    "load": 24.802992083976278,
+    "mask_compute": 1.3109497079858556,
+    "reference_gather_denoise": 1.4478131250070874,
+    "regime_a_full_retrace_retrain": 458.2631316249899,
+    "invalidate_and_recover_regime_d": 36.2999679579807
+  },
+  "hardware": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "torch_num_threads": 8
+  },
+  "gap_a_minus_b_db": 14.530465846483814,
+  "gap_a_minus_d_db": 40.61714617904574,
+  "regime_b_within_target": false,
+  "regime_d_within_target": false,
+  "recovery_target_db": 1.0
+}

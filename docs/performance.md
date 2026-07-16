@@ -2158,3 +2158,43 @@ is reported as a floor. The crossover, `fp16_half_approval`, is a reasonable
 production default -- half the shot as exactly-reconstructible approval
 frames (e.g. every other frame, or specific director-flagged frames) and the
 rest proxy-only at preview tier, at just over half the raw-frame footprint.
+
+**H5's corrected regime table** (`out/h5-kitchen-fixed/report.json`, same
+masks/base proxy/1600-iteration budget as above, regime (a) now using H1's
+fix + the paper's relative-MSE loss instead of the buggy from-scratch loop):
+
+| regime | val PSNR vs full (dB) | seconds | within 1 dB of (a)? |
+|---|---:|---:|---|
+| (a) full retrace + full retrain | 69.94 | 458.3 | -- (ceiling) |
+| (b) incremental fine-tune | 55.41 | 492.5 | **no** (14.53 dB gap) |
+| (c) stale | 22.47 | 0.1 | no (47.47 dB gap) |
+| (d) frozen base + shard residual | 29.32 | 35.0 | **no** (40.62 dB gap) |
+
+**Neither regime (b) nor regime (d) meets E2/G1's 1 dB recovery target at
+real kitchen scale — an honest negative at real scale, exactly the kind of
+outcome this rung's own acceptance criterion names as a valid deliverable.**
+This is a materially different (and more trustworthy) outcome than either
+buggy prior run suggested. One caveat worth stating plainly for anyone
+reusing this table: regime (a) here is trained directly against **one fixed
+target image** at the light's exact authored parameters (light params held
+constant through all 1600 iterations) — closer to single-image overfitting
+than to how the shipped rig proxies are actually trained (H2's `key` proxy
+generalizes across *sampled* light positions/shapes via the training pool
+and scores only 19.78 dB on *held-out* validation lights, a much harder
+task). Regime (a)'s 69.94 dB ceiling is real and not a bug, but it is an
+easier target than a genuinely generalizing production retrain would set,
+so the 14.5–40.6 dB gaps above are, if anything, an optimistic read of how
+close regimes (b)/(d) come to a true from-scratch production retrain at this
+scale — the honest negative holds either way.
+
+**Wall-clock is trustworthy here** (this run had markedly less concurrent
+contention than the two prior attempts): regime (d)'s `invalidate_and_recover`
+path (mask compute + residual train) is dramatically cheaper than regime
+(a)'s full retrain -- 35.0 s vs. 458.3 s, a genuine **>13×** wall-clock win --
+even though it misses the quality target. The practical reading: at real
+kitchen scale, the frozen-base-plus-residual approach is fast but not yet
+accurate enough to call "recovered" against a converged ceiling; toy-scale
+G1's passing result does not transfer to this real scene/light without
+further work (larger residual capacity, per-shard rather than whole-image
+residual scope now that swept-volume invalidation flags the whole image at
+this shard size, or a genuinely generalizing regime (a) baseline).
