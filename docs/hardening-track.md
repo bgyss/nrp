@@ -16,11 +16,11 @@ every prior phase.
 | rung | title | status | evidence |
 |---|---|---|---|
 | H1 | Diagnose and fix the QuadLight zero-collapse | done | `out/h1-quad-fix/report.json`, `docs/performance.md#quadlight-zero-collapse-diagnosis-and-fix-hardening-track-rung-h1` |
-| H2 | Re-earn the V1/V2 summit claims | not started (unblocked) | — |
-| H3 | Textured-quad proxy quality | not started | — |
-| H4 | Rig compositing on the WebGPU runtime | not started (partially blocked on H2) | — |
-| H5 | Real-scene dynamic geometry (exporter retrace path) | not started | — |
-| H6 | Flip the F2 storage negative | not started | — |
+| H2 | Re-earn the V1/V2 summit claims | in progress (rig retrain running) | `out/h2-rig/` |
+| H3 | Textured-quad proxy quality | in progress (sweep script written, smoke-tested) | `examples/h3_textured_quad_sweep.py` |
+| H4 | Rig compositing on the WebGPU runtime | not started (blocked on H2) | — |
+| H5 | Real-scene dynamic geometry (exporter retrace path) | in progress (mask machinery verified at real scale; regime comparison needs a converged rerun) | `out/h5-kitchen/report.json`, `docs/performance.md#real-scene-dynamic-geometry-hardening-track-rung-h5` |
+| H6 | Flip the F2 storage negative | in progress (sweep running) | `examples/h6_storage_sweep.py` |
 | H7 | Feasibility-verdict refresh | not started (last) | — |
 
 Ordering: H1 → H2 → H4; H3, H5, H6 independent; H7 after everything else.

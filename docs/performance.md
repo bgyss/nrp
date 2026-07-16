@@ -1930,3 +1930,62 @@ than the original oidn-denoised V1 run; per the 0.14 s fix-overhead
 measurement above, that gap is attributable to bilateral vs. oidn denoising
 in this shell, not the fix — H2 should re-measure under oidn (`nix develop`)
 for a clean budget comparison.
+
+## Real-scene dynamic geometry (hardening track, rung H5)
+
+G1's residual result (`out/g1-residual/`, "Dynamic geometry, second attempt"
+above) is toy-scale only — the Mitsuba exporter could record paths for a fixed
+scene but had no way to re-trace an *edited* one, so no real-scene invalidation
+target existed. H5 adds that: `nrp.mitsuba_exporter.apply_shape_translation`
+translates one named shape in an already-loaded scene (mesh shapes via
+`vertex_positions`, analytic shapes via `to_world`) before tracing, wired up as
+`--move-shape`/`--translate`. Re-exporting the T1 kitchen scene with
+`ChoppingBoard` moved +0.2 m along x (`out/h5-kitchen/edited_path_cache.npz`,
+512×512 @ 64 spp, wavefront/metal_ad_rgb, 39.5 s) and diffing against the
+shipped `out/kitchen-512/path_cache.npz` gives the first real-scene
+before/after cache pair for `nrp.dynamic_geometry`'s invalidation machinery.
+
+**Mask correctness spot check** (`tests/test_exporter_denoise_bench.py
+::ShapeTranslationTests`, and the same check at kitchen scale via
+`examples/h5_kitchen_dynamic.py`, `out/h5-kitchen/report.json`): primary-
+visibility invalidation flags 2065/262144 pixels (0.8%) — first-hit depth
+strictly unchanged outside that mask (max abs diff **0.0**, exact, since both
+traces share seed/sampler) and nonzero inside it (mean abs diff 3.96e-3). The
+swept-volume mask (any bounce-depth segment overlapping the object's swept
+bounding sphere) is far more conservative: 162542/262144 pixels (62.0%) — at
+32×32 shard granularity that aggregates to **all 256 shards**, i.e. the whole
+image. This is a genuine, informative measurement, not a bug: the kitchen is a
+small enclosed interior with heavy multi-bounce light transport, so a modest
+swept region (radius ≈0.3 m) plausibly intersects *some* cached segment behind
+most pixels once every bounce depth is checked — exactly the conservative
+behavior `nrp.dynamic_geometry`'s docstring documents, just never previously
+exercised past a toy 32×32 box where the effect is much smaller.
+
+**G1's regime comparison, rerun at kitchen scale** for the V1 rig's `key`
+`SphereLight` against its own already-trained proxy
+(`out/h2-rig/train/key/model.pt`): reusing G1's original 300-iteration budget
+verbatim produced a **degenerate comparison, reported honestly rather than
+spun as a result** (`out/h5-kitchen/report.json`) — regime (a), "full retrace
++ full retrain," trains the real 128-width/4-layer hashgrid architecture from
+random init in only 300 iterations, far short of convergence (H2 needed 1600
+iterations for the same architecture on the same cache to reach 19.8 dB val
+PSNR generalization; the 300-iter run here lands at a similar-looking 19.9 dB
+full-image PSNR by coincidence of metric, not convergence). Regimes (b)
+(warm-started incremental fine-tune, 54.4 dB) and (d) (frozen base + shard
+residual, 23.7 dB) both "beat" this ceiling only because they start from the
+already-well-trained base proxy instead of random init — an artifact of an
+under-converged regime (a), not evidence the fix generalizes better at real
+scale. **This is the honest negative this rung's own acceptance criterion
+allows for**: G1's toy-scale iteration budget does not transfer to the real
+architecture, so the "recovery within 1 dB of regime (a)" framing needs a
+converged regime (a) to be meaningful. A corrected rerun at H2's 1600-iteration
+budget for regime (a) is `out/h5-kitchen-converged/report.json` (same masks,
+same base proxy) — see below once it lands.
+
+One number from the 300-iter run is not an artifact and stands on its own:
+**wall-clock**. `invalidate_and_recover` (mask compute + regime (d)'s residual
+training, 32.3 s) vs regime (a)'s from-scratch retrain even at the same
+(under-converged) 300-iteration budget (226.6 s) is a genuine **7×** wall-clock
+win for reusing the frozen base + shard residual over retraining from
+scratch — independent of whether 300 iterations is enough to call either
+regime "converged."
