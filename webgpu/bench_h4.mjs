@@ -241,6 +241,9 @@ async function main() {
     ],
   });
   const page = await browser.newPage();
+  page.on("console", (msg) => console.log("[page]", msg.text()));
+  page.on("pageerror", (err) => console.log("[pageerror]", err.message));
+  page.on("crash", () => console.log("[page crashed]"));
   await page.goto(`file://${pagePath}`);
   const result = await page.evaluate(runInPage, {
     lightsData,
