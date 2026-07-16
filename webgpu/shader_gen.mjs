@@ -9,14 +9,27 @@
 //     after the emission multiply: per-layer light linking (zero the masked
 //     pixels when controls.x > 0.5) and a first-hit linear-distance artist
 //     attenuation curve (weight max(0, 1 - controls.y * distance)).
-//   composite: "write" (default) | "add_masked"  — add_masked accumulates into
-//     the output buffer on pixels where the mask (@5) is set and leaves other
-//     pixels untouched (the G1 residual compositing pass).
+//   composite: "write" (default) | "add_masked" | "add"  — add_masked accumulates
+//     into the output buffer on pixels where the mask (@5) is set and leaves other
+//     pixels untouched (the G1 residual compositing pass); add accumulates
+//     unconditionally on every pixel, no mask binding (H4's N-light rig
+//     compositing: one "write" dispatch for the first active light, then "add"
+//     for each subsequent one, all sharing the same output buffer).
+//   rigLight: true — adds a `light_rgb: vec4<f32>` uniform and multiplies the raw
+//     MLP output by it before storing (Eq. 3's emission multiply), same convention
+//     as `demo` but without the link-mask/attenuation machinery H4 doesn't need.
+//     Mutually exclusive with `demo` (which already does its own light_rgb multiply
+//     plus the two E8 controls).
 export function buildShader(manifest, opts = {}) {
   const outputActivation = opts.outputActivation || "softplus";
   const demo = !!opts.demo;
+  const rigLight = !!opts.rigLight;
   const composite = opts.composite || "write";
-  if (demo && composite !== "write") throw new Error("demo and add_masked are exclusive");
+  if (demo && composite !== "write") throw new Error("demo and add_masked/add are exclusive");
+  if (demo && rigLight) throw new Error("demo and rigLight are exclusive");
+  if (rigLight && composite === "add_masked") {
+    throw new Error("rigLight uses add, not add_masked (no region mask)");
+  }
   const dims = manifest.mlp_dims;
   const enc = manifest.encoding;
   const inDim = dims[0];
@@ -140,7 +153,9 @@ export function buildShader(manifest, opts = {}) {
     outputActivation === "softplus" ? `softplus(${outArr}[0][${i}])` : `${outArr}[0][${i}]`;
   const demoStruct = demo
     ? `, light_rgb: vec4<f32>, controls: vec4<f32>,`
-    : `,`;
+    : rigLight
+      ? `, light_rgb: vec4<f32>,`
+      : `,`;
   const demoBindings = demo
     ? `
 @group(0) @binding(5) var<storage, read> positions: array<f32>;
@@ -148,7 +163,23 @@ export function buildShader(manifest, opts = {}) {
     : composite === "add_masked"
       ? `
 @group(0) @binding(5) var<storage, read> regionMask: array<f32>;`
-      : "";
+      : rigLight
+        ? `
+@group(0) @binding(5) var<storage, read> lightParams: array<f32>;`
+        : "";
+  // rigLight sources light params from the storage buffer above (binding 5), not
+  // the small `params.light: vec4<f32>` uniform slot -- unlike sphere-only T4/G2/
+  // G1 (light_param_dim<=4, fits a vec4), a mixed rig's quad/textured_quad lights
+  // need up to 8 + texture-size*3 floats (H3/H5's textured_quad proxies), far past
+  // what a uniform vec4 can hold.
+  const lightParamsFillCode = rigLight
+    ? `
+  for (var i: u32 = 0u; i < ${lightDim}u; i = i + 1u) { buf[${encDim + auxDim}u + i] = lightParams[i]; }`
+    : `
+  buf[${encDim + auxDim}u] = params.light.x;
+  buf[${encDim + auxDim + 1}u] = params.light.y;
+  buf[${encDim + auxDim + 2}u] = params.light.z;
+  buf[${encDim + auxDim + 3}u] = params.light.w;`;
   let storeCode;
   if (demo) {
     storeCode = `
@@ -171,6 +202,24 @@ export function buildShader(manifest, opts = {}) {
     outputs[pixel * 3u] = outputs[pixel * 3u] + ${head(0)};
     outputs[pixel * 3u + 1u] = outputs[pixel * 3u + 1u] + ${head(1)};
     outputs[pixel * 3u + 2u] = outputs[pixel * 3u + 2u] + ${head(2)};
+  }`;
+  } else if (rigLight) {
+    const c = `vec3<f32>(${head(0)}, ${head(1)}, ${head(2)}) * params.light_rgb.xyz`;
+    storeCode =
+      composite === "add"
+        ? `
+  if (gid.x < params.n_pixels) {
+    let c = ${c};
+    outputs[pixel * 3u] = outputs[pixel * 3u] + c.x;
+    outputs[pixel * 3u + 1u] = outputs[pixel * 3u + 1u] + c.y;
+    outputs[pixel * 3u + 2u] = outputs[pixel * 3u + 2u] + c.z;
+  }`
+        : `
+  if (gid.x < params.n_pixels) {
+    let c = ${c};
+    outputs[pixel * 3u] = c.x;
+    outputs[pixel * 3u + 1u] = c.y;
+    outputs[pixel * 3u + 2u] = c.z;
   }`;
   } else {
     storeCode = `
@@ -203,10 +252,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
   var buf: array<f32, ${maxDim}>;
 ${encodingCode}
   for (var i: u32 = 0u; i < ${auxDim}u; i = i + 1u) { buf[${encDim}u + i] = pixels[src + 2u + i]; }
-  buf[${encDim + auxDim}u] = params.light.x;
-  buf[${encDim + auxDim + 1}u] = params.light.y;
-  buf[${encDim + auxDim + 2}u] = params.light.z;
-  buf[${encDim + auxDim + 3}u] = params.light.w;
+${lightParamsFillCode}
 ${outDecls}
 ${mlpCode}${storeCode}
 }

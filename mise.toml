@@ -214,6 +214,14 @@ run = "cd webgpu && npm install --silent && npx playwright install chrome && nod
 description = "T4: regression gate — fails if parity breaks, p95 frame time regresses >30% vs the committed baseline, or 512^2 misses the 30 fps p95 floor"
 run = "cd webgpu && npm install --silent && npx playwright install chrome && node bench_t4.mjs --check"
 
+[tasks.h4-export]
+description = "H4: export the H2 8-light rig (all lights, any type) to the WGSL rig-compositor's blob format"
+run = "uv run python examples/export_webgpu_rig.py --rig out/h2-rig/rig.json --models-dir out/h2-rig/models --cache out/kitchen-512/path_cache.npz --out-dir out/h4-rig-export"
+
+[tasks.h4-bench]
+description = "H4: N-light rig compositing in real Chrome WebGPU — GPU-vs-CPU parity, per-light marginal cost, scripted slider-session latency; writes out/h4-rig/report.json"
+run = "cd webgpu && npm install --silent && npx playwright install chrome && node bench_h4.mjs"
+
 [tasks.generative-loop]
 description = "E7 scribble/generative target inverse-lighting report"
 run = "uv run python examples/generative_loop.py --out out/generative/report.json"
