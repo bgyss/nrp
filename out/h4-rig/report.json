@@ -1,0 +1,79 @@
+{
+  "rung": "H4",
+  "scope": "N-light rig compositing on the T4/G2 WGSL runtime, all lights active",
+  "backend": "webgpu (Chrome, via Playwright)",
+  "adapter": {
+    "vendor": "apple",
+    "architecture": "metal-3"
+  },
+  "resolution": [
+    512,
+    512
+  ],
+  "n_lights": 8,
+  "parity_vs_cpu_max_abs_diff": 0.00001049041748046875,
+  "parity_tolerance": 0.0002,
+  "parity_passed": true,
+  "compositing_overhead_ms": {
+    "rows": [
+      {
+        "n_lights": 1,
+        "ms": 19.500000001490115
+      },
+      {
+        "n_lights": 2,
+        "ms": 38.40000000149011
+      },
+      {
+        "n_lights": 3,
+        "ms": 57.41499999910593
+      },
+      {
+        "n_lights": 4,
+        "ms": 76.76000000089407
+      },
+      {
+        "n_lights": 5,
+        "ms": 95.95500000119209
+      },
+      {
+        "n_lights": 6,
+        "ms": 115.08499999791384
+      },
+      {
+        "n_lights": 7,
+        "ms": 142.55999999940394
+      },
+      {
+        "n_lights": 8,
+        "ms": 169.95499999970198
+      }
+    ],
+    "fit_slope_ms_per_light": 21.026071428259208,
+    "fit_intercept_ms": -5.163571427017416
+  },
+  "slider_loop": {
+    "n_adjustments": 10,
+    "latency_ms": [
+      170.60000002384186,
+      170.19999998807907,
+      170.2000000178814,
+      170.19999998807907,
+      170.09999999403954,
+      170.30000001192093,
+      170.40000000596046,
+      169.89999997615814,
+      170.2999999821186,
+      170.09999999403954
+    ],
+    "mean_ms": 170.22999999821187,
+    "p50_ms": 170.2000000178814,
+    "p95_ms": 170.60000002384186,
+    "min_ms": 169.89999997615814,
+    "max_ms": 170.60000002384186
+  },
+  "v1_cpu_baseline_ms_per_light": 111,
+  "v2_cpu_baseline_slider_mean_ms": 950,
+  "meets_p95_100ms": false,
+  "meets_p95_33ms_stretch": false
+}

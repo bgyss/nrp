@@ -2198,3 +2198,56 @@ G1's passing result does not transfer to this real scene/light without
 further work (larger residual capacity, per-shard rather than whole-image
 residual scope now that swept-volume invalidation flags the whole image at
 this shard size, or a genuinely generalizing regime (a) baseline).
+
+## Rig compositing on the WebGPU runtime (hardening track, rung H4)
+
+Ports N-light rig compositing to the T4/G2 WGSL runtime: `shader_gen.mjs`'s
+new `rigLight` option multiplies raw MLP output by a `light_rgb` uniform
+(Eq. 3) and a new `composite: "add"` mode accumulates unconditionally into a
+shared output buffer (Eq. 1's linearity) -- one dispatch per active rig
+light, first active light `write`s, the rest `add`. Sphere-only T4/G2/G1
+packed light params into a 4-float uniform slot; a mixed rig's quad (8) and
+textured_quad (200+, texture-conditioned) proxies don't fit that, so
+`rigLight` sources light params from a small storage buffer instead
+(`examples/export_webgpu_rig.py` generalizes the G2 exporter to any
+`LightRig`, any light type, N lights).
+
+**A real bug, found and fixed before any measurement was trustworthy.** The
+first working version shipped every light's `pixels` blob (9.4 MB at 512²)
+duplicated into each of the 8 lights' `page.evaluate()` argument data --
+~150 MB of pure duplication once serialized across the Playwright/CDP
+bridge. Removing the duplication (down to ~98 MB) didn't fix it either: a
+follow-up binary-search probe (a bare 95 MB array as a single
+`page.evaluate` argument, no WebGPU code at all) reproduced the exact same
+failure -- "Target page, context or browser has been closed," no page-level
+console/pageerror/crash event, browser process gone before any page code
+ran. This is a `page.evaluate()` argument-size ceiling somewhere under
+~100 MB, not a memory-pressure or WebGPU issue (T4/G2 never hit it: one
+sphere light's data is ~18 MB total). Fix: `webgpu/h4_page.mjs` runs
+entirely inside the browser page and `fetch()`s its own blobs from a local
+static server (`demo/server.mjs`, the same pattern `demo/main.mjs` and
+`demo_g2.mjs` already use for the G2 demo) -- every `page.evaluate()` call
+from the driver (`bench_h4.mjs`) now crosses only small JSON.
+
+**Real 8-light rig, real Chrome** (`out/h4-rig/report.json`, the H2-retrained
+rig, `mise run h4-export && mise run h4-bench`):
+
+| check | result |
+|---|---:|
+| GPU-vs-CPU composite parity (`LightRig.render`, all 8 lights) | **1.05e-5 max abs diff — PASS** (tolerance 2e-4) |
+| per-light marginal cost (linear fit) | **22.27 ms/light** (vs V1's 111 ms/light CPU — 5.0x) |
+| fit intercept | -8.40 ms |
+| slider-loop latency mean / p95 (10 scripted nudges, 8-light rig) | 178.1 / **181.1 ms** |
+| target: p95 <= 100 ms (stretch: 33 ms) | **miss** |
+| vs V2's 950 ms CPU slider mean | **5.2x faster, target not yet met** |
+
+Parity is clean and the per-light cost is a genuine 5x win over the CPU
+baseline, but the 8-light slider p95 (181.1 ms) misses this rung's own
+≤100 ms target -- an honest partial result, not a full close. The two
+`textured_quad` lights (input dim 227, vs. 31/35 for sphere/quad) are the
+likely cost driver, consistent with V1's own finding that they are 3.4x
+slower per training iteration on the CPU path too; a follow-up worth trying
+before declaring this rung fully closed: batch the two heavy textured_quad
+dispatches into their own pass, or profile whether their large per-light
+storage buffers (hashgrid tables sized for a 200+-dim input) are the actual
+bottleneck vs. the MLP forward pass itself.
