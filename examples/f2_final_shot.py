@@ -46,10 +46,42 @@ from nrp.torch_backend.shot import delta_stats, light_specs_at  # noqa: E402
 GATE_TIER = "final"
 
 
-def store_residual(path: Path, residual: np.ndarray) -> int:
-    """fp16-quantize and store one residual frame; returns the file size in bytes."""
-    np.savez_compressed(path, residual=residual.astype(np.float16))
+def quantize_residual_int8(residual: np.ndarray) -> tuple[np.ndarray, float]:
+    """Symmetric linear int8 quantization: one shared scale (per frame) maps
+    [-scale, scale] to [-127, 127]. Residuals are signed (final - proxy, either
+    sign), which is why this is linear-symmetric rather than the cache's rgb9e5
+    shared-exponent format (H6 lever 2's other named option) -- rgb9e5 has no sign
+    bit, it's built for non-negative throughput/radiance (`nrp/rgb9e5.py`), so it
+    cannot represent a signed residual directly without a separate sign channel
+    that would erase most of its size advantage over int8+scale."""
+    scale = max(float(np.abs(residual).max()), 1e-12)
+    q = np.clip(np.round(residual / scale * 127.0), -127, 127).astype(np.int8)
+    return q, scale
+
+
+def dequantize_residual_int8(q: np.ndarray, scale: float) -> np.ndarray:
+    return q.astype(np.float64) / 127.0 * scale
+
+
+def store_residual(path: Path, residual: np.ndarray, precision: str = "fp16") -> int:
+    """Quantize and store one residual frame; returns the file size in bytes."""
+    if precision == "fp16":
+        np.savez_compressed(path, residual=residual.astype(np.float16))
+    elif precision == "int8":
+        q, scale = quantize_residual_int8(residual)
+        np.savez_compressed(path, residual=q, scale=np.float32(scale))
+    else:
+        raise ValueError(f"unknown residual precision {precision!r}")
     return path.stat().st_size
+
+
+def load_residual(path: Path, precision: str = "fp16") -> np.ndarray:
+    data = np.load(path)
+    if precision == "fp16":
+        return data["residual"].astype(np.float64)
+    if precision == "int8":
+        return dequantize_residual_int8(data["residual"], float(data["scale"]))
+    raise ValueError(f"unknown residual precision {precision!r}")
 
 
 def encode_mp4(rgb_path: Path, width: int, height: int, fps: int, out_path: Path) -> None:
@@ -93,7 +125,16 @@ def render_final_shot(
     export_report: str | None = None,
     model_path: str | None = None,
     encode: bool = True,
+    residual_precision: str = "fp16",
+    approval_frames: set[int] | None = None,
+    non_approval_gate_tier: str = "preview",
 ) -> dict:
+    """`approval_frames` (H6 lever 1): if given, only these frame indices store a
+    residual at all -- every other frame is "proxy_only" (its reconstruction is the
+    proxy render alone, gated at `non_approval_gate_tier` instead of the final tier,
+    and contributes 0 residual bytes). `None` (the default) keeps F2's original
+    behavior: every frame is an approval frame. `residual_precision` (H6 lever 2)
+    selects `store_residual`'s quantization for approval frames."""
     out_dir.mkdir(parents=True, exist_ok=True)
     residual_dir = out_dir / "residuals"
     raw_dir = out_dir / "raw_frames"
@@ -128,17 +169,9 @@ def render_final_shot(
                 )
             )
 
+            is_approval = approval_frames is None or idx in approval_frames
             residual = final_ref - proxy
             exact_identity = float(np.max(np.abs((proxy + residual) - final_ref)))
-            residual_path = residual_dir / f"frame_{idx:04d}.npz"
-            residual_bytes = store_residual(residual_path, residual)
-            residual_bytes_total += residual_bytes
-            stored = np.load(residual_path)["residual"].astype(np.float64)
-            reconstruction = proxy + stored
-            stored_identity = float(np.max(np.abs(reconstruction - final_ref)))
-            # fp16 quantization error is relative to the residual's own magnitude
-            identity_tolerance = identity_rtol * max(float(np.max(np.abs(residual))), 1e-12)
-            identity_ok = stored_identity <= identity_tolerance
 
             np.savez_compressed(
                 raw_dir / f"frame_{idx:04d}.npz", frame=final_ref.astype(np.float16)
@@ -146,17 +179,38 @@ def render_final_shot(
             raw_bytes = (raw_dir / f"frame_{idx:04d}.npz").stat().st_size
             raw_bytes_total += raw_bytes
 
-            gate = evaluate_gate(reconstruction, final_ref, GATE_TIER)
+            if is_approval:
+                residual_path = residual_dir / f"frame_{idx:04d}.npz"
+                residual_bytes = store_residual(residual_path, residual, residual_precision)
+                residual_bytes_total += residual_bytes
+                stored = load_residual(residual_path, residual_precision)
+                reconstruction = proxy + stored
+                stored_identity = float(np.max(np.abs(reconstruction - final_ref)))
+                # quantization error is relative to the residual's own magnitude
+                identity_tolerance = identity_rtol * max(float(np.max(np.abs(residual))), 1e-12)
+                identity_ok = stored_identity <= identity_tolerance
+                gate_tier = GATE_TIER
+            else:
+                residual_bytes = 0
+                reconstruction = proxy
+                stored_identity = None
+                identity_tolerance = None
+                identity_ok = None
+                gate_tier = non_approval_gate_tier
+
+            gate = evaluate_gate(reconstruction, final_ref, gate_tier)
             flag = None
             if not np.isfinite(reconstruction).all():
                 flag = "non-finite pixels in reconstruction"
-            elif not identity_ok:
+            elif is_approval and not identity_ok:
                 flag = (
-                    f"fp16-stored residual identity {stored_identity:.3e} exceeds "
-                    f"tolerance {identity_tolerance:.3e}"
+                    f"{residual_precision}-stored residual identity {stored_identity:.3e} "
+                    f"exceeds tolerance {identity_tolerance:.3e}"
                 )
             elif not gate["passed"]:
-                flag = f"final-tier gate: {gate['verdict']} (fp16 residual quantization)"
+                flag = f"{gate_tier}-tier gate: {gate['verdict']}" + (
+                    f" ({residual_precision} residual quantization)" if is_approval else ""
+                )
 
             ldr = np.clip(tonemap_srgb(reconstruction), 0.0, 1.0)
             rgb_stream.write((ldr * 255.0 + 0.5).astype(np.uint8).tobytes())
@@ -168,10 +222,12 @@ def render_final_shot(
                     "t": t_f,
                     "lights": light_specs_at(spec, t_f),
                     "seconds": frame_seconds[-1],
+                    "is_approval_frame": is_approval,
                     "exact_identity_max_abs": exact_identity,
                     "stored_identity_max_abs": stored_identity,
                     "stored_identity_tolerance": identity_tolerance,
                     "stored_identity_within_tolerance": identity_ok,
+                    "gate_tier": gate_tier,
                     "quality_gate": gate,
                     "flag": flag,
                     "residual_bytes": residual_bytes,
@@ -215,11 +271,13 @@ def render_final_shot(
         )
         model_bytes_source = "in-memory parameter/buffer bytes (no .pt supplied)"
     flagged = [row["index"] for row in rows if row["flag"]]
+    n_approval = sum(1 for row in rows if row["is_approval_frame"])
     report = {
         "rung": "F2",
         "scope": (
-            "F1 shot at final tier with fp16-stored residual-identity frames, "
-            "per-frame final-tier gate, MP4 encode, and storage/wall-clock accounting"
+            "F1 shot at final tier with quantized residual-identity frames, "
+            "per-frame declared-tier gate, MP4 encode, and storage/wall-clock accounting "
+            "(H6: approval-frame gating + residual precision are configurable, see below)"
         ),
         "frames": len(times),
         "resolution": [cache.width, cache.height],
@@ -232,12 +290,16 @@ def render_final_shot(
             "(single-cache scene; supervision-class reference, Sec. 4.4)"
         ),
         "gate_tier": GATE_TIER,
-        "all_frames_pass_final_gate": not flagged,
+        "non_approval_gate_tier": non_approval_gate_tier,
+        "n_approval_frames": n_approval,
+        "n_proxy_only_frames": len(rows) - n_approval,
+        "all_frames_pass_declared_gate": not flagged,
+        "all_frames_pass_final_gate": not flagged,  # kept for report-schema compatibility
         "flagged_frames": flagged,
-        "residual_storage_precision": "fp16 (np.savez_compressed), Sec. 4.2 convention",
+        "residual_storage_precision": f"{residual_precision} (np.savez_compressed)",
         "per_frame": rows,
         "storage": {
-            "container": "fp16 np.savez_compressed on both sides (like-for-like)",
+            "container": f"{residual_precision} np.savez_compressed on both sides (like-for-like)",
             "model_bytes": model_bytes,
             "model_bytes_source": model_bytes_source,
             "residual_bytes_total": residual_bytes_total,
