@@ -45,7 +45,7 @@ from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.denoise import denoise_image  # noqa: E402
-from nrp.torch_backend.model import TorchNRP  # noqa: E402
+from nrp.torch_backend.model import TorchNRP, relative_mse_loss  # noqa: E402
 from nrp.torch_backend.residual_dynamic import (  # noqa: E402
     ResidualNRP,
     composite_predict,
@@ -110,7 +110,18 @@ def _predict(model: TorchNRP, cache, light_params) -> np.ndarray:
 
 def _train_from_scratch(cache, target, light_params, iters, lr, arch_like: TorchNRP) -> TorchNRP:
     """Regime (a): a fresh proxy of the same architecture as `arch_like`, trained
-    full-image on `target` -- the "full retrace + full retrain" ceiling regime."""
+    full-image on `target` -- the "full retrace + full retrain" ceiling regime.
+
+    Must reuse H1's fix (`init_output_scale`) and the paper's relative-MSE loss
+    (Eq. 4, `relative_mse_loss`), not a naive from-scratch MSE loop: a first version
+    of this function did exactly that and silently reproduced H1's zero-collapse
+    bug -- nn.Linear's default output bias vs. this cache's dim true target scale
+    drove the pre-softplus logit to permanent zero within the first ~50-100
+    iterations, after which the network was frozen and 300 vs. 1600 iterations
+    produced bit-identical output (caught by comparing `out/h5-kitchen/report.json`
+    against `out/h5-kitchen-converged/report.json` -- both reported the exact same
+    PSNR to 15 significant digits, which is not something converged floating-point
+    gradient descent does by chance)."""
     device = torch.device("cpu")
     model = TorchNRP(**arch_like.config)
     xy, aux = pixel_tensors(cache, device)
@@ -118,11 +129,12 @@ def _train_from_scratch(cache, target, light_params, iters, lr, arch_like: Torch
         xy.shape[0], -1
     )
     y = torch.as_tensor(target.reshape(-1, 3).astype(np.float32), dtype=torch.float32)
+    model.init_output_scale(float(y.mean(dim=-1).median().item()))
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     model.train()
     for _ in range(iters):
         pred = model(xy, aux, params)
-        loss = torch.mean((pred - y) ** 2)
+        loss = relative_mse_loss(pred, y)
         opt.zero_grad()
         loss.backward()
         opt.step()
