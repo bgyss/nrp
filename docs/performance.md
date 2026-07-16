@@ -1989,3 +1989,77 @@ training, 32.3 s) vs regime (a)'s from-scratch retrain even at the same
 win for reusing the frozen base + shard residual over retraining from
 scratch — independent of whether 300 iterations is enough to call either
 regime "converged."
+
+## Re-earning the V1/V2 summit claims (hardening track, rung H2)
+
+**Budget decision.** G2 found 5x the iteration budget (3000 to 15000) lifts one
+full-scene monolithic proxy from 21.0 to 29.4 dB. V1's 8-light rig multiplies
+that cost by 8 separate per-light proxies, so matching G2's factor verbatim
+would cost ~5x V1's already-substantial training wall-clock. Chosen instead:
+**2x V1's budget (800 to 1600 iterations per light)**, a deliberate,
+smaller-but-real bump, recorded here as the tradeoff this rung asks for, not
+silently assumed. Retrain (`out/h2-rig/`, `examples/v1_rig.py --iters 1600
+--denoise oidn`, `nix develop` for oidn) took **7325.7 s** (~2.0 h) of
+per-light training wall-clock across the 8 lights, measured under heavy
+incidental machine contention this session (concurrent H5/H6 jobs plus
+unrelated system load spiking past a 96 one-minute load average at points) --
+the number is not a clean single-job baseline and should be re-measured on an
+idle machine before being quoted as a production budget figure.
+
+**8/8 proxies now have nonzero, real output** (H1's fix holds at the new
+budget, on the real cache, for every rig light):
+
+| light | type | val PSNR vs raw (dB) | train s |
+|---|---|---:|---:|
+| key | sphere | 19.78 | 526.1 |
+| fill | sphere | 19.67 | 429.8 |
+| rim | sphere | 18.35 | 516.0 |
+| window | quad | 20.47 | 1168.1 |
+| ceiling_panel | quad | 20.47 | 469.0 |
+| practical | quad | 20.05 | 453.5 |
+| neon_sign | textured_quad | 12.27 | 1378.7 |
+| tv_glow | textured_quad | 12.56 | 1362.3 |
+
+Sphere/quad lights land in a tight 18.3-20.5 dB band (compare H1's post-fix,
+800-iter, bilateral-denoise numbers of 11.65-16.22 dB -- the 2x budget
+recovers roughly 4-7 dB). The two textured_quad lights remain the rig's low
+scorers (12.3-12.6 dB, materially unchanged from V1's original 12.35/13.35 dB)
+-- H3 is the dedicated rung for that gap, not this one.
+
+**Additivity gate**: still **fails at preview tier** -- PSNR passes (25.56 dB
+>= 20 dB) but SSIM (0.725 < 0.8) and FLIP (0.257 > 0.15) do not, against the
+oidn-denoised 8-light reference. This is a genuine, if partial, improvement
+over V1's pre-H1-fix state (3 of 8 lights contributing zero) but not yet a
+clearing of the preview-tier bar; the two low-scoring textured_quad proxies
+are the leading suspect (H3 should be revisited before re-gating). Raw-
+reference metrics (same predicted sum vs the un-denoised gather) stay noise-
+bound as documented (SSIM 0.122), consistent with every prior rung's finding
+on this cache.
+
+**Monolithic baseline** (matched 8x total budget, 12800 iters) also misses
+the preview gate -- informational only, size comparison stands regardless:
+per-light rig totals 13.35 MB vs the monolithic's 0.55 MB (24.1x), the same
+non-relightable-baseline-is-smaller tradeoff every prior rung on this cache
+has recorded.
+
+**Compositing overhead vs light count**: linear fit **98.2 ms/light + -5.6 ms
+intercept** (CPU torch, `out/h2-rig/report.json["compositing_overhead_ms"]`)
+-- close to V1's original 111 ms/light figure, the small drop plausibly
+reflecting normal run-to-run variance under this session's heavy contention
+rather than a real architectural change (nothing in H2 touches
+`LightRig.render`'s compositing path).
+
+**V2 optimizer hoist**, isolated from the budget change per this rung's own
+measurement instruction: `nrp/torch_backend/art_loop.py::optimize_colors`
+recomputed every active rig light's forward pass on every optimizer step,
+including `TexturedQuadLight`s that have no `u_rgb` and whose geometry/texture
+never changes during color-only optimization -- 2 of the 8-light rig's
+forward passes were pure waste, every one of 500 steps. Hoisting the constant
+lights' forward pass to run once before the loop (git commit "H2 optimizer
+hoist"): **3050.6 ms/step (hoisted) vs 4788.4 ms/step (original), a 36.3%
+per-step reduction**, measured on a random-init model at the real 8-light
+rig's architecture size (forward FLOPs -- what the hoist saves -- don't
+depend on weight values, so this measurement doesn't need a trained rig).
+V2's original full run was 1320.7 s for 500 steps on the pre-H1-fix rig; a
+full rerun on the retrained rig (`out/h2-v2-artloop/`) is in progress -- see
+the V2 recovery table update once it lands.
