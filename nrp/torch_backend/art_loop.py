@@ -126,6 +126,51 @@ def predicted_image(
     return image
 
 
+def _constant_contribution(
+    rig: LightRig, reparam: RigColorReparam, xy: torch.Tensor, aux: torch.Tensor
+) -> torch.Tensor:
+    """Sum of `model(xy, aux, light_param_vector(light))` over every active rig light
+    that has no `reparam` parameter (i.e. `TexturedQuadLight`, which contributes its
+    raw model output unscaled — see module docstring). This term has no gradient with
+    respect to `reparam.parameters` — geometry and texture are held fixed throughout
+    `optimize_colors` — so it is the same tensor on every optimization step; computed
+    once here instead of every step (H2, hoisted out of `optimize_colors`'s loop)."""
+    device = xy.device
+    n_px = xy.shape[0]
+    colorable = set(reparam.names)
+    out = torch.zeros((n_px, 3), device=device)
+    with torch.no_grad():
+        for rl in rig.active_lights():
+            if rl.name in colorable:
+                continue
+            params = torch.as_tensor(
+                light_param_vector(rl.light), dtype=torch.float32, device=device
+            ).expand(n_px, -1)
+            out = out + rig.models[rl.name](xy, aux, params)
+    return out
+
+
+def _colorable_predicted_image(
+    rig: LightRig,
+    reparam: RigColorReparam,
+    xy: torch.Tensor,
+    aux: torch.Tensor,
+    constant_out: torch.Tensor,
+    colorable_params: dict[str, torch.Tensor],
+) -> torch.Tensor:
+    """Per-step body of `optimize_colors`'s loop: differentiable sum over only
+    `reparam.names` (the lights with a trainable `u_rgb`), plus the precomputed
+    `constant_out` for every other active light — equivalent to `predicted_image`
+    but without re-running the constant lights' forward pass every step, and without
+    rebuilding each light's (fixed) param tensor every step either."""
+    rgbs = reparam.constrained_rgbs()
+    image = constant_out
+    for name in reparam.names:
+        out = rig.models[name](xy, aux, colorable_params[name]) * rgbs[name]
+        image = image + out
+    return image
+
+
 def optimize_colors(
     rig: LightRig, cache: PathCache, target: np.ndarray, steps: int, lr: float, seed: int = 0
 ) -> dict:
@@ -147,10 +192,22 @@ def optimize_colors(
     }
     reparam = RigColorReparam(rig, init_rgbs, device)
 
+    # H2 hoist: TexturedQuadLight (and any other non-colorable active light) has no
+    # `u_rgb` and its geometry/texture is fixed for the whole loop, so its forward
+    # pass is identical on every step -- compute it once instead of `steps` times.
+    constant_out = _constant_contribution(rig, reparam, xy, aux)
+    colorable_by_name = {rl.name: rl for rl in rig.active_lights() if rl.name in reparam.names}
+    colorable_params = {
+        name: torch.as_tensor(
+            light_param_vector(rl.light), dtype=torch.float32, device=device
+        ).expand(n_px, -1)
+        for name, rl in colorable_by_name.items()
+    }
+
     opt = torch.optim.Adam(reparam.parameters, lr=lr) if reparam.parameters else None
     loss_curve: list[float] = []
     for _step in range(steps):
-        pred = predicted_image(rig, reparam, xy, aux)
+        pred = _colorable_predicted_image(rig, reparam, xy, aux, constant_out, colorable_params)
         diff = reinhard(pred) - reinhard(tgt)
         loss = (diff**2).mean()
         if opt is not None:
@@ -161,7 +218,12 @@ def optimize_colors(
 
     optimized_rig = reparam.to_rig()
     with torch.no_grad():
-        pred_final = predicted_image(rig, reparam, xy, aux).cpu().numpy().astype(np.float64)
+        pred_final = (
+            _colorable_predicted_image(rig, reparam, xy, aux, constant_out, colorable_params)
+            .cpu()
+            .numpy()
+            .astype(np.float64)
+        )
     target_flat = np.asarray(target, dtype=np.float64).reshape(n_px, 3)
     pred_img = pred_final.reshape(cache.height, cache.width, 3)
     target_img = target_flat.reshape(cache.height, cache.width, 3)

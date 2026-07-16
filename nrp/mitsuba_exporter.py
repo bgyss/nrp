@@ -153,6 +153,42 @@ def build_sensor(
     )
 
 
+def apply_shape_translation(mi, scene, shape_id: str, translate) -> None:
+    """Rigidly translate one named shape in an already-loaded scene, in place (H5:
+    the exporter's scene-edit/retrace path). Re-exporting after this call produces
+    an "after" `PathCache` that `nrp.dynamic_geometry`'s invalidation-mask machinery
+    can diff against the unedited "before" cache -- both are ordinary full retraces,
+    just of two different scene states; no incremental re-trace is implemented here.
+
+    Mesh shapes (`type="obj"/"ply"/"serialized"/"mesh"`, e.g. every prop in the
+    kitchen gallery scene) bake their `to_world` transform into per-vertex world-space
+    positions at load time, so they have no standalone `to_world` traversable
+    parameter after loading -- the translation is applied directly to
+    `<shape_id>.vertex_positions` instead (the standard Mitsuba 3 post-load mesh-edit
+    pattern: `mi.traverse` + `params.update()`, as used by Mitsuba's own shape-
+    optimization tutorials). Analytic shapes (`type="sphere"/"cube"/"rectangle"/...`)
+    keep a standalone `to_world` parameter instead; for those this composes a
+    translation onto the existing transform.
+    """
+    import drjit as dr
+
+    params = mi.traverse(scene)
+    vertex_key = f"{shape_id}.vertex_positions"
+    to_world_key = f"{shape_id}.to_world"
+    offset = mi.Vector3f(*translate)
+    if vertex_key in params:
+        positions = dr.unravel(mi.Point3f, params[vertex_key])
+        params[vertex_key] = dr.ravel(positions + offset)
+    elif to_world_key in params:
+        params[to_world_key] = mi.Transform4f.translate(offset) @ params[to_world_key]
+    else:
+        raise KeyError(
+            f"shape {shape_id!r} not found in this scene (no {vertex_key!r} or "
+            f"{to_world_key!r} traversable parameter)"
+        )
+    params.update()
+
+
 def _load_scene(mi, spec: str, width: int, height: int):
     """Load an XML scene or the built-in cornell box, forcing the film resolution."""
     if spec == "builtin:cornell-box":
@@ -457,6 +493,19 @@ def main() -> None:
         "(default matches the builtin cornell box)",
     )
     parser.add_argument(
+        "--move-shape",
+        help="H5 scene-edit/retrace path: id of a shape in --scene to translate before "
+        "tracing (e.g. an <shape id=\"...\"> in the XML); requires --translate",
+    )
+    parser.add_argument(
+        "--translate",
+        type=float,
+        nargs=3,
+        default=[0.0, 0.0, 0.0],
+        metavar=("DX", "DY", "DZ"),
+        help="world-space translation applied to --move-shape",
+    )
+    parser.add_argument(
         "--no-russian-roulette",
         action="store_true",
         help="disable throughput-based RR (paper uses RR; disable for deterministic path counts)",
@@ -481,6 +530,8 @@ def main() -> None:
         mode = "wavefront" if pick_jit_variant(_import_mitsuba()) else "scalar"
     mi = _load_mitsuba(mode)
     scene = _load_scene(mi, args.scene, args.width, args.height)
+    if args.move_shape:
+        apply_shape_translation(mi, scene, args.move_shape, args.translate)
     sensor = None
     if args.cam_origin is not None:
         sensor = build_sensor(
@@ -527,6 +578,8 @@ def main() -> None:
             "cache_bytes": os.path.getsize(args.out),
             "peak_rss_bytes": _peak_rss_bytes(),
             "hardware": _hardware_context(),
+            "move_shape": args.move_shape,
+            "translate": args.translate if args.move_shape else None,
         }
         with open(report_path, "w") as f:
             json.dump(report, f, indent=2)
