@@ -10,7 +10,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 2 | Extensions | [extensions.md](extensions.md) | ✅ Complete — E1–E9 measured, including the settled E2 negative result and the real-Chrome WebGPU runtime |
 | 3 | Verdict | [pipeline-feasibility.md](pipeline-feasibility.md) | ✅ Complete — E10 decision document: "partly viable" for all three targets, blockers named |
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
-| 5 | Hardening track | [hardening-track.md](hardening-track.md) | 🚧 In progress — fix the diagnosed failures (quad zero-collapse first), re-earn the caveated V1/V2 claims, refresh the verdict |
+| 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
 
 ## How the phases connect
 
@@ -31,12 +31,17 @@ prompts (or, for phase 3, a decision document); each links its evidence into
    All 10 rungs are measured; the honest negatives (G1's remaining gap, V1's
    additivity fail, F2's storage cost) and the undiagnosed quad zero-collapse
    became the next phase's work items.
-5. **Hardening track** (`hardening-track.md`) fixes what the production track
-   surfaced — root-causing the QuadLight zero-collapse, re-earning the V1/V2
-   summit claims with a fully-contributing rig, porting rig compositing to the
-   proven WebGPU runtime, real-scene dynamic geometry, storage — then
-   re-issues the feasibility verdict. Motivating audit:
-   `status/2026-07-11.md`.
+5. **Hardening track** (`hardening-track.md`) fixed what the production track
+   surfaced — root-caused the QuadLight zero-collapse (H1), retrained the
+   V1/V2 rig post-fix (H2, honest partial: additivity still misses preview
+   tier), swept textured-quad quality levers (H3, honest negative — a
+   conditioning-scheme problem, not budget/capacity), ported rig compositing
+   to the proven WebGPU runtime (H4, honest partial: fast but not yet
+   real-time for an 8-light session), re-traced a real scene for dynamic
+   geometry and found G1's toy-scale fix does not transfer at real scale (H5,
+   honest negative), flipped F2's storage negative (H6), and re-issued the
+   feasibility verdict against the full T1–V2+H1–H6 evidence base (H7).
+   Motivating audit: `status/2026-07-11.md`.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware

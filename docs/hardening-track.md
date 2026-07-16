@@ -21,7 +21,7 @@ every prior phase.
 | H4 | Rig compositing on the WebGPU runtime | done (partial: parity passes clean, 5x per-light speedup over CPU; slider p95 181ms misses the <=100ms target) | `out/h4-rig/report.json`, `docs/performance.md#rig-compositing-on-the-webgpu-runtime-hardening-track-rung-h4` |
 | H5 | Real-scene dynamic geometry (exporter retrace path) | done (honest negative: neither regime (b) nor (d) meets the 1dB recovery target at real scale; mask machinery verified correct) | `out/h5-kitchen-fixed/report.json`, `docs/performance.md#real-scene-dynamic-geometry-hardening-track-rung-h5` |
 | H6 | Flip the F2 storage negative | done (approval-frame gating flips the negative at 0.589x raw with zero quality cost; int8 quantization is a documented floor, not a win) | `out/h6-storage/sweep_report.json`, `docs/performance.md#storage-vs-quality-sweep-flipping-the-f2-negative-hardening-track-rung-h6` |
-| H7 | Feasibility-verdict refresh | not started (last) | — |
+| H7 | Feasibility-verdict refresh | done | `docs/pipeline-feasibility.md#revision-2026-07-16-production-track--hardening-track-evidence-update`, `out/pipeline-feasibility/audit.json` |
 
 Ordering: H1 → H2 → H4; H3, H5, H6 independent; H7 after everything else.
 
