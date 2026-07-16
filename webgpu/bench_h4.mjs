@@ -78,6 +78,7 @@ async function main() {
     resolution: window.__h4.manifest.resolution,
     lightNames: window.__h4.lightNames,
     lights: window.__h4.manifest.lights.map((l) => ({ name: l.name, rgb: l.rgb })),
+    lightParamsByName: window.__h4.lightParamsByName,
   }));
 
   const parityMaxAbsDiff = await page.evaluate(() => window.__h4.parity());
@@ -101,6 +102,22 @@ async function main() {
   }
   const sliderLatencyMs = await page.evaluate((adjustments) => window.__h4.sliderLoop(adjustments), adjustments);
 
+  // Worst-case slider session: light *shape* param nudges (position jitter),
+  // round-robin across all lights -- each invalidates one light's cached raw
+  // contribution, so the cost is one MLP dispatch + composite per nudge.
+  const paramAdjustments = [];
+  for (let i = 0; i < 10; i++) {
+    const name = meta.lightNames[i % meta.lightNames.length];
+    const base = meta.lightParamsByName[name];
+    const jittered = [...base];
+    for (let k = 0; k < Math.min(3, jittered.length); k++) jittered[k] += (rand() - 0.5) * 0.1;
+    paramAdjustments.push({ light: name, light_params: jittered });
+  }
+  const paramEditLatencyMs = await page.evaluate(
+    (adjustments) => window.__h4.sliderLoopParamEdit(adjustments),
+    paramAdjustments
+  );
+
   await browser.close();
   server.close();
 
@@ -114,6 +131,7 @@ async function main() {
   const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
   const intercept = (sumY - slope * sumX) / n;
   const sliderStats = stats(sliderLatencyMs);
+  const paramEditStats = stats(paramEditLatencyMs);
 
   const report = {
     rung: "H4",
@@ -135,6 +153,16 @@ async function main() {
       latency_ms: sliderLatencyMs,
       ...sliderStats,
     },
+    // Worst case per nudge: a shape-param edit invalidates one light's cached
+    // raw contribution (one MLP dispatch + composite); rgb nudges above reuse
+    // all cached contributions (composite pass only).
+    slider_loop_param_edit: {
+      n_adjustments: paramEditLatencyMs.length,
+      latency_ms: paramEditLatencyMs,
+      ...paramEditStats,
+      meets_p95_100ms: paramEditStats.p95_ms <= 100,
+      meets_p95_33ms_stretch: paramEditStats.p95_ms <= 33,
+    },
     v1_cpu_baseline_ms_per_light: 111,
     v2_cpu_baseline_slider_mean_ms: 950,
     meets_p95_100ms: sliderStats.p95_ms <= 100,
@@ -144,7 +172,7 @@ async function main() {
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
   console.log(
     `parity ${report.parity_passed ? "PASS" : "FAIL"} (${report.parity_vs_cpu_max_abs_diff.toExponential(2)}), ` +
-    `slider p95 ${sliderStats.p95_ms.toFixed(2)} ms, ` +
+    `rgb-slider p95 ${sliderStats.p95_ms.toFixed(2)} ms, param-edit p95 ${paramEditStats.p95_ms.toFixed(2)} ms, ` +
     `marginal cost ${slope.toFixed(3)} ms/light -- wrote ${reportPath}`
   );
 }

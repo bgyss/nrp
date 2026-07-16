@@ -300,10 +300,14 @@ this section supersedes it.
 *Games.* T1's exported real WebGPU compute-shader runtime (E6, already
 counted above) now has a *rig*-scale counterpart: H4 ports N-light
 compositing to the same WGSL runtime — GPU-vs-CPU parity clean (1.05e-5,
-`out/h4-rig/report.json`), 21.0 ms/light marginal cost (5.3x V1's 111 ms/light
-CPU baseline) — but an 8-light scripted slider session still misses this
-rung's own <=100 ms p95 target (170.6 ms measured), so live multi-light
-editing at production rig scale is faster but not yet real-time. Dynamic
+`out/h4-rig/report.json`), ~22.5 ms/light cold-render marginal cost (~5x
+V1's 111 ms/light CPU baseline) — and, with per-light raw contributions
+cached and composited in a separate weighted-sum pass (the Eq. 1/Eq. 3
+hoist), the 8-light scripted slider session beats this rung's 33 ms
+*stretch* target in both scenarios: 1.3 ms p95 for rgb nudges, 30.9 ms p95
+worst-case when a shape-param edit invalidates one light's cache. Live
+multi-light editing at production rig scale is real-time on this runtime.
+Dynamic
 geometry is the sharper update: G1's toy-scale "frozen base + shard residual"
 result (a genuine improvement over E2's settled fine-tune negative, at toy
 scale) does **not** transfer to a real scene — H5 re-traced the real T1
@@ -359,7 +363,7 @@ concrete updates from the hardening track on top of that real-scene base:
 
 | target | verdict | why |
 |---|---|---|
-| Games | Not the right primitive as a core renderer yet (unchanged, now on real-scene evidence) | WebGPU rig compositing works and is fast (H4: clean parity, 5.3x/light over CPU) but not yet real-time for an 8-light scripted session (170.6 ms p95 vs a 100 ms target). Dynamic geometry's structural blocker is now confirmed at real scale, not just toy scale (H5: neither tested regime meets the 1 dB recovery target on a real re-traced scene). |
+| Games | Not the right primitive as a core renderer yet (unchanged, now on real-scene evidence) | WebGPU rig compositing is now genuinely real-time for the 8-light scripted session (H4: clean parity; cached-contribution compositing gives 1.3 ms p95 rgb nudges, 30.9 ms p95 worst-case param edits — both beat the 33 ms stretch target). The remaining blocker is structural, not latency: dynamic geometry is confirmed at real scale (H5: neither tested regime meets the 1 dB recovery target on a real re-traced scene). |
 | Animated film | Viable component (unchanged), with the "cornell-box only" caveat resolved | T1-F2 proved the full pipeline on a real Mitsuba gallery scene, not a procedural cornell box. F2's storage negative is flipped (H6: 0.589x raw, zero quality cost, at the swept crossover). The remaining gap — production light rigs — is now precisely measured rather than attributed to a bug: 8/8 proxies contribute post-H1-fix, additivity still misses preview tier, and the textured-quad quality floor is diagnosed (input representation, not budget/capacity). |
 | Feature VFX | Viable component (unchanged), same real-scene/storage/rig updates as animated film | Per-shot caches and art-direction loops are proven on the real kitchen scene; art-direction color recovery is genuinely 5/6, not the automatically-reported 6/6, once checked against the authored targets by hand — a concrete, actionable finding for anyone reusing this pipeline's own quality-gate machinery, not just a footnote. |
 

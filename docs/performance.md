@@ -2229,28 +2229,39 @@ static server (`demo/server.mjs`, the same pattern `demo/main.mjs` and
 `demo_g2.mjs` already use for the G2 demo) -- every `page.evaluate()` call
 from the driver (`bench_h4.mjs`) now crosses only small JSON.
 
+**The 170 ms miss, diagnosed and fixed.** The first measurement (170.6 ms
+slider p95, an honest miss against the ≤100 ms target) re-dispatched all 8
+full MLP passes (~21 ms each) on every slider nudge. But a slider nudge
+changes only one light's `rgb`, and `rgb` enters as a *post-MLP* multiply
+(Eq. 3) — the raw MLP outputs are constant under rgb edits. The fix is the
+GPU analog of H2's CPU optimizer hoist: each light's dispatch now writes its
+raw (pre-rgb) output into a per-light slice of one contributions buffer, and
+a cheap composite pass sums `rgb_l * raw_l` over active lights (Eq. 1's
+linearity; solo/mute is a per-light weight in the composite uniform). An rgb
+nudge re-runs *only* the composite pass; a light-shape param edit invalidates
+just that light's cached slice (one MLP dispatch + composite). The suspected
+textured_quad cost (27.5 vs 19.2 ms marginal) was real but not the story —
+the structural bug was re-rendering 7 unchanged lights.
+
 **Real 8-light rig, real Chrome** (`out/h4-rig/report.json`, the H2-retrained
 rig, `mise run h4-export && mise run h4-bench`):
 
 | check | result |
 |---|---:|
 | GPU-vs-CPU composite parity (`LightRig.render`, all 8 lights) | **1.05e-5 max abs diff — PASS** (tolerance 2e-4) |
-| per-light marginal cost (linear fit) | **21.03 ms/light** (vs V1's 111 ms/light CPU — 5.3x) |
-| fit intercept | -5.16 ms |
-| slider-loop latency mean / p95 (10 scripted nudges, 8-light rig) | 170.2 / **170.6 ms** |
-| target: p95 <= 100 ms (stretch: 33 ms) | **miss** |
-| vs V2's 950 ms CPU slider mean | **5.6x faster, target not yet met** |
+| per-light marginal cost, cold full render (linear fit) | **22.47 ms/light** (vs V1's 111 ms/light CPU — 4.9x) |
+| rgb-slider latency mean / p95 (10 scripted nudges, 8-light rig) | 0.63 / **1.30 ms** |
+| param-edit slider latency mean / p95 (worst case: 1 light re-dispatched) | 23.4 / **30.9 ms** |
+| target: p95 <= 100 ms (stretch: 33 ms) | **PASS, both scenarios beat the stretch** |
+| vs V2's 950 ms CPU slider mean | **~730x (rgb) / ~31x (param edit) faster** |
 
-Parity is clean and the per-light cost is a genuine 5.3x win over the CPU
-baseline, but the 8-light slider p95 (170.6 ms) misses this rung's own
-≤100 ms target -- an honest partial result, not a full close. The two
-`textured_quad` lights (input dim 227, vs. 31/35 for sphere/quad) are the
-likely cost driver, consistent with V1's own finding that they are 3.4x
-slower per training iteration on the CPU path too; a follow-up worth trying
-before declaring this rung fully closed: batch the two heavy textured_quad
-dispatches into their own pass, or profile whether their large per-light
-storage buffers (hashgrid tables sized for a 200+-dim input) are the actual
-bottleneck vs. the MLP forward pass itself.
+Both slider scenarios now beat the 33 ms stretch target: rgb nudges (V2's
+methodology — the composite-only path) at 1.30 ms p95, and worst-case shape
+param edits (one light's cached contribution invalidated per nudge) at
+30.9 ms p95. The two slowest param-edit nudges (30.7/30.9 ms vs ~21 ms) are
+the two `textured_quad` lights (input dim 227), consistent with their higher
+marginal cost — visible, but no longer the decisive term. Cold full-render
+cost is unchanged (~22.5 ms/light, linear in N).
 
 ## Textured-quad proxy quality (hardening track, rung H3)
 
