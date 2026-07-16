@@ -2235,14 +2235,14 @@ rig, `mise run h4-export && mise run h4-bench`):
 | check | result |
 |---|---:|
 | GPU-vs-CPU composite parity (`LightRig.render`, all 8 lights) | **1.05e-5 max abs diff — PASS** (tolerance 2e-4) |
-| per-light marginal cost (linear fit) | **22.27 ms/light** (vs V1's 111 ms/light CPU — 5.0x) |
-| fit intercept | -8.40 ms |
-| slider-loop latency mean / p95 (10 scripted nudges, 8-light rig) | 178.1 / **181.1 ms** |
+| per-light marginal cost (linear fit) | **21.03 ms/light** (vs V1's 111 ms/light CPU — 5.3x) |
+| fit intercept | -5.16 ms |
+| slider-loop latency mean / p95 (10 scripted nudges, 8-light rig) | 170.2 / **170.6 ms** |
 | target: p95 <= 100 ms (stretch: 33 ms) | **miss** |
-| vs V2's 950 ms CPU slider mean | **5.2x faster, target not yet met** |
+| vs V2's 950 ms CPU slider mean | **5.6x faster, target not yet met** |
 
-Parity is clean and the per-light cost is a genuine 5x win over the CPU
-baseline, but the 8-light slider p95 (181.1 ms) misses this rung's own
+Parity is clean and the per-light cost is a genuine 5.3x win over the CPU
+baseline, but the 8-light slider p95 (170.6 ms) misses this rung's own
 ≤100 ms target -- an honest partial result, not a full close. The two
 `textured_quad` lights (input dim 227, vs. 31/35 for sphere/quad) are the
 likely cost driver, consistent with V1's own finding that they are 3.4x
