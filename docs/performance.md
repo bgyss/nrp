@@ -2437,3 +2437,56 @@ i.e. 3.86M → **7.21M segments/s**; exporter schema/equivalence tests unchanged
 and green. Remaining costs are the genuine drjit conversions (0.44 s) and the
 final concatenate/normalize/validate passes — no single Python-side hotspot
 above 27% remains.
+
+## 1024² and a second real scene (scale track, rung S2)
+
+Nothing had run above 512², and every real-scene claim rested on the Country
+Kitchen. S2 adds both axes. All runs Apple M1 Max (64 GiB), wavefront exporter
+(metal_ad_rgb) with the S3 bincount fix, S3 parallel packed shard writer, and
+the S1 streamed path (torch-mps gather, 4 decode threads).
+
+**spp probe (choosing the 1024² export deliberately).**
+`examples/s2_spp_probe.py` (`out/s2-scale/spp_probe.json`) exports the kitchen
+at 256² for spp ∈ {16, 32, 64} plus a 256-spp reference and compares
+GATHERLIGHT images for 4 fixed sphere lights — gather noise is per-pixel MC
+noise, so these transfer to 1024²:
+
+| spp | gather PSNR vs 256 spp (mean / min) | export wall | peak RSS |
+|---|---|---:|---:|
+| 16 | 36.5 / 31.8 dB | 10.7 s | 1.03 GB |
+| 32 | **39.8 / 35.2 dB** | 20.8 s | 1.64 GB |
+| 64 | 43.5 / 38.8 dB | 47.3 s | 2.82 GB |
+
+**Chosen: 32 spp** — target fidelity ≥ 35 dB even in the worst probe light is
+an order of magnitude above the ~21–23 dB proxy operating point, while 64 spp
+would have put the 1024² export's peak RSS at an extrapolated ~41 GB (vs the
+measured 17.1 GB at 32 spp) for quality the proxy cannot use.
+
+**Scaling table** ({512², 1024²} × kitchen, 512² × bedroom):
+
+| | kitchen 512²/64spp (T1/T2, committed) | kitchen 1024²/32spp (S2) | bedroom 512²/64spp (S2) |
+|---|---:|---:|---:|
+| export wall-clock | 182.4 s | 382.2 s (trace 30.5 s) | 182.2 s (trace 17.5 s) |
+| export peak RSS | 10.33 GB | 17.13 GB | 10.69 GB |
+| segments | 52.3M | 104.5M | 53.8M |
+| float64 cache | 2.09 GB | 4.34 GB | 2.21 GB |
+| packed sharded cache | 630 MB (T2) | 1.35 GB | — |
+| shard write | 115.0 s (T2, pre-S3) | **35.1 s** (S3 writer, w8) | — |
+| pool build + train | 44 + 854 s (T1 config, 3k iters) | 15.3 + 312.8 s (streamed E5 config, 300 iters) | 38 + 745 s (T1 config, 3k iters) |
+| peak resident segment bytes | 0.80 GiB RSS (T2 streamed) | **158.2 MB** (58.2× under monolithic) | in-memory (torch pool) |
+| held-out PSNR vs raw | 21.01 dB | **23.0 dB** | **21.89 dB** |
+| full-frame inference | 224.3 ms tiled (T2) | 371.2 ms tiled (16k-px tiles) | 92.5 ms |
+
+Reports: `out/kitchen-1024/export_report.json`,
+`out/s2-scale/kitchen_1024_report.json`, `out/bedroom-512/export_report.json`,
+`out/bedroom-512-torch/torch_train_report.json`. Config notes, honestly stated:
+the 1024² training row uses the streamed E5-scale config (64×3 net, 300 iters,
+raw targets) — it is the "does the streamed path scale" datapoint, not a
+quality ceiling; its 23.0 dB already beats both 512² full-config runs because
+32 spp at 1024² still supplies ~2× the kitchen-512 cache's segments. The
+bedroom run is config-identical to T1's kitchen run (`examples/
+bedroom_512_torch.json`, OIDN targets, torch gather, 3000 iters, seed 0) and
+lands at 21.89 dB held-out — **above the 18 dB envelope floor** and within
+0.9 dB of the kitchen, so the pipeline's quality story is no longer
+single-scene. Both caches pass `PathCache.validate()` (the 1024² cache is
+additionally validated by `save_sharded` before writing).

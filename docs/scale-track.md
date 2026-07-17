@@ -21,7 +21,7 @@ for the stretch rungs: **≈ $20–35** (30–50 GPU-hours on a RunPod RTX 4090 
 | rung | title | status | evidence |
 |---|---|---|---|
 | S1 | Vectorize the streamed gather (kill the Python-loop bound) | **done** (6.04× end-to-end, target ≥5×; 10× stretch missed) | `out/s1-streamed-gather/*.json`, `docs/performance.md#vectorized-streamed-gather-scale-track-rung-s1` |
-| S2 | 1024² and a second real scene | todo | — |
+| S2 | 1024² and a second real scene | **done** (1024²/32spp kitchen through streamed path, 23.0 dB, 158 MB peak; bedroom 512² at 21.89 dB > 18 dB bar) | `out/s2-scale/*.json`, `out/bedroom-512-torch/torch_train_report.json`, `docs/performance.md#1024-and-a-second-real-scene-scale-track-rung-s2` |
 | S3 | Export/shard throughput at scale | **done** (save-sharded 5.78× float64 / 9.13× packed, target ≥3×; exporter 1.87× via bincount G-buffer scatter) | `out/s3-shard-write/*.json`, `docs/performance.md#exportshard-throughput-at-scale-scale-track-rung-s3` |
 | S4 | Re-earn the rig additivity gate with H3's kernel conditioning | todo | — |
 | S5 | Local training throughput: torch.compile / AMP / batch sweep | todo | — |
