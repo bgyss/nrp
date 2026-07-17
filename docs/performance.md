@@ -2421,3 +2421,19 @@ for the packed layout. rng-order: numpy-backend targets remain bit-identical to
 per-slot fills; the torch backend changes accumulation order (documented, loss
 curves match the numpy path at rtol 1e-4 on the toy cache, statistically
 identical here: same 4.15 → 0.00136 loss, same 32.57 dB).
+
+### Exporter Python-side conversion profile (S3, second half)
+
+`examples/s3_exporter_profile.py` (`mise run s3-exporter-profile`, report:
+`out/s3-shard-write/exporter_profile.json`) cProfiles
+`export_path_cache_wavefront` on the builtin cornell box at 256²/64spp
+(11.78M segments, metal_ad_rgb). The top measured cost was **not** the
+drjit→numpy conversion (0.44 s, and that row also absorbs the lazily-evaluated
+kernel work) but `np.add.at` — the bounce-0 G-buffer scatter — at **1.63 s of
+3.05 s wall (53%)**. Replacing it with `np.bincount` accumulation
+(`_bincount_rows`; same sums, per-pixel addition order differs by float
+rounding only) drops the profiled export from **3.05 s → 1.63 s (1.87×)**,
+i.e. 3.86M → **7.21M segments/s**; exporter schema/equivalence tests unchanged
+and green. Remaining costs are the genuine drjit conversions (0.44 s) and the
+final concatenate/normalize/validate passes — no single Python-side hotspot
+above 27% remains.

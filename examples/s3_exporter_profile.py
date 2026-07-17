@@ -60,14 +60,17 @@ def main() -> None:
         parts = line.split(None, 5)
         if len(parts) == 6 and parts[0][0].isdigit():
             ncalls, tottime, _, cumtime, _, func = parts
-            rows.append(
-                {
-                    "ncalls": ncalls,
-                    "tottime_s": float(tottime),
-                    "cumtime_s": float(cumtime),
-                    "function": func.strip(),
-                }
-            )
+            try:
+                rows.append(
+                    {
+                        "ncalls": ncalls,
+                        "tottime_s": float(tottime),
+                        "cumtime_s": float(cumtime),
+                        "function": func.strip(),
+                    }
+                )
+            except ValueError:
+                continue  # pstats summary/header lines
 
     report = {
         "rung": "S3",
