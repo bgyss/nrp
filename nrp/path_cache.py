@@ -46,6 +46,8 @@ Schema versions:
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -117,76 +119,118 @@ class PathCache:
     def segment_count(self) -> int:
         return int(self.seg_pixel.shape[0])
 
-    def save_sharded(self, directory: str, tile_size: int = 128, packed: bool = False) -> None:
+    def save_sharded(
+        self, directory: str, tile_size: int = 128, packed: bool = False, workers: int | None = None
+    ) -> None:
         """Write a tile-sharded cache directory for out-of-core experiments.
 
         Each shard owns a rectangular pixel tile and the segments whose row-major
         pixel index falls inside that tile. Segment pixel indices remain global, and
         `seg_index` records original segment order so `load_sharded` reconstructs an
         equivalent monolithic `PathCache`.
+
+        Segment→tile assignment is one stable sort over the cache (not a per-tile
+        mask pass), and shard files are compressed/written on `workers` threads
+        (zlib releases the GIL); output is bit-identical for any worker count.
+        `workers=None` picks `min(8, cpu_count)`, `workers=1` is fully serial.
         """
         self.validate()
         if tile_size <= 0:
             raise ValueError("tile_size must be positive")
+        if workers is None:
+            workers = min(8, os.cpu_count() or 1)
+        if workers <= 0:
+            raise ValueError("workers must be positive")
         root = Path(directory)
         root.mkdir(parents=True, exist_ok=True)
-        shards = []
         seg_indices = np.arange(self.segment_count, dtype=np.int64)
-        for y0 in range(0, self.height, tile_size):
+
+        # One pass over the segments: stable-sort by owning tile, then per-tile
+        # slices of `order` reproduce exactly what the old per-tile boolean mask
+        # selected (ascending original segment order within each tile).
+        n_ty = -(-self.height // tile_size)
+        n_tx = -(-self.width // tile_size)
+        rows = self.seg_pixel // self.width
+        cols = self.seg_pixel % self.width
+        tile_ids = (rows // tile_size) * n_tx + (cols // tile_size)
+        order = np.argsort(tile_ids, kind="stable")
+        sorted_ids = tile_ids[order]
+        bounds = np.searchsorted(sorted_ids, np.arange(n_ty * n_tx + 1))
+
+        n_paths_2d = self.n_paths.reshape(self.height, self.width)
+
+        def build_shard(ty: int, tx: int) -> tuple[str, dict]:
+            y0, x0 = ty * tile_size, tx * tile_size
             y1 = min(y0 + tile_size, self.height)
-            for x0 in range(0, self.width, tile_size):
-                x1 = min(x0 + tile_size, self.width)
-                rows = self.seg_pixel // self.width
-                cols = self.seg_pixel % self.width
-                owned = (rows >= y0) & (rows < y1) & (cols >= x0) & (cols < x1)
-                name = f"tile_y{y0:04d}_x{x0:04d}.npz"
-                arrays = dict(
-                    y0=y0,
-                    y1=y1,
-                    x0=x0,
-                    x1=x1,
-                    n_paths=self.n_paths.reshape(self.height, self.width)[y0:y1, x0:x1],
-                    albedo=(
-                        _to_fp16(self.albedo[y0:y1, x0:x1]) if packed else self.albedo[y0:y1, x0:x1]
-                    ),
-                    position=(
-                        _to_fp16(self.position[y0:y1, x0:x1])
-                        if packed
-                        else self.position[y0:y1, x0:x1]
-                    ),
-                    depth=(
-                        _to_fp16(self.depth[y0:y1, x0:x1]) if packed else self.depth[y0:y1, x0:x1]
-                    ),
-                    normal=(
-                        _to_fp16(self.normal[y0:y1, x0:x1]) if packed else self.normal[y0:y1, x0:x1]
-                    ),
-                    seg_index=seg_indices[owned],
+            x1 = min(x0 + tile_size, self.width)
+            tile = ty * n_tx + tx
+            owned = order[bounds[tile] : bounds[tile + 1]]
+            name = f"tile_y{y0:04d}_x{x0:04d}.npz"
+            arrays = dict(
+                y0=y0,
+                y1=y1,
+                x0=x0,
+                x1=x1,
+                n_paths=n_paths_2d[y0:y1, x0:x1],
+                albedo=(
+                    _to_fp16(self.albedo[y0:y1, x0:x1]) if packed else self.albedo[y0:y1, x0:x1]
+                ),
+                position=(
+                    _to_fp16(self.position[y0:y1, x0:x1]) if packed else self.position[y0:y1, x0:x1]
+                ),
+                depth=(_to_fp16(self.depth[y0:y1, x0:x1]) if packed else self.depth[y0:y1, x0:x1]),
+                normal=(
+                    _to_fp16(self.normal[y0:y1, x0:x1]) if packed else self.normal[y0:y1, x0:x1]
+                ),
+                seg_index=seg_indices[owned],
+            )
+            if packed:
+                tmax = _to_fp16(self.seg_tmax[owned])
+                tmax = np.where(
+                    (tmax == 0) & (self.seg_tmax[owned] > 0),
+                    np.float16(_FP16_TINY),
+                    tmax,
                 )
-                if packed:
-                    tmax = _to_fp16(self.seg_tmax[owned])
-                    tmax = np.where(
-                        (tmax == 0) & (self.seg_tmax[owned] > 0),
-                        np.float16(_FP16_TINY),
-                        tmax,
-                    )
-                    arrays.update(
-                        packed_layout=1,
-                        seg_pixel=self.seg_pixel[owned].astype(np.int32),
-                        seg_origin=_to_fp16(self.seg_origin[owned]),
-                        seg_dir=_to_fp16(self.seg_dir[owned]),
-                        seg_tmax=tmax,
-                        seg_throughput_rgb9e5=rgb9e5_encode(self.seg_throughput[owned]),
-                    )
-                else:
-                    arrays.update(
-                        seg_pixel=self.seg_pixel[owned],
-                        seg_origin=self.seg_origin[owned],
-                        seg_dir=self.seg_dir[owned],
-                        seg_tmax=self.seg_tmax[owned],
-                        seg_throughput=self.seg_throughput[owned],
-                    )
-                np.savez_compressed(root / name, **arrays)
-                shards.append({"path": name, "x0": x0, "x1": x1, "y0": y0, "y1": y1})
+                arrays.update(
+                    packed_layout=1,
+                    seg_pixel=self.seg_pixel[owned].astype(np.int32),
+                    seg_origin=_to_fp16(self.seg_origin[owned]),
+                    seg_dir=_to_fp16(self.seg_dir[owned]),
+                    seg_tmax=tmax,
+                    seg_throughput_rgb9e5=rgb9e5_encode(self.seg_throughput[owned]),
+                )
+            else:
+                arrays.update(
+                    seg_pixel=self.seg_pixel[owned],
+                    seg_origin=self.seg_origin[owned],
+                    seg_dir=self.seg_dir[owned],
+                    seg_tmax=self.seg_tmax[owned],
+                    seg_throughput=self.seg_throughput[owned],
+                )
+            return name, arrays
+
+        def write_shard(ty: int, tx: int) -> None:
+            name, arrays = build_shard(ty, tx)
+            np.savez_compressed(root / name, **arrays)
+
+        tiles = [(ty, tx) for ty in range(n_ty) for tx in range(n_tx)]
+        if workers == 1:
+            for ty, tx in tiles:
+                write_shard(ty, tx)
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                # list() re-raises the first worker exception
+                list(pool.map(lambda t: write_shard(*t), tiles))
+        shards = [
+            {
+                "path": f"tile_y{ty * tile_size:04d}_x{tx * tile_size:04d}.npz",
+                "x0": tx * tile_size,
+                "x1": min(tx * tile_size + tile_size, self.width),
+                "y0": ty * tile_size,
+                "y1": min(ty * tile_size + tile_size, self.height),
+            }
+            for ty, tx in tiles
+        ]
         manifest = {
             "schema_version": SCHEMA_VERSION,
             "layout": "path_cache_sharded",

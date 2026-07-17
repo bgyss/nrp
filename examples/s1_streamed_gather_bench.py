@@ -124,8 +124,10 @@ def main() -> None:
     parser.add_argument(
         "--backends",
         default="numpy,torch:cpu,torch:mps",
-        help="comma-separated: numpy | torch:cpu | torch:mps",
+        help="comma-separated: numpy | torch:cpu | torch:mps, each with optional "
+        "@N decode-worker suffix (e.g. torch:mps@4)",
     )
+    parser.add_argument("--tag", default="", help="suffix for end-to-end run keys")
     parser.add_argument("--skip-full-parity", action="store_true")
     args = parser.parse_args()
 
@@ -191,16 +193,29 @@ def main() -> None:
     peak_bytes = {}
     for spec in args.backends.split(","):
         spec = spec.strip()
+        decode_workers = 1
+        if "@" in spec:
+            spec, w = spec.split("@")
+            decode_workers = int(w)
         if spec == "numpy":
-            cfg = dict(cfg_base)
+            cfg = dict(cfg_base, decode_workers=decode_workers)
             key = "numpy"
         else:
             _, dev = spec.split(":")
             if dev == "mps" and not torch.backends.mps.is_available():
                 print(f"skipping {spec}: mps unavailable", flush=True)
                 continue
-            cfg = dict(cfg_base, gather_backend="torch", gather_device=dev)
+            cfg = dict(
+                cfg_base,
+                gather_backend="torch",
+                gather_device=dev,
+                decode_workers=decode_workers,
+            )
             key = f"torch_{dev}"
+        if decode_workers > 1:
+            key += f"_w{decode_workers}"
+        if args.tag:
+            key += f"_{args.tag}"
         print(f"== end-to-end train_streamed [{key}] ==", flush=True)
         t0 = time.perf_counter()
         model, stats = train_streamed(shard_dir, cache, cfg)

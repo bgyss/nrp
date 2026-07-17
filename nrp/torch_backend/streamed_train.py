@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -104,12 +105,61 @@ def _decode_shard(z) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np
     return seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput, decoded_bytes
 
 
+def _decode_shard_file(
+    path: Path, workers: int = 1
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
+    """`_decode_shard` from a shard path, decompressing members on `workers` threads.
+
+    Each thread opens its own npz handle, so only this one shard's arrays are ever
+    resident: parallelism is *within* the shard (zlib inflate and the float64
+    conversions release the GIL), never across shards. `workers=1` matches the
+    serial `_decode_shard` exactly.
+    """
+    if workers <= 1:
+        with np.load(path) as z:
+            return _decode_shard(z)
+    with np.load(path) as z:
+        packed = "packed_layout" in z.files
+
+    def read(name: str) -> np.ndarray:
+        with np.load(path) as z:
+            arr = z[name]
+        if name == "seg_pixel":
+            return arr.astype(np.int64)
+        if name == "seg_throughput_rgb9e5":
+            return rgb9e5_decode(arr)
+        out = arr.astype(np.float64)
+        if name == "seg_dir" and packed:
+            norms = np.linalg.norm(out, axis=1, keepdims=True)
+            out = np.divide(out, norms, out=out, where=norms > 0)
+        return out
+
+    names = [
+        "seg_pixel",
+        "seg_origin",
+        "seg_dir",
+        "seg_tmax",
+        "seg_throughput_rgb9e5" if packed else "seg_throughput",
+    ]
+    with ThreadPoolExecutor(max_workers=min(workers, len(names))) as pool:
+        seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput = list(pool.map(read, names))
+    decoded_bytes = int(
+        seg_pixel.nbytes
+        + seg_origin.nbytes
+        + seg_dir.nbytes
+        + seg_tmax.nbytes
+        + seg_throughput.nbytes
+    )
+    return seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput, decoded_bytes
+
+
 def gather_spheres_streamed(
     shard_dir: Path,
     n_paths: np.ndarray,
     lights: list[tuple[np.ndarray, float]],
     backend: str = "numpy",
     device: str = "cpu",
+    decode_workers: int = 1,
 ) -> tuple[list[np.ndarray], dict]:
     """GATHERsphere for several lights in one pass over the shard tiles.
 
@@ -141,8 +191,9 @@ def gather_spheres_streamed(
 
     for shard in manifest["shards"]:
         t0 = time.perf_counter()
-        with np.load(shard_dir / shard["path"]) as z:
-            seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput, decoded = _decode_shard(z)
+        seg_pixel, seg_origin, seg_dir, seg_tmax, seg_throughput, decoded = _decode_shard_file(
+            shard_dir / shard["path"], workers=decode_workers
+        )
         decode_seconds += time.perf_counter() - t0
         segments_processed += int(seg_pixel.size)
         peak_segment_bytes = max(peak_segment_bytes, decoded)
@@ -211,6 +262,7 @@ def gather_sphere_streamed(
     radius: float,
     backend: str = "numpy",
     device: str = "cpu",
+    decode_workers: int = 1,
 ) -> tuple[np.ndarray, dict]:
     """Single-light wrapper around `gather_spheres_streamed` (kept for E5 callers)."""
     images, stats = gather_spheres_streamed(
@@ -219,6 +271,7 @@ def gather_sphere_streamed(
         [(np.asarray(center, dtype=np.float64), float(radius))],
         backend=backend,
         device=device,
+        decode_workers=decode_workers,
     )
     return images[0], stats
 
@@ -242,6 +295,7 @@ class StreamedImagePool:
         self.size = cfg["pool"]["size"]
         self.gather_backend = cfg.get("gather_backend", "numpy")
         self.gather_device = cfg.get("gather_device", cfg.get("device", "cpu"))
+        self.decode_workers = int(cfg.get("decode_workers", 1))
         n_px = gbuffer_cache.height * gbuffer_cache.width
         self.params = torch.empty((self.size, 4), dtype=torch.float32, device=device)
         self.targets = torch.empty((self.size, n_px, 3), dtype=torch.float32, device=device)
@@ -277,6 +331,7 @@ class StreamedImagePool:
             [(light.center, light.radius) for light in lights],
             backend=self.gather_backend,
             device=self.gather_device,
+            decode_workers=self.decode_workers,
         )
         self.peak_segment_bytes = max(self.peak_segment_bytes, stats["peak_segment_bytes"])
         self.peak_device_tensor_bytes = max(

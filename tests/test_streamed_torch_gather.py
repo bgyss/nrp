@@ -86,6 +86,29 @@ class StreamedTorchGatherTests(unittest.TestCase):
             )
             np.testing.assert_array_equal(image, single)
 
+    def test_threaded_shard_decode_matches_serial(self):
+        from nrp.torch_backend.streamed_train import _decode_shard_file
+
+        for shard_root in (self.shards, self.packed):
+            with open(shard_root / "manifest.json") as f:
+                manifest = __import__("json").load(f)
+            for shard in manifest["shards"][:4]:
+                serial = _decode_shard_file(shard_root / shard["path"], workers=1)
+                threaded = _decode_shard_file(shard_root / shard["path"], workers=4)
+                self.assertEqual(serial[5], threaded[5])
+                for a, b in zip(serial[:5], threaded[:5], strict=True):
+                    np.testing.assert_array_equal(a, b)
+
+    def test_gather_with_decode_workers_matches_serial(self):
+        for center, radius in LIGHTS[:1]:
+            ref, _ = gather_sphere_streamed(
+                self.packed, self.n_paths, center, radius, backend="numpy"
+            )
+            got, _ = gather_sphere_streamed(
+                self.packed, self.n_paths, center, radius, backend="numpy", decode_workers=4
+            )
+            np.testing.assert_array_equal(got, ref)
+
     @unittest.skipUnless(HAVE_MPS, "MPS not available")
     def test_torch_mps_close_to_numpy(self):
         # fp32 on MPS: aggregate-error tolerance, matching test_torch_gather's
