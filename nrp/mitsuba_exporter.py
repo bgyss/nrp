@@ -50,6 +50,7 @@ JIT_VARIANTS = ("llvm_ad_rgb", "metal_ad_rgb")
 
 def _hardware_context() -> dict:
     """Best-effort machine context for reproducible benchmark reports."""
+
     def sysctl(name: str) -> str | None:
         try:
             return subprocess.check_output(
@@ -495,7 +496,7 @@ def main() -> None:
     parser.add_argument(
         "--move-shape",
         help="H5 scene-edit/retrace path: id of a shape in --scene to translate before "
-        "tracing (e.g. an <shape id=\"...\"> in the XML); requires --translate",
+        'tracing (e.g. an <shape id="..."> in the XML); requires --translate',
     )
     parser.add_argument(
         "--translate",

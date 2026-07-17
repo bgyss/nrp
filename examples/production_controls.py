@@ -120,8 +120,9 @@ def mask_basis(width: int, height: int) -> list[np.ndarray]:
         np.ones((height, width), dtype=np.float64),
         (xs >= width // 2).astype(np.float64),
         (ys >= height // 2).astype(np.float64),
-        (((xs - width / 2.0) ** 2 + (ys - height / 2.0) ** 2) <= (min(width, height) / 4.0) ** 2)
-        .astype(np.float64),
+        (
+            ((xs - width / 2.0) ** 2 + (ys - height / 2.0) ** 2) <= (min(width, height) / 4.0) ** 2
+        ).astype(np.float64),
     ]
 
 
@@ -297,8 +298,7 @@ def main() -> None:
         dtype=np.float64,
     )
     polynomial_train_images = [
-        polynomial_attenuated_gather(cache, light, coeffs)
-        for coeffs in polynomial_train_controls
+        polynomial_attenuated_gather(cache, light, coeffs) for coeffs in polynomial_train_controls
     ]
     polynomial_proxy = BasisControlProxy.fit(
         polynomial_train_controls,
@@ -350,16 +350,13 @@ def main() -> None:
                     "slope": heldout_slope,
                 },
                 "parameter_count": attenuation_proxy.parameter_count,
-                "heldout_psnr_vs_gather_db": finite_or_inf(
-                    psnr(heldout_proxy, heldout_reference)
-                ),
+                "heldout_psnr_vs_gather_db": finite_or_inf(psnr(heldout_proxy, heldout_reference)),
                 "heldout_max_abs_vs_gather": float(
                     np.max(np.abs(heldout_proxy - heldout_reference))
                 ),
                 "heldout_gather_ms": heldout_gather_ms,
                 "heldout_predict_ms": heldout_proxy_ms,
-                "heldout_speedup_vs_gather_time": heldout_gather_ms
-                / max(heldout_proxy_ms, 1e-12),
+                "heldout_speedup_vs_gather_time": heldout_gather_ms / max(heldout_proxy_ms, 1e-12),
             },
             "arbitrary_mask_proxy": {
                 "kind": "least-squares image proxy conditioned on soft mask-basis weights",

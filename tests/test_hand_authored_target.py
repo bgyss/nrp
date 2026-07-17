@@ -58,9 +58,7 @@ class HandAuthoredTargetTests(unittest.TestCase):
                 check=True,
             )
             report = json.loads(out.read_text())
-            provenance = json.loads(
-                (Path(tmp) / "hand_authored_provenance.json").read_text()
-            )
+            provenance = json.loads((Path(tmp) / "hand_authored_provenance.json").read_text())
         self.assertTrue(provenance["generation"]["hand_authored"])
         self.assertFalse(provenance["generation"]["derived_from_render"])
         self.assertIn("target_vs_realized_psnr_db", report)

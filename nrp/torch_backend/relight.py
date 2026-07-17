@@ -31,9 +31,11 @@ def relight(model: TorchNRP, cache: PathCache, lights: list) -> np.ndarray:
             params = torch.as_tensor(
                 light_param_vector(light), dtype=torch.float32, device=device
             ).expand(n_px, -1)
-            rgb = torch.ones(3, dtype=torch.float32, device=device) if isinstance(
-                light, TexturedQuadLight
-            ) else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+            rgb = (
+                torch.ones(3, dtype=torch.float32, device=device)
+                if isinstance(light, TexturedQuadLight)
+                else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+            )
             image += model(xy, aux, params) * rgb
     return image.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)
 
@@ -62,9 +64,11 @@ def relight_tiled(
                 params = torch.as_tensor(
                     light_param_vector(light), dtype=torch.float32, device=device
                 ).expand(end - start, -1)
-                rgb = torch.ones(3, dtype=torch.float32, device=device) if isinstance(
-                    light, TexturedQuadLight
-                ) else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+                rgb = (
+                    torch.ones(3, dtype=torch.float32, device=device)
+                    if isinstance(light, TexturedQuadLight)
+                    else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+                )
                 chunk += model(xy[start:end], aux[start:end], params) * rgb
             image[start:end] = chunk
     return image.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)

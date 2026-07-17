@@ -89,9 +89,7 @@ def stream_shard_targets(shard_dir: Path, lights: list[SphereLight]) -> tuple[np
         y0, y1 = int(z["y0"]), int(z["y1"])
         x0, x1 = int(z["x0"]), int(z["x1"])
         tile_paths = z["n_paths"].reshape(-1)
-        pixel_ids = (
-            np.arange(y0, y1)[:, None] * width + np.arange(x0, x1)[None, :]
-        ).reshape(-1)
+        pixel_ids = (np.arange(y0, y1)[:, None] * width + np.arange(x0, x1)[None, :]).reshape(-1)
         n_paths[pixel_ids] = tile_paths
         visited_pixels += int(pixel_ids.size)
         seg_pixel = z["seg_pixel"].astype(np.int64)

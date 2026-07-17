@@ -211,8 +211,7 @@ def main() -> None:
         "--compose-only",
         action="store_true",
         help=(
-            "refresh export evidence and hardware in an existing report without "
-            "rerunning training"
+            "refresh export evidence and hardware in an existing report without rerunning training"
         ),
     )
     args = parser.parse_args()
@@ -256,9 +255,7 @@ def main() -> None:
     streamed = run_worker(
         worker_train, "streamed", str(cache_path), str(shard_dir), cfg, str(stream_path)
     )
-    evaluation = run_worker(
-        worker_eval, str(shard_dir), str(mono_path), str(stream_path), cfg
-    )
+    evaluation = run_worker(worker_eval, str(shard_dir), str(mono_path), str(stream_path), cfg)
     report = {
         "rung": "T2",
         "scene": "Mitsuba Country Kitchen (T1)",

@@ -157,9 +157,7 @@ class DynamicGeometryTests(unittest.TestCase):
         self.assertTrue(bool(mask[0, 1]))
 
     def test_multi_bounce_spliced_cache_matches_full_retrace_with_swept_mask(self):
-        before = trace_path_cache(
-            16, 16, 4, max_bounces=2, seed=11, sphere_center=SPHERE_CENTER
-        )
+        before = trace_path_cache(16, 16, 4, max_bounces=2, seed=11, sphere_center=SPHERE_CENTER)
         moved = SPHERE_CENTER + np.array([0.12, 0.0, 0.0])
         after = trace_path_cache(16, 16, 4, max_bounces=2, seed=11, sphere_center=moved)
         primary_mask = primary_visibility_invalidation_mask(before, after)

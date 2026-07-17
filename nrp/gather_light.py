@@ -200,9 +200,12 @@ def gather_light_controlled(
         hits = segment_hits_sphere(
             cache.seg_origin, cache.seg_dir, cache.seg_tmax, light.center, light.radius
         )
-        image = _accumulate_hits_weighted(
-            cache, hits, _sphere_attenuation_weights(cache, light, controls)
-        ) * light.rgb
+        image = (
+            _accumulate_hits_weighted(
+                cache, hits, _sphere_attenuation_weights(cache, light, controls)
+            )
+            * light.rgb
+        )
     elif controls.attenuation is not None:
         raise ValueError("attenuation controls currently support SphereLight only")
     else:

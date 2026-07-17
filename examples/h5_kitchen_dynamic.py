@@ -76,9 +76,7 @@ def _finetune(model: TorchNRP, cache, target, mask, light_params, iters, lr) -> 
     xy_all, aux_all = pixel_tensors(cache, device)
     xy = xy_all[idx]
     aux = aux_all[idx]
-    params = torch.as_tensor(light_params, dtype=torch.float32, device=device).expand(
-        idx.size, -1
-    )
+    params = torch.as_tensor(light_params, dtype=torch.float32, device=device).expand(idx.size, -1)
     y = torch.as_tensor(
         target.reshape(-1, 3)[idx].astype(np.float32), dtype=torch.float32, device=device
     )
@@ -167,7 +165,9 @@ def main() -> None:
     t_mask0 = time.perf_counter()
     primary_mask = primary_visibility_invalidation_mask(before, after)
     swept_mask = swept_volume_invalidation_mask(
-        after, CHOPPING_BOARD_CENTROID, CHOPPING_BOARD_CENTROID + CHOPPING_BOARD_TRANSLATE,
+        after,
+        CHOPPING_BOARD_CENTROID,
+        CHOPPING_BOARD_CENTROID + CHOPPING_BOARD_TRANSLATE,
         CHOPPING_BOARD_RADIUS,
     )
     union_mask = primary_mask | swept_mask
@@ -213,8 +213,14 @@ def main() -> None:
     residual = ResidualNRP(hidden_width=32, hidden_layers=2, light_param_dim=len(light_params))
     t_d0 = time.perf_counter()
     train_residual(
-        residual, base_model, after, full_after, region_mask, light_params,
-        iters=args.iters, lr=args.lr,
+        residual,
+        base_model,
+        after,
+        full_after,
+        region_mask,
+        light_params,
+        iters=args.iters,
+        lr=args.lr,
     )
     regime_d_pred = composite_predict(base_model, residual, after, light_params, region_mask)
     regime_d_seconds = time.perf_counter() - t_d0

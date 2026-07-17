@@ -320,9 +320,7 @@ def trace_path_cache(
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
         keep = np.ones(n_pixels, dtype=bool)
         for _bounce in range(max_bounces):
-            t, normal, albedo, is_sphere = _intersect_scene(
-                origins, dirs, sphere_center, occluder
-            )
+            t, normal, albedo, is_sphere = _intersect_scene(origins, dirs, sphere_center, occluder)
             if _bounce == 0 and layer is not None:
                 keep = is_sphere if layer == "sphere" else ~is_sphere
             if medium is not None:

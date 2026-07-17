@@ -147,9 +147,7 @@ class PathCache:
                     x1=x1,
                     n_paths=self.n_paths.reshape(self.height, self.width)[y0:y1, x0:x1],
                     albedo=(
-                        _to_fp16(self.albedo[y0:y1, x0:x1])
-                        if packed
-                        else self.albedo[y0:y1, x0:x1]
+                        _to_fp16(self.albedo[y0:y1, x0:x1]) if packed else self.albedo[y0:y1, x0:x1]
                     ),
                     position=(
                         _to_fp16(self.position[y0:y1, x0:x1])
@@ -157,14 +155,10 @@ class PathCache:
                         else self.position[y0:y1, x0:x1]
                     ),
                     depth=(
-                        _to_fp16(self.depth[y0:y1, x0:x1])
-                        if packed
-                        else self.depth[y0:y1, x0:x1]
+                        _to_fp16(self.depth[y0:y1, x0:x1]) if packed else self.depth[y0:y1, x0:x1]
                     ),
                     normal=(
-                        _to_fp16(self.normal[y0:y1, x0:x1])
-                        if packed
-                        else self.normal[y0:y1, x0:x1]
+                        _to_fp16(self.normal[y0:y1, x0:x1]) if packed else self.normal[y0:y1, x0:x1]
                     ),
                     seg_index=seg_indices[owned],
                 )
