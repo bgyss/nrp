@@ -188,14 +188,10 @@ def build_per_light_config(
             cfg["iters"] = textured_quad_iters
         if texture_conditioning is not None:
             cfg["model"]["texture_conditioning"] = texture_conditioning
-        # Documented deviation: nrp.torch_backend.gather.TorchPathCache.gather_light
-        # only implements sphere/quad (it reads light.rgb unconditionally, which
-        # TexturedQuadLight does not have — AttributeError). The numpy gather
-        # backend (nrp/gather_light.py) is the authoritative reference and already
-        # fully supports TexturedQuadLight via gather_textured_quad, so textured_quad
-        # rig lights fall back to it for pool-target rendering; sphere/quad lights
-        # keep the faster batched torch backend from base_cfg.
-        cfg["gather_backend"] = "numpy"
+        # (S4) TorchPathCache.gather_light now implements textured quads (numpy
+        # parity-tested), so textured_quad rig lights use the same batched torch
+        # pool-target gather as sphere/quad — the old numpy fallback that made
+        # H3's textured-quad training 3.4x slower per iteration is gone.
     return cfg
 
 

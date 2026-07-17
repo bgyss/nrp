@@ -23,9 +23,17 @@ import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const exportDir = path.join(repoRoot, "out", "t4-runtime", "export");
-const reportPath = path.join(repoRoot, "out", "t4-runtime", "report.json");
+// S6: --export-dir/--report/--resolutions let the same harness run non-default
+// exports (e.g. the 1024^2 kitchen G-buffer) without touching the committed
+// t4-runtime baseline paths.
+function argValue(flag, fallback) {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+const exportDir = path.resolve(argValue("--export-dir", path.join(repoRoot, "out", "t4-runtime", "export")));
+const reportPath = path.resolve(argValue("--report", path.join(repoRoot, "out", "t4-runtime", "report.json")));
 const baselinePath = path.join(repoRoot, "out", "t4-runtime", "baseline.json");
+const resolutionsArg = argValue("--resolutions", "128,256,512").split(",").map(Number);
 
 const PARITY_TOLERANCE = 2e-4; // f32 op-order drift over hashgrid + 128-wide MLP
 const REGRESSION_THRESHOLD = 0.3; // fail --check if p95 exceeds baseline p95 by >30%
@@ -183,7 +191,7 @@ async function main() {
     mlp: repackMlp(loadF32("mlp.bin"), manifest.mlp_dims),
     reference: loadF32("reference.bin"),
     manifest,
-    resolutions: [128, 256, 512],
+    resolutions: resolutionsArg,
     warmup: 10,
     timedRuns: 200,
   });
@@ -201,7 +209,7 @@ async function main() {
     notes: [
       "Per timed frame only the light uniform changes (jittered): G-buffer, weights, " +
         "and hashgrid tables stay resident — the interactive-relight access pattern.",
-      "Sub-512 resolutions use strided subsampling of the real 512^2 G-buffer.",
+      "Sub-full resolutions use strided subsampling of the export's full-res G-buffer.",
       "Timing includes uniform upload, dispatch, and onSubmittedWorkDone (no readback).",
     ],
   };

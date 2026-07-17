@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from ..lights import QuadLight, SphereLight, quad_tangent_frame
+from ..lights import QuadLight, SphereLight, TexturedQuadLight, quad_tangent_frame
 from ..path_cache import PathCache
 
 
@@ -158,8 +158,57 @@ class TorchPathCache:
         )
         return self._accumulate(hits)
 
-    def gather_light(self, light: SphereLight | QuadLight) -> torch.Tensor:
+    def gather_textured_quad(self, light: TexturedQuadLight) -> torch.Tensor:
+        """Textured-quad GATHER: throughput times hit texel rgb (numpy-reference
+        semantics from `nrp.gather_light.gather_textured_quad`, incl. the same
+        floor+clip texel lookup), already emission-scaled — textured quads have no
+        separate rgb."""
+        if not self.segment_count:
+            return torch.zeros((self.height, self.width, 3), dtype=self.dtype, device=self.device)
+        n = np.asarray(light.normal, dtype=np.float64)
+        n = n / np.linalg.norm(n)
+        u, v = quad_tangent_frame(n)
+        to = lambda a: torch.as_tensor(a, dtype=self.dtype, device=self.device)  # noqa: E731
+        c, n_t, u_t, v_t = to(light.center), to(n), to(u), to(v)
+        width, height = float(light.width), float(light.height)
+
+        denom = self.dir @ n_t
+        parallel = denom.abs() < 1e-12
+        safe = torch.where(parallel, torch.ones_like(denom), denom)
+        t = ((c - self.origin) @ n_t) / safe
+        p = self.origin + t.unsqueeze(-1) * self.dir
+        local = p - c
+        lu = local @ u_t
+        lv = local @ v_t
+        hits = (
+            ~parallel
+            & (t >= 0.0)
+            & (t <= self.tmax)
+            & (lu.abs() <= width / 2.0)
+            & (lv.abs() <= height / 2.0)
+        )
+        uv_u = torch.clamp(lu / width + 0.5, 0.0, 1.0)
+        uv_v = torch.clamp(lv / height + 0.5, 0.0, 1.0)
+        tex = to(light.texture)
+        tex_h, tex_w = tex.shape[0], tex.shape[1]
+        ti = torch.clamp((uv_u * tex_w).floor().long(), 0, tex_w - 1)
+        tj = torch.clamp((uv_v * tex_h).floor().long(), 0, tex_h - 1)
+        # misses get uv 0 in the reference; their texel value is irrelevant since
+        # the hit weight zeroes them in the scatter below.
+        ti = torch.where(hits, ti, torch.zeros_like(ti))
+        tj = torch.where(hits, tj, torch.zeros_like(tj))
+        texels = tex[tj, ti]
+        n_px = self.height * self.width
+        contrib = torch.zeros((n_px, 3), dtype=self.dtype, device=self.device)
+        weighted = self.throughput * texels * hits.to(self.dtype).unsqueeze(-1)
+        contrib.index_add_(0, self.pixel, weighted)
+        contrib *= self.inv_paths.unsqueeze(-1)
+        return contrib.reshape(self.height, self.width, 3)
+
+    def gather_light(self, light: SphereLight | QuadLight | TexturedQuadLight) -> torch.Tensor:
         """Full contribution of one light: GATHERtype scaled by emission rgb."""
+        if isinstance(light, TexturedQuadLight):
+            return self.gather_textured_quad(light)
         if isinstance(light, SphereLight):
             image = self.gather_throughput(light.center, light.radius)
         else:
