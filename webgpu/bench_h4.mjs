@@ -31,8 +31,15 @@ import { createDemoServer } from "./demo/server.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const exportDir = path.join(repoRoot, "out", "h4-rig-export");
-const reportPath = path.join(repoRoot, "out", "h4-rig", "report.json");
+// S4/S6: --export-dir/--report run the same harness against a rebuilt rig
+// export (e.g. the S4 kernel-conditioned rig) without touching the committed
+// H4 report path.
+function argValue(flag, fallback) {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+const exportDir = path.resolve(argValue("--export-dir", path.join(repoRoot, "out", "h4-rig-export")));
+const reportPath = path.resolve(argValue("--report", path.join(repoRoot, "out", "h4-rig", "report.json")));
 
 const PARITY_TOLERANCE = 2e-4; // f32 op-order drift, same basis as T4
 

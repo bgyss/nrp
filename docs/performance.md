@@ -2340,3 +2340,33 @@ assumes a 3-output head, so a kernel-head proxy needs a small shader
 extension (predict kernel, contract with a texture uniform) before it can
 replace the flat textured_quad models in the H4 rig export -- follow-up
 work, not blocking this rung's quality finding.
+
+## Export/shard throughput at scale (scale track, rung S3)
+
+`PathCache.save_sharded` had two measured costs at 512²: a per-tile boolean mask
+pass over all segments (O(tiles × segments)) and serial `np.savez_compressed`
+writes. S3 replaces the mask passes with **one stable segment sort by owning
+tile** (per-tile slices then reproduce the old selection exactly) and writes
+shard files on a **thread pool** (zlib compression releases the GIL; each worker
+owns whole shards, so output is bit-identical for any worker count —
+`tests/test_path_cache.py::test_parallel_sharded_write_bit_identical_to_serial`
+asserts equality per shard member, both layouts). `workers=None` defaults to
+`min(8, cpu_count)`; `workers=1` is the fully serial reference.
+
+Measured by `examples/s3_shard_write_bench.py` (report:
+`out/s3-shard-write/report.json`) on the E5 512²/128spp cornell cache
+(94,237,448 segments, 64×64 tiles), Apple M1 Max, vs the committed 306.3 s
+serial baseline:
+
+| layout | workers | wall-clock | shard bytes | speedup vs 306.3 s |
+|---|---|---:|---:|---:|
+| float64 | 1 (sort fix only) | 286.7 s | 3.50 GB | 1.07× |
+| float64 | 8 | **53.0 s** | 3.50 GB | **5.78×** |
+| packed  | 1 | 139.7 s | 1.08 GB | 2.19× |
+| packed  | 8 | **33.5 s** | 1.08 GB | **9.13×** |
+
+The ≥3× target is met with headroom in both layouts. The sort fix alone is worth
+only 1.07× — compression, not tile selection, dominated the serial path — and
+threading recovers most of the machine (5.4× over serial at 8 workers). A
+parallel-written cache loads bit-identically to a serial one (spot parity in the
+bench, exhaustive parity in the unit test).
