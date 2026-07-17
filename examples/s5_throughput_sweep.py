@@ -72,8 +72,14 @@ def run_arm(base_cfg: dict, name: str, device: str, out_root: Path) -> dict:
         "compile": bool(cfg.get("compile")),
     }
     t0 = time.perf_counter()
+    report_path = Path(cfg["out_dir"]) / "torch_train_report.json"
     try:
-        report = train(cfg)
+        if report_path.exists():
+            # a previous sweep invocation already trained this arm to completion
+            report = json.loads(report_path.read_text())
+            print(f"reusing completed run {report_path}", flush=True)
+        else:
+            report = train(cfg)
     except Exception as exc:  # honest negative, not a crash of the sweep
         row["status"] = "failed"
         row["error"] = f"{type(exc).__name__}: {exc}"
@@ -82,7 +88,7 @@ def run_arm(base_cfg: dict, name: str, device: str, out_root: Path) -> dict:
         return row
     row["status"] = "ok"
     row["train_seconds"] = report["train_seconds"]
-    row["pool_seconds"] = report["pool_seconds"]
+    row["pool_seconds"] = report["pool_build_seconds"]
     row["iters_per_second"] = cfg["iters"] / report["train_seconds"]
     row["samples_per_second"] = cfg["iters"] * cfg["batch_pixels"] / report["train_seconds"]
     row["final_psnr_db"] = report["val_psnr_db_vs_raw_mean"]
