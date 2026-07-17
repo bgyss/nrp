@@ -70,7 +70,8 @@ async function main() {
   });
   const page = await browser.newPage();
   page.on("console", (msg) => { if (msg.type() === "error") console.error("page:", msg.text()); });
-  await page.goto(`http://127.0.0.1:${port}/webgpu/h4.html`);
+  const repoRel = "/" + path.relative(repoRoot, exportDir).split(path.sep).join("/");
+  await page.goto(`http://127.0.0.1:${port}/webgpu/h4.html?export=${encodeURIComponent(repoRel)}`);
   await page.waitForFunction(() => window.__h4 && window.__h4.ready !== undefined, null, { timeout: 60000 });
   const ready = await page.evaluate(() => window.__h4.ready);
   if (!ready) {
