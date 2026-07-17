@@ -17,6 +17,7 @@ import torch
 from ..gather_light import gather_lights
 from ..lights import TexturedQuadLight, light_from_dict
 from ..path_cache import PathCache
+from .device import resolve_device
 from .model import TorchNRP
 from .train import light_param_vector, pixel_tensors
 
@@ -167,6 +168,11 @@ def main() -> None:
     )
     parser.add_argument("--bench", type=int, default=0, help="benchmark N relight frames")
     parser.add_argument(
+        "--device",
+        default="cpu",
+        help="inference device (cpu/mps/cuda; validated, cuda-unavailable fails clearly)",
+    )
+    parser.add_argument(
         "--tile-pixels",
         type=int,
         default=0,
@@ -174,7 +180,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    model = TorchNRP.load(args.model)
+    model = TorchNRP.load(args.model).to(resolve_device(args.device))
     cache = PathCache.load(args.cache)
     lights = load_light_specs(args.light)
     final_cache = PathCache.load(args.final_cache) if args.final_cache else None

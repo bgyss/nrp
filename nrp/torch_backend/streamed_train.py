@@ -32,6 +32,7 @@ from ..lights import SphereLight
 from ..path_cache import PathCache
 from ..rgb9e5 import rgb9e5_decode
 from .denoise import denoise_image
+from .device import resolve_device
 from .gather import TorchPathCache
 from .model import TorchNRP, relative_mse_loss
 from .sampling import sample_light
@@ -388,7 +389,7 @@ def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tupl
     comparable iteration-for-iteration."""
     rng = np.random.default_rng(cfg.get("seed", 0))
     torch.manual_seed(cfg.get("seed", 0))
-    device = torch.device(cfg.get("device", "cpu"))
+    device = resolve_device(cfg.get("device"))
     xy, aux = _pixel_tensors(gbuffer_cache, device)
 
     t_pool0 = time.perf_counter()
