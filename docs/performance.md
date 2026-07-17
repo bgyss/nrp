@@ -2370,3 +2370,54 @@ only 1.07× — compression, not tile selection, dominated the serial path — a
 threading recovers most of the machine (5.4× over serial at 8 workers). A
 parallel-written cache loads bit-identically to a serial one (spot parity in the
 bench, exhaustive parity in the unit test).
+
+## Vectorized streamed gather (scale track, rung S1)
+
+E5's streamed pool was scalar-numpy-bound: one full pass over the sharded cache
+per pool slot, `np.add.at` per shard. S1 lands three composable changes in
+`nrp.torch_backend.streamed_train`, all preserving the bounded-residency
+guarantee (never more than one shard's decoded segments resident — asserted
+per run below, identical 150.3 MB peak in every row):
+
+1. **multi-light shard passes** — a pool fill batch samples its lights in slot
+   order first (identical rng stream; numpy targets bit-identical, the existing
+   streamed-vs-monolithic loss-curve equality test still passes), then tests
+   each decoded shard against all of them, so a 16-slot pool build decodes the
+   cache once instead of 16 times;
+2. **`gather_backend: torch`** — a per-shard `TorchPathCache` built on the fly
+   runs the overlap test + scatter as batched ops on `gather_device`
+   (cpu float64: rtol 1e-5 vs numpy, full-frame parity asserted in the report;
+   mps float32: rel-L1 < 1e-4, same convention as the in-memory gather);
+3. **`decode_workers: N`** — shard npz members decompress on N threads (own
+   handle per thread; zlib + float64 conversion release the GIL), still one
+   shard at a time.
+
+Per-shard gather on the largest real shard (1.71M segments): numpy 31.9 ms,
+torch-cpu 17.4 ms, torch-mps **7.9 ms** (4.0×). Per-shard decode: 335 ms serial
+→ 174 ms at 4 threads (bounded by the three large float64 members).
+
+End-to-end (`examples/s1_streamed_gather_bench.py`, reports under
+`out/s1-streamed-gather/`), 512²/128spp, 150 iters, same config/seed as the
+committed E5 baseline (382.2 s pool / 1,004.9 s total; held-out 32.57 dB),
+Apple M1 Max:
+
+| configuration | pool build | decode | gather | total | speedup | held-out |
+|---|---:|---:|---:|---:|---:|---:|
+| numpy, batched fills only | 114.3 s | 474.7 s | 227.6 s | 713.9 s | 1.41× | 32.57 dB |
+| torch-cpu | — | — | — | 528.2 s | 1.90× | 32.57 dB |
+| torch-mps | 30.8 s | 488.6 s | 43.1 s | 543.2 s | 1.85× | 32.57 dB |
+| numpy + 4 decode threads | 101.9 s | 292.2 s | 224.9 s | 529.7 s | 1.90× | 32.57 dB |
+| torch-mps + 4 decode threads | 21.9 s | 284.6 s | ~29 s | 335.3 s | 3.00× | 32.57 dB |
+| torch-mps + 4 threads + **packed shards** | 16.1 s | 109.4 s | 44.7 s | **166.4 s** | **6.04×** | 32.52 dB |
+
+The **≥5× target is met** (6.04×); the 10× stretch is not. Honest accounting of
+the last row: the packed (§4.2 fp16+rgb9e5) shards are the same committed cache
+representation T2 validated (≥44.9 dB image fidelity, identical training PSNR
+at 512²/64spp); on this cache the packed-target proxy lands within 0.05 dB of
+the float64 baseline. On float64 shards alone the ceiling is 3.0× — inflating
+3.5 GB of zlib per full pass dominates everything else once the gather is
+batched (284.6 s of the 335.3 s run), which is exactly the paper's motivation
+for the packed layout. rng-order: numpy-backend targets remain bit-identical to
+per-slot fills; the torch backend changes accumulation order (documented, loss
+curves match the numpy path at rtol 1e-4 on the toy cache, statistically
+identical here: same 4.15 → 0.00136 loss, same 32.57 dB).

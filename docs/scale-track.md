@@ -20,7 +20,7 @@ for the stretch rungs: **≈ $20–35** (30–50 GPU-hours on a RunPod RTX 4090 
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| S1 | Vectorize the streamed gather (kill the Python-loop bound) | todo | — |
+| S1 | Vectorize the streamed gather (kill the Python-loop bound) | **done** (6.04× end-to-end, target ≥5×; 10× stretch missed) | `out/s1-streamed-gather/*.json`, `docs/performance.md#vectorized-streamed-gather-scale-track-rung-s1` |
 | S2 | 1024² and a second real scene | todo | — |
 | S3 | Export/shard throughput at scale | todo | — |
 | S4 | Re-earn the rig additivity gate with H3's kernel conditioning | todo | — |
