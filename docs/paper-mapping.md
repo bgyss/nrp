@@ -357,9 +357,10 @@ packed tile-sharded caches, streamed TorchNRP pool training, and tiled proxy inf
 Kitchen scene at 0.80 GiB training peak RSS, versus 8.45 GiB monolithic. The E3
 open-top-box occluder remains a toy lampshade-style fixture, and dynamic geometry
 remains toy-scale (the Mitsuba exporter has no scene-edit retrace path). This
-implementation adds its own: no fused streamed
-gather kernel, plus Monte Carlo noise floors at low spp that dominate SMAPE on
-near-zero pixels.
+implementation adds its own: the streamed gather is batched per shard
+(`gather_backend: torch` over per-shard `TorchPathCache`s with multi-light shard
+passes and threaded member decode, S1) rather than one fused kernel, plus Monte
+Carlo noise floors at low spp that dominate SMAPE on near-zero pixels.
 
 ## Known deviations summary
 
