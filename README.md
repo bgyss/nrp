@@ -36,7 +36,7 @@ Full docs live in [docs/](docs/):
 | [extensions.md](docs/extensions.md) | phase 2 (complete): the E1–E9 program stress-testing the decoupling as a real-time-pipeline building block |
 | [pipeline-feasibility.md](docs/pipeline-feasibility.md) | phase 3 (complete): the E10 verdict per target audience (games / film / VFX), every claim traced to a report |
 | [production-track.md](docs/production-track.md) | phase 4 (complete): the trunk-and-branches ladder attacking the verdict's blockers, ending in three summit demos |
-| [hardening-track.md](docs/hardening-track.md) | phase 5 (in progress): fixing what phase 4 surfaced, re-earning the caveated claims, refreshing the verdict |
+| [hardening-track.md](docs/hardening-track.md) | phase 5 (complete): fixed what phase 4 surfaced, re-earned the caveated claims, refreshed the verdict |
 | [status/](docs/status/) | dated status reports, including the [2026-07-11 full audit](docs/status/2026-07-11.md) |
 
 ## Toolchain (nix + mise + uv)
@@ -117,12 +117,27 @@ finding: three `QuadLight` proxies trained to exactly-zero output, making the
 rig's 154.5 dB inverse-convergence score half vacuous (only 3 of 6 colorable
 lights genuinely recovered).
 
-**Phase 5 — Hardening track (in progress).**
-[hardening-track.md](docs/hardening-track.md) root-causes the quad
-zero-collapse (the 2026-07-11 audit showed the training targets are nonzero,
-so the failure is training-side), re-earns the caveated rig claims, ports rig
-compositing to the proven WebGPU runtime, adds real-scene dynamic geometry,
-attacks the storage negative, and then re-issues the feasibility verdict.
+**Phase 5 — Hardening track (complete).**
+[hardening-track.md](docs/hardening-track.md) root-caused the quad
+zero-collapse (nn.Linear's default output-head init vs. this cache's dim
+true target scale — fixed by re-initing near the pool's own target scale),
+then retrained the full 8-light rig post-fix: all 8 proxies now produce real
+output, but the additivity gate still misses preview tier and the
+art-direction recovery is genuinely 5/6 colorable lights, not the
+automatically-reported 6/6 (a false negative in the report's own vacuity
+check, caught by hand). The two `TexturedQuadLight` proxies cannot be
+brought into the rig's quality envelope by more iterations or more model
+capacity — a conditioning-input-scheme problem, not a budget one. Rig
+compositing now runs on the proven WebGPU runtime (clean GPU-vs-CPU parity,
+5× per-light speedup over CPU, but not yet real-time for an 8-light
+session). Real-scene dynamic geometry (a genuinely re-traced, edited Mitsuba
+scene, not a toy fixture) shows G1's toy-scale residual-training fix does
+**not** transfer to real scale — neither tested regime meets the 1 dB
+recovery target. F2's storage negative is flipped (approval-frame gating
+beats raw storage at zero quality cost; int8 quantization is a documented
+floor). The feasibility verdict is re-issued against the full T1–V2+H1–H6
+evidence base in [pipeline-feasibility.md](docs/pipeline-feasibility.md)'s
+2026-07-16 revision (original verdict kept intact as history).
 
 ## Known deviations from the paper
 

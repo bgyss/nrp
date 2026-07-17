@@ -247,6 +247,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
         encoding=cfg["model"].get("encoding"),
         use_encoding=cfg["model"].get("use_encoding", True),
         use_aux=cfg["model"].get("use_aux", True),
+        texture_kernel=cfg["model"].get("texture_conditioning") == "kernel",
     ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.get("lr", 1e-2))
     iters = cfg["iters"]
@@ -294,7 +295,12 @@ def train(cfg: dict, resume: bool = False) -> dict:
         # actual target scale instead of nn.Linear's default ~0.69, which is far
         # brighter than typical QuadLight targets on some caches and otherwise
         # drives a zero-collapse (see TorchNRP.init_output_scale docstring).
-        model.init_output_scale(float(pool.targets.mean(dim=-1).median().item()))
+        model.init_output_scale(
+            float(pool.targets.mean(dim=-1).median().item()),
+            mean_texture_value=(
+                float(pool.params[:, 8:].mean().item()) if model.texture_kernel else None
+            ),
+        )
 
     batch = cfg.get("batch_pixels", 4096)
     replace_every = cfg["pool"]["replace_every"]

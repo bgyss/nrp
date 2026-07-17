@@ -54,6 +54,7 @@ class TorchNRP(nn.Module):
         use_encoding: bool = True,
         use_aux: bool = True,
         light_param_dim: int | None = None,
+        texture_kernel: bool = False,
     ):
         super().__init__()
         if light_type not in SUPPORTED_LIGHT_TYPES:
@@ -62,8 +63,24 @@ class TorchNRP(nn.Module):
             if light_type not in LIGHT_PARAM_DIMS:
                 raise ValueError(f"light_param_dim is required for light_type {light_type!r}")
             light_param_dim = LIGHT_PARAM_DIMS[light_type]
+        if texture_kernel:
+            # H3 (docs/hardening-track.md): gather_textured_quad is linear in the
+            # texture -- each texel is an independent constant emitter (Eq. 1). The
+            # kernel head bakes that structure in: the MLP sees only pixel features
+            # + quad geometry (8) and predicts a non-negative per-texel throughput
+            # kernel, contracted with the texture at the output. The texture never
+            # enters the MLP, so generalization across textures is structural, not
+            # learned. `forward` keeps its (xy, aux, params) signature: params is
+            # still the full geometry(8)+flattened-texture vector.
+            if light_type != "textured_quad":
+                raise ValueError("texture_kernel requires light_type 'textured_quad'")
+            if light_param_dim <= 8 or (light_param_dim - 8) % 3 != 0:
+                raise ValueError(
+                    f"texture_kernel needs light_param_dim = 8 + 3*n_texels, got {light_param_dim}"
+                )
         self.light_type = light_type
         self.light_param_dim = int(light_param_dim)
+        self.texture_kernel = bool(texture_kernel)
         self.use_encoding = use_encoding
         self.use_aux = use_aux
         self.config = {
@@ -74,22 +91,27 @@ class TorchNRP(nn.Module):
             "encoding": encoding or {},
             "use_encoding": use_encoding,
             "use_aux": use_aux,
+            "texture_kernel": self.texture_kernel,
         }
         self.encoding = HashEncoding2D(**(encoding or {})) if use_encoding else None
         px_dim = self.encoding.output_dim if use_encoding else 2
-        in_dim = px_dim + (7 if use_aux else 0) + self.light_param_dim
+        light_in_dim = 8 if self.texture_kernel else self.light_param_dim
+        out_dim = self.light_param_dim - 8 if self.texture_kernel else 3
+        in_dim = px_dim + (7 if use_aux else 0) + light_in_dim
         layers: list[nn.Module] = []
         for i in range(hidden_layers):
             layers.append(nn.Linear(in_dim if i == 0 else hidden_width, hidden_width))
             layers.append(nn.ReLU())
-        layers.append(nn.Linear(hidden_width if hidden_layers else in_dim, 3))
+        layers.append(nn.Linear(hidden_width if hidden_layers else in_dim, out_dim))
         self.mlp = nn.Sequential(*layers)
 
     @property
     def parameter_count(self) -> int:
         return sum(p.numel() for p in self.parameters())
 
-    def init_output_scale(self, target_scale: float) -> None:
+    def init_output_scale(
+        self, target_scale: float, mean_texture_value: float | None = None
+    ) -> None:
         """Re-init the output head so predictions start near `target_scale` instead
         of nn.Linear's default (softplus(~0) ~= 0.69 regardless of scene). Root cause
         (H1, docs/hardening-track.md): when true supervision targets are far dimmer
@@ -100,8 +122,16 @@ class TorchNRP(nn.Module):
         Over a normal training budget this walks the pre-softplus logit past
         float32's softplus-derivative-underflow point, permanently zeroing the
         network. Starting near the true scale removes the sustained one-directional
-        push before it can reach that point."""
+        push before it can reach that point.
+
+        Kernel-head models (texture_kernel=True) predict per-texel kernel weights
+        whose contraction with the texture is the output, so the per-weight scale
+        is target_scale / (n_texels * mean_texture_value)."""
         last = self.mlp[-1]
+        if self.texture_kernel:
+            n_texels = (self.light_param_dim - 8) // 3
+            denom = max(n_texels * float(mean_texture_value or 0.5), 1e-6)
+            target_scale = target_scale / denom
         with torch.no_grad():
             last.weight.zero_()
             last.bias.fill_(inverse_softplus(target_scale))
@@ -109,8 +139,13 @@ class TorchNRP(nn.Module):
     def forward(
         self, pixel_xy: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
     ) -> torch.Tensor:
-        """pixel_xy (N,2) in [0,1]^2, aux (N,7), light_params (N, 4 or 8) -> (N,3)."""
+        """pixel_xy (N,2) in [0,1]^2, aux (N,7), light_params (N, light_param_dim) -> (N,3)."""
         px = self.encoding(pixel_xy) if self.encoding is not None else pixel_xy
+        if self.texture_kernel:
+            geometry, texture = light_params[:, :8], light_params[:, 8:]
+            parts = [px, aux, geometry] if self.use_aux else [px, geometry]
+            kernel = F.softplus(self.mlp(torch.cat(parts, dim=1)))
+            return (kernel * texture).view(texture.shape[0], -1, 3).sum(dim=1)
         parts = [px, aux, light_params] if self.use_aux else [px, light_params]
         return F.softplus(self.mlp(torch.cat(parts, dim=1)))
 

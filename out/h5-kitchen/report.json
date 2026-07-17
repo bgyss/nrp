@@ -1,0 +1,72 @@
+{
+  "rung": "H5",
+  "scene": "examples/scenes/kitchen/scene.xml (T1 Country Kitchen)",
+  "moved_shape": "ChoppingBoard",
+  "translate": [
+    0.2,
+    0.0,
+    0.0
+  ],
+  "resolution": [
+    512,
+    512
+  ],
+  "light": "key (V1 rig SphereLight)",
+  "masks": {
+    "primary_visibility_invalid_pixels": 2065,
+    "swept_volume_invalid_pixels": 162542,
+    "union_invalid_pixels": 162544,
+    "total_pixels": 262144,
+    "shard_size": 32,
+    "shard_region_pixels": 262144,
+    "n_invalidated_shards": 256
+  },
+  "mask_correctness_spot_check": {
+    "out_of_mask_depth_max_abs_diff": 0.0,
+    "in_mask_depth_mean_abs_diff": 0.00396065754135802
+  },
+  "budget": {
+    "iters": 300,
+    "lr": 0.005,
+    "denoise": "bilateral"
+  },
+  "regimes": {
+    "a_full_retrace_retrain": {
+      "psnr_vs_full_db": 19.919429603515752,
+      "psnr_in_mask_db": 20.407921907553053,
+      "seconds": 226.62502941698767
+    },
+    "b_incremental_finetune": {
+      "psnr_vs_full_db": 54.39296636068298,
+      "psnr_in_mask_db": 54.68589524142751,
+      "seconds": 172.13940941600595
+    },
+    "c_stale": {
+      "psnr_vs_full_db": 22.473200959206544,
+      "psnr_in_mask_db": 22.968797289765824,
+      "seconds": 0.386346917017363
+    },
+    "d_frozen_base_plus_residual": {
+      "psnr_vs_full_db": 23.726753706662723,
+      "psnr_in_mask_db": 24.33644094399323,
+      "seconds": 28.075582541991025,
+      "residual_parameter_count": 1603
+    }
+  },
+  "wall_clock_seconds": {
+    "load": 35.23014162501204,
+    "mask_compute": 4.224142499995651,
+    "reference_gather_denoise": 4.752650917012943,
+    "regime_a_full_retrace_retrain": 226.62502941698767,
+    "invalidate_and_recover_regime_d": 32.299725041986676
+  },
+  "hardware": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "torch_num_threads": 8
+  },
+  "gap_a_minus_b_db": -34.47353675716723,
+  "gap_a_minus_d_db": -3.8073241031469713,
+  "regime_b_within_target": true,
+  "regime_d_within_target": true,
+  "recovery_target_db": 1.0
+}

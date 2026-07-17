@@ -1,0 +1,31 @@
+{
+  "scene": "examples/scenes/kitchen/scene.xml",
+  "resolution": [
+    512,
+    512
+  ],
+  "spp": 64,
+  "bounces": 4,
+  "seed": 0,
+  "mode": "wavefront",
+  "variant": "metal_ad_rgb",
+  "segments": 52265174,
+  "trace_seconds": 39.45647812500829,
+  "wall_seconds": 218.89886279098573,
+  "cache_bytes": 2092956244,
+  "peak_rss_bytes": 7868547072,
+  "hardware": {
+    "platform": "darwin",
+    "platform_release": "27.0.0",
+    "machine": "arm64",
+    "cpu": "Apple M1 Max",
+    "cpu_count": 10,
+    "memory_bytes": 68719476736
+  },
+  "move_shape": "ChoppingBoard",
+  "translate": [
+    0.2,
+    0.0,
+    0.0
+  ]
+}

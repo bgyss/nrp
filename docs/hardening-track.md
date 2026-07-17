@@ -16,12 +16,12 @@ every prior phase.
 | rung | title | status | evidence |
 |---|---|---|---|
 | H1 | Diagnose and fix the QuadLight zero-collapse | done | `out/h1-quad-fix/report.json`, `docs/performance.md#quadlight-zero-collapse-diagnosis-and-fix-hardening-track-rung-h1` |
-| H2 | Re-earn the V1/V2 summit claims | not started (unblocked) | — |
-| H3 | Textured-quad proxy quality | not started | — |
-| H4 | Rig compositing on the WebGPU runtime | not started (partially blocked on H2) | — |
-| H5 | Real-scene dynamic geometry (exporter retrace path) | not started | — |
-| H6 | Flip the F2 storage negative | not started | — |
-| H7 | Feasibility-verdict refresh | not started (last) | — |
+| H2 | Re-earn the V1/V2 summit claims | done (partial: 8/8 proxies nonzero, additivity gate still fails preview tier; 5/6 colorable lights genuinely recovered in V2) | `out/h2-rig/report.json`, `out/h2-v2-artloop/report.json`, `docs/performance.md#re-earning-the-v1v2-summit-claims-hardening-track-rung-h2` |
+| H3 | Textured-quad proxy quality | done (negative flipped: budget/capacity still don't help, but the texture-kernel conditioning the finding pointed to does — 19.64/19.99 dB, both inside the 18.3–20.5 dB sphere/quad envelope) | `out/h3-textured-quad/report.json`, `docs/performance.md#textured-quad-proxy-quality-hardening-track-rung-h3` |
+| H4 | Rig compositing on the WebGPU runtime | done (parity passes clean; cached per-light contributions + composite pass: rgb-slider p95 1.3ms, worst-case param-edit p95 30.9ms — both beat the 33ms stretch) | `out/h4-rig/report.json`, `docs/performance.md#rig-compositing-on-the-webgpu-runtime-hardening-track-rung-h4` |
+| H5 | Real-scene dynamic geometry (exporter retrace path) | done (honest negative: neither regime (b) nor (d) meets the 1dB recovery target at real scale; mask machinery verified correct) | `out/h5-kitchen-fixed/report.json`, `docs/performance.md#real-scene-dynamic-geometry-hardening-track-rung-h5` |
+| H6 | Flip the F2 storage negative | done (approval-frame gating flips the negative at 0.589x raw with zero quality cost; int8 quantization is a documented floor, not a win) | `out/h6-storage/sweep_report.json`, `docs/performance.md#storage-vs-quality-sweep-flipping-the-f2-negative-hardening-track-rung-h6` |
+| H7 | Feasibility-verdict refresh | done | `docs/pipeline-feasibility.md#revision-2026-07-16-production-track--hardening-track-evidence-update`, `out/pipeline-feasibility/audit.json` |
 
 Ordering: H1 → H2 → H4; H3, H5, H6 independent; H7 after everything else.
 

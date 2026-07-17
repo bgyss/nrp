@@ -116,6 +116,108 @@ class MitsubaExporterTests(unittest.TestCase):
         self.assertIn("machine", report["hardware"])
 
 
+@unittest.skipUnless(HAVE_MITSUBA, "mitsuba extra not installed")
+class ShapeTranslationTests(unittest.TestCase):
+    """H5: the exporter's scene-edit/retrace path (`apply_shape_translation`)."""
+
+    @classmethod
+    def setUpClass(cls):
+        from nrp.mitsuba_exporter import _load_mitsuba
+
+        cls.mi = _load_mitsuba("scalar")
+
+    def _retrace(self, move_shape=None, translate=(0.0, 0.0, 0.0), width=16, height=16, spp=8):
+        from nrp.mitsuba_exporter import (
+            _load_scene,
+            apply_shape_translation,
+            export_path_cache,
+        )
+
+        scene = _load_scene(self.mi, "builtin:cornell-box", width, height)
+        if move_shape is not None:
+            apply_shape_translation(self.mi, scene, move_shape, translate)
+        return export_path_cache(scene, self.mi, width, height, spp=spp, max_bounces=2, seed=0)
+
+    def test_unknown_shape_id_raises(self):
+        from nrp.mitsuba_exporter import _load_scene, apply_shape_translation
+
+        scene = _load_scene(self.mi, "builtin:cornell-box", 4, 4)
+        with self.assertRaises(KeyError):
+            apply_shape_translation(self.mi, scene, "no-such-shape", (1.0, 0.0, 0.0))
+
+    def test_to_world_shape_translation_changes_geometry(self):
+        # "red-wall" is a `type="rectangle"` (analytic) shape in the builtin cornell
+        # box -- an untranslated `to_world` in mitsuba.traverse(), the to_world branch.
+        before = self._retrace()
+        after = self._retrace(move_shape="red-wall", translate=(0.3, 0.0, 0.0))
+        self.assertFalse(np.array_equal(before.depth, after.depth))
+
+    def test_edited_region_differs_out_of_mask_compatible(self):
+        """Mask-correctness spot check (H5 verify criterion): pixels inside the
+        primary-visibility invalidation mask must actually differ between the two
+        caches; pixels outside it should be statistically compatible (here: exactly
+        equal, since both traces share the same seed/sampler and an untouched wall
+        contributes no camera-visible indirect change at this bounce depth for most
+        pixels at this small resolution/spp)."""
+        from nrp.dynamic_geometry import primary_visibility_invalidation_mask
+
+        before = self._retrace(width=24, height=24, spp=16)
+        after = self._retrace(
+            move_shape="red-wall", translate=(0.3, 0.0, 0.0), width=24, height=24, spp=16
+        )
+        mask = primary_visibility_invalidation_mask(before, after)
+        self.assertTrue(mask.any())
+        self.assertTrue((~mask).any())  # moving one wall shouldn't touch every pixel
+        in_mask_depth_diff = np.abs(before.depth[mask] - after.depth[mask])
+        self.assertTrue((in_mask_depth_diff > 1e-9).all())
+        out_depth = before.depth[~mask]
+        out_depth_after = after.depth[~mask]
+        np.testing.assert_allclose(out_depth, out_depth_after, atol=1e-9)
+
+    def test_cli_move_shape_produces_edited_cache(self):
+        from nrp.mitsuba_exporter import main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp) / "base.npz"
+            edited_path = Path(tmp) / "edited.npz"
+            base_argv = [
+                "nrp.mitsuba_exporter",
+                "--scene",
+                "builtin:cornell-box",
+                "--width",
+                "8",
+                "--height",
+                "8",
+                "--spp",
+                "4",
+                "--bounces",
+                "2",
+                "--mode",
+                "scalar",
+                "--out",
+                str(base_path),
+            ]
+            edited_argv = base_argv[:-1] + [
+                str(edited_path),
+                "--move-shape",
+                "red-wall",
+                "--translate",
+                "0.3",
+                "0.0",
+                "0.0",
+            ]
+            with mock.patch.object(sys, "argv", base_argv):
+                main()
+            with mock.patch.object(sys, "argv", edited_argv):
+                main()
+
+            from nrp.path_cache import PathCache
+
+            base_cache = PathCache.load(str(base_path))
+            edited_cache = PathCache.load(str(edited_path))
+            self.assertFalse(np.array_equal(base_cache.depth, edited_cache.depth))
+
+
 @unittest.skipUnless(_have_jit_variant(), "no working Mitsuba JIT variant")
 class MitsubaExporterWavefrontTests(MitsubaExporterTests):
     """The same schema/semantics suite against the drjit wavefront loop."""

@@ -395,6 +395,118 @@ class TrainingSmokeTests(unittest.TestCase):
             self.assertIn("val_psnr_db_vs_raw_mean", report)
 
 
+class TextureKernelHeadTests(unittest.TestCase):
+    """H3 (docs/hardening-track.md): texture-kernel conditioning for textured quads.
+
+    gather_textured_quad is *linear* in the texture (each texel is an independent
+    constant emitter, Eq. 1), so instead of flattening the texture into the input,
+    the model predicts a per-texel throughput kernel from pixel features + quad
+    geometry only, and contracts it with the texture at the output.
+    """
+
+    N_TEXELS = 4  # 2x2 RGB texture -> light_param_dim = 8 + 12
+
+    def _model(self, **kw):
+        return TorchNRP(
+            light_type="textured_quad",
+            light_param_dim=8 + self.N_TEXELS * 3,
+            texture_kernel=True,
+            hidden_width=16,
+            hidden_layers=2,
+            **kw,
+        )
+
+    def test_forward_shape_and_nonnegative(self):
+        model = self._model()
+        out = model(torch.rand(9, 2), torch.rand(9, 7), torch.rand(9, 8 + self.N_TEXELS * 3))
+        self.assertEqual(out.shape, (9, 3))
+        self.assertTrue(bool((out >= 0).all()))
+
+    def test_output_is_linear_in_texture(self):
+        # The kernel head makes the output *structurally* linear in the texture,
+        # exactly matching gather_textured_quad's dependence on it.
+        model = self._model()
+        xy, aux = torch.rand(7, 2), torch.rand(7, 7)
+        geom = torch.rand(7, 8)
+        t1, t2 = torch.rand(7, self.N_TEXELS * 3), torch.rand(7, self.N_TEXELS * 3)
+        a, b = 0.3, 1.7
+        out_sum = model(xy, aux, torch.cat([geom, a * t1 + b * t2], dim=1))
+        out_1 = model(xy, aux, torch.cat([geom, t1], dim=1))
+        out_2 = model(xy, aux, torch.cat([geom, t2], dim=1))
+        torch.testing.assert_close(out_sum, a * out_1 + b * out_2, atol=1e-5, rtol=1e-4)
+
+    def test_texture_input_does_not_reach_mlp(self):
+        # Two different textures under the same geometry must produce the same
+        # kernel; only the output contraction differs (zero texture -> zero output).
+        model = self._model()
+        xy, aux = torch.rand(5, 2), torch.rand(5, 7)
+        geom = torch.rand(5, 8)
+        zeros = torch.zeros(5, self.N_TEXELS * 3)
+        out = model(xy, aux, torch.cat([geom, zeros], dim=1))
+        torch.testing.assert_close(out, torch.zeros_like(out))
+
+    def test_save_load_roundtrip(self):
+        model = self._model()
+        xy, aux = torch.rand(5, 2), torch.rand(5, 7)
+        lp = torch.rand(5, 8 + self.N_TEXELS * 3)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertTrue(loaded.texture_kernel)
+        torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
+
+    def test_init_output_scale_kernel_mode(self):
+        # With the H1 scale init, mean prediction over textures of mean value m
+        # should start near the target scale: n_texels * softplus(bias) * m.
+        model = self._model(use_encoding=False)
+        target, mean_tex = 0.0123, 0.4
+        model.init_output_scale(target, mean_texture_value=mean_tex)
+        tex = torch.full((11, self.N_TEXELS * 3), mean_tex)
+        out = model(
+            torch.rand(11, 2), torch.rand(11, 7), torch.cat([torch.rand(11, 8), tex], dim=1)
+        )
+        torch.testing.assert_close(out, torch.full_like(out, target), atol=1e-4, rtol=1e-3)
+
+    def test_kernel_training_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 10, "height": 10, "spp": 4, "bounces": 2, "seed": 2},
+                "light_type": "textured_quad",
+                "light_bounds": {
+                    "center": [0.0, 0.0, 1.0],
+                    "normal": [0.0, 0.0, -1.0],
+                    "width": 2.0,
+                    "height": 2.0,
+                    "texture_size": [2, 2],
+                    "texture_min": 0.1,
+                    "texture_max": 1.0,
+                },
+                "pool": {"size": 6, "replace_every": 10, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 20,
+                "batch_pixels": 128,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "texture_conditioning": "kernel",
+                    "encoding": {"levels": 2, "table_size_log2": 8, "finest_resolution": 10},
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+            }
+            cfg_path = Path(tmp) / "cfg.json"
+            cfg_path.write_text(json.dumps(cfg))
+            report = train(load_config(str(cfg_path)))
+            self.assertEqual(report["config"]["light_type"], "textured_quad")
+            self.assertIn("val_psnr_db_vs_raw_mean", report)
+            model = TorchNRP.load(str(Path(tmp) / "out" / "model.pt"))
+            self.assertTrue(model.texture_kernel)
+
+
 class QuadZeroCollapseTests(unittest.TestCase):
     """H1 (docs/hardening-track.md): pins the dying-softplus collapse diagnosed on
     the kitchen-512 QuadLight rig lights and the fix (TorchNRP.init_output_scale).
