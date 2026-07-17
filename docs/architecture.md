@@ -64,9 +64,13 @@ quantity the proxies learn. `gather_light` scales by rgb; `gather_lights` sums a
 (linearity of transport, Eq. 1). The numpy implementation is the authoritative
 reference; `nrp/torch_backend/gather.py` mirrors it as batched tensor ops
 (`TorchPathCache`: device-resident segments, one weight-and-scatter accumulation per
-light) so gathering runs on MPS/CUDA for pool builds — the paper's fused Triton
-gather at torch-op granularity. Training selects via `gather_backend`
-(config or `--gather-backend numpy|torch`).
+light; sphere, quad, and — since S4 — textured quad) so gathering runs on MPS/CUDA
+for pool builds — the paper's fused Triton gather at torch-op granularity. Training
+selects via `gather_backend` (config or `--gather-backend numpy|torch`). The
+streamed pool (`nrp/torch_backend/streamed_train.py`, S1) applies the same batched
+gather per decoded shard (`gather_backend: torch` + `gather_device`), batches each
+pool fill's lights into one shard pass, and decompresses shard members on
+`decode_workers` threads — all while keeping at most one shard's segments resident.
 
 ## Producers
 
