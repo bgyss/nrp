@@ -2490,3 +2490,72 @@ lands at 21.89 dB held-out — **above the 18 dB envelope floor** and within
 0.9 dB of the kitchen, so the pipeline's quality story is no longer
 single-scene. Both caches pass `PathCache.validate()` (the 1024² cache is
 additionally validated by `save_sharded` before writing).
+
+## Re-earning the rig additivity gate with kernel conditioning (scale track, rung S4)
+
+H2's additivity fail was measured with the rig's two `TexturedQuadLight` proxies
+at their pre-H3 12–13 dB floor. S4 rebuilds the full 8-light rig
+(`mise run s4-rig` / `examples/s4_pipeline.sh` under the nix devshell; reports
+under `out/s4-rig/`, `out/s4-artloop/`) with H3's chosen operating point for the
+textured quads — kernel conditioning, 3200 iters — and the H2 budget (1600
+iters, OIDN targets) for the other six. Because
+`TorchPathCache.gather_textured_quad` now exists, the textured-quad pool builds
+use the batched torch gather: each kernel proxy trains in **1,056/1,058 s vs
+H3's 3,076/2,915 s (2.9× faster)** at the same quality. Total rig train:
+5,191 s.
+
+| light | type | iters | val PSNR (dB) |
+|---|---|---:|---:|
+| key / fill / rim | sphere | 1600 | 19.05 / 20.14 / 19.77 |
+| window / ceiling_panel / practical | quad | 1600 | 17.44 / 20.11 / 22.47 |
+| neon_sign | textured_quad, **kernel** | 3200 | **19.99** |
+| tv_glow | textured_quad, **kernel** | 3200 | **19.65** |
+
+Both textured quads land inside the sphere/quad envelope at rig level,
+reproducing H3's finding in situ. 8/8 proxies have nonzero output.
+
+**Additivity gate (preview tier): honest fail.** PSNR 25.67 dB (pass ≥ 20),
+SSIM 0.727 (< 0.80), FLIP 0.316 (> 0.15) — SSIM essentially unchanged from
+H2's 0.725, FLIP slightly worse (0.257 → 0.316; different training runs, same
+verdict). The per-light residual decomposition
+(`examples/s4_residual_decomposition.py`,
+`out/s4-rig/residual_decomposition.json`; per-light denoised references, so
+shares are approximate attribution) names the next floor:
+
+| light | residual energy share | proxy vs own denoised gather |
+|---|---:|---:|
+| key | 27.9% | 26.16 dB |
+| neon_sign | 20.6% | 27.75 dB |
+| tv_glow | 18.9% | 18.71 dB |
+| fill | 8.7% | 28.10 dB |
+| ceiling_panel | 7.2% | 30.49 dB |
+| rim | 4.5% | 30.81 dB |
+| practical | 2.9% | 33.00 dB |
+| window | 2.4% | 34.37 dB |
+
+The failure is no longer a textured-quad outlier: residual energy is spread
+across the brightest lights, led by `key` (the strongest emitter) and the two
+textured quads. **The named next floor is uniform per-light proxy fidelity at
+the H2 budget** — every light sits at 19–22 dB val PSNR, and a preview-tier
+SSIM on the 8-light composite needs the per-light proxies themselves to move,
+via budget/capacity or H6-style residual layers, not further conditioning
+changes.
+
+**V2 art-direction loop** (`out/s4-artloop/report.json`): convergence gate
+**passes at draft tier** (no fallback; H2 used the preview fallback), rig
+save/reload round trip **bit-identical**, and the recovery table shows **5/6
+colorable lights genuinely gradient-recovered**. The corrected caveat logic
+(relative threshold, `flag_recovery_caveats`; unit-tested to report 5/6 on the
+committed H2 artifacts) also fires correctly on this fresh run: `practical`'s
+proxy peaks at 9.2e-4 raw — above the old absolute epsilon, three orders below
+the other proxies — and its "recovered" [5.75, 1.00, 1.30] vs target
+[3.5, 2.0, 0.5] confirms the flag is a true positive. The automated count now
+matches the hand-checked truth on both H2 and S4 artifacts.
+
+**WebGPU runtime with the kernel-head rig** (`out/s4-rig/webgpu_report.json`;
+the WGSL generator's texture_kernel head landed with this rung): GPU-vs-CPU
+composite parity **1.19e-5** (tolerance 2e-4) in real Chrome — the per-texel
+contraction is numerically correct in WGSL. Slider-session latency holds
+against H4's committed numbers despite the wider kernel head: rgb-only p95
+**0.8 ms** (H4: 1.3 ms), param-edit p95 **30 ms** (H4: 30.9 ms), cold 8-light
+full render 173.5 ms (21.4 ms/light fit vs H4's 22.47).

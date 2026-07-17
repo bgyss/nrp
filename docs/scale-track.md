@@ -23,7 +23,7 @@ for the stretch rungs: **≈ $20–35** (30–50 GPU-hours on a RunPod RTX 4090 
 | S1 | Vectorize the streamed gather (kill the Python-loop bound) | **done** (6.04× end-to-end, target ≥5×; 10× stretch missed) | `out/s1-streamed-gather/*.json`, `docs/performance.md#vectorized-streamed-gather-scale-track-rung-s1` |
 | S2 | 1024² and a second real scene | **done** (1024²/32spp kitchen through streamed path, 23.0 dB, 158 MB peak; bedroom 512² at 21.89 dB > 18 dB bar) | `out/s2-scale/*.json`, `out/bedroom-512-torch/torch_train_report.json`, `docs/performance.md#1024-and-a-second-real-scene-scale-track-rung-s2` |
 | S3 | Export/shard throughput at scale | **done** (save-sharded 5.78× float64 / 9.13× packed, target ≥3×; exporter 1.87× via bincount G-buffer scatter) | `out/s3-shard-write/*.json`, `docs/performance.md#exportshard-throughput-at-scale-scale-track-rung-s3` |
-| S4 | Re-earn the rig additivity gate with H3's kernel conditioning | todo | — |
+| S4 | Re-earn the rig additivity gate with H3's kernel conditioning | **done** (honest fail: SSIM 0.727/FLIP 0.316; residual now spread across lights — next floor named as per-light budget; 5/6 recovery matches hand-check; kernel-head WGSL parity 1.19e-5, sliders hold) | `out/s4-rig/*.json`, `out/s4-artloop/report.json`, `docs/performance.md#re-earning-the-rig-additivity-gate-with-kernel-conditioning-scale-track-rung-s4` |
 | S5 | Local training throughput: torch.compile / AMP / batch sweep | todo | — |
 | S6 | WebGPU runtime at 1024² + device/precision config plumbing | todo | — |
 | S7 | **(stretch)** CUDA bring-up on a rented cloud GPU | todo | — |
