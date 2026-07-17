@@ -40,7 +40,16 @@ const REGRESSION_THRESHOLD = 0.3; // fail --check if p95 exceeds baseline p95 by
 const FLOOR_P95_MS_512 = 1000 / 30; // the E10/T4 floor: 30 fps sustained at 512^2
 
 // Runs inside the browser page — self-contained.
-async function runInPage({ shaderCode, pixels, tables, mlp, reference, manifest, resolutions, warmup, timedRuns }) {
+async function runInPage({ shaderCode, pixelsB64, tables, mlp, referenceB64, manifest, resolutions, warmup, timedRuns }) {
+  // Large G-buffer/reference arrays travel as base64 (not JS number arrays) — at
+  // 1024^2 the per-element JSON encoding of a plain array is large enough that
+  // page.evaluate's CDP round-trip crashes the target page.
+  const decodeF32 = (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+  };
+  const pixels = decodeF32(pixelsB64);
+  const reference = decodeF32(referenceB64);
   const adapter = await navigator.gpu.requestAdapter();
   const adapterInfo = adapter.info || {};
   const device = await adapter.requestDevice();
@@ -166,6 +175,10 @@ function loadF32(name) {
   return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
 }
 
+function loadB64(name) {
+  return readFileSync(path.join(exportDir, name)).toString("base64");
+}
+
 async function main() {
   const mode = process.argv.includes("--check") ? "check" : process.argv.includes("--freeze") ? "freeze" : "run";
   if (!existsSync(path.join(exportDir, "manifest.json"))) {
@@ -186,10 +199,10 @@ async function main() {
   await page.goto(`file://${pagePath}`);
   const result = await page.evaluate(runInPage, {
     shaderCode,
-    pixels: loadF32("pixels.bin"),
+    pixelsB64: loadB64("pixels.bin"),
     tables: manifest.encoding ? loadF32("tables.bin") : [],
     mlp: repackMlp(loadF32("mlp.bin"), manifest.mlp_dims),
-    reference: loadF32("reference.bin"),
+    referenceB64: loadB64("reference.bin"),
     manifest,
     resolutions: resolutionsArg,
     warmup: 10,

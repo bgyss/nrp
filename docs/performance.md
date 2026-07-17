@@ -2559,3 +2559,172 @@ contraction is numerically correct in WGSL. Slider-session latency holds
 against H4's committed numbers despite the wider kernel head: rgb-only p95
 **0.8 ms** (H4: 1.3 ms), param-edit p95 **30 ms** (H4: 30.9 ms), cold 8-light
 full render 173.5 ms (21.4 ms/light fit vs H4's 22.47).
+
+## Local training throughput: torch.compile / AMP / batch sweep (scale track, rung S5)
+
+Paper-scale training (`examples/mitsuba_cornell_128_torch.json`: 8×256 MLP,
+2^14 hashgrid, 50k iters) was committed at 22.4 min / 37.2 iters/s on MPS —
+only 1.6x the CPU rate, the signature of a small MLP under-filling the GPU
+at batch 4096. `examples/s5_throughput_sweep.py` sweeps batch size
+(4096→16384→65536, iters/LR scaled to an equal effective sample budget),
+fp16/bf16 autocast, and `torch.compile`, each in isolation, on both cpu and
+mps (`out/s5-throughput/report.json`; per-arm reports under
+`out/s5-throughput/runs/`).
+
+**Batch size: quality loss outweighs any throughput gain, on both devices.**
+Scaling batch 4x/16x while shrinking iters by the same factor (equal sample
+budget, sqrt-scaled LR) should hold quality roughly constant if the model
+were GPU-starved rather than sample-starved — it doesn't:
+
+| arm | device | iters/s | held-out PSNR (dB) | Δ vs baseline |
+|---|---|---:|---:|---:|
+| baseline (batch 4096) | mps | 37.63 | 34.36 | — |
+| batch16384 | mps | 19.04 | 32.09 | **−2.27** |
+| batch65536 | mps | 7.00 | 29.25 | **−5.11** |
+| baseline (batch 4096) | cpu | 27.31 | 34.50 | — |
+| batch16384 | cpu | 11.88 | 31.35 | **−3.16** |
+| batch65536 | cpu | 3.60 | 28.29 | **−5.99** |
+
+The equal-quality criterion (within 0.5 dB at equal samples) fails outright
+at every larger batch on both devices, and iters/s itself *drops* — bigger
+batches take proportionally longer per iteration than the iter-count
+shrinks, on this small model at these batch sizes. Batch size is not a lever
+this workload benefits from; **the committed default (4096) stays**.
+
+**fp16/bf16 autocast: bf16 is quality-neutral but not faster on MPS; fp16
+diverges; both are catastrophically slow on CPU.** On MPS, bf16 lands
+within the equal-quality bar (34.87 dB, actually +0.5 dB over baseline) but
+at 34.74 iters/s — *slower* than the 37.63 iters/s fp32 baseline, autocast
+overhead exceeding any compute saving for a model this small. fp16 on MPS
+matches baseline throughput exactly (37.63 iters/s) but **diverges to NaN**
+— an honest numerical-stability negative, not a throughput result. On CPU,
+both autocast dtypes are not merely slower but unusable at the 50k budget:
+a bounded 500-iteration diagnostic (`out/s5-throughput/report_diag500.json`,
+run after killing an earlier attempt that silently stalled for hours — see
+below) measured **1.07 iters/s for bf16** and **0.95 iters/s for fp16**, 25–29x
+under the 27.31 iters/s fp32 baseline. Extrapolated to the full 50k-iter
+budget: **~12.9 h (bf16) / ~14.6 h (fp16)** — this Apple Silicon CPU has no
+native low-precision GEMM path in PyTorch's ATen backend for these op
+shapes, so autocast falls back to a much slower path. Quality at the
+truncated 500-iter budget (25.11 dB bf16, 23.77 dB fp16) is unremarkable on
+its own but confirms the arms ran correctly, not that they hung.
+
+**A stalled sweep, diagnosed.** The CPU sweep was first launched as a long
+background job; after several hours it had produced no progress output past
+"== arm bf16 on cpu ==". `vm_stat`/`sysctl vm.swapusage` showed 9.9/11.2 GB
+swap in use — plausible thrashing, so the process was killed and relaunched
+clean. The relaunch (fresh swap state, `ps` confirmed >100% CPU utilization
+throughout) still produced no first-1000-iters checkpoint after ~12 minutes
+of genuine compute — ruling out thrashing as the explanation. The bounded
+500-iter diagnostic above confirms the real cause: bf16/fp16 autocast on
+this CPU backend is ~25-29x slower per iteration, not hung. (Separately, the
+very first relaunch attempt failed instantly on all three arms with an OIDN
+`libtbb.12.dylib` load error — a `nix develop --command` wrapping mistake,
+unrelated to the throughput question; see `tbb-keeps-disappearing` in
+project notes. Re-run correctly wrapped, it reproduced the slow-but-real
+result above.)
+
+**`torch.compile`: crashes on MPS, no net win on CPU.** MPS: Inductor's
+Metal codegen backend fails to compile the generated kernel — a `SyntaxError`
+from `metal::floor`/pointer-cast codegen inside `#include <c10/metal/...>`
+— confirming the roadmap's expected "torch.compile immaturity on MPS"
+negative outright (`status: failed`, full traceback in the report). CPU:
+`torch.compile` does work, but bounded diagnostics at 500 and 3000 iters
+(`out/s5-throughput/report_diag500_compile.json`,
+`report_diag3000_compile.json`) show why it's not worth it here — one-time
+compilation overhead of **~20 s**, then steady-state throughput of
+**~26.4 iters/s** (computed from the 500→3000-iter delta), essentially tied
+with (very slightly under) the 27.31 iters/s fp32-eager baseline.
+Extrapolated to 50k iters: ~1,914 s compiled vs 1,831 s eager — **~5%
+slower**, all in fixed compile overhead that a model this small and cheap
+per-iteration can't amortize away. `torch.compile` is not the right lever
+for this MLP-plus-hashgrid workload on either backend tested.
+
+**Verdict: no lever wins on this laptop.** Larger batches lose quality
+faster than they gain speed; fp16/bf16 autocast is a wash-to-negative on
+MPS and unusable on CPU; `torch.compile` crashes on MPS and is a net loss
+on CPU. The committed default (fp32 eager, batch 4096) remains the right
+choice locally. Per the rung's framing, this is the deliverable: it sets
+S7's baseline expectation on CUDA — none of these three levers should be
+assumed to "just work" there either; each needs its own on-GPU
+measurement, though CUDA's mature Triton/Inductor backend and native
+fp16/bf16 tensor cores make a different outcome plausible.
+
+## WebGPU runtime at 1024² + device/precision plumbing (scale track, rung S6)
+
+Device (`cpu|mps|cuda`) and precision (`fp32|fp16|bf16`) became first-class,
+validated options in this rung (`nrp/torch_backend/device.py`): every torch
+entrypoint (`train`/`bench`/`relight`/`optimize_lights`/`streamed_train`) now
+funnels through `resolve_device`/`resolve_precision`, `cuda`/`mps`
+requested-but-unavailable fails immediately with an actionable message
+instead of a deep torch traceback, and `synchronize()` is device-dispatched
+— the exact seam S7 needs. Unit-tested in `tests/test_device_config.py`,
+including the cuda-unavailable path on this CUDA-less laptop.
+
+T4's harness (`webgpu/bench_t4.mjs`) and H4's (`webgpu/bench_h4.mjs`) already
+took `--export-dir`/`--report` from S4's prep, so extending to 1024² is
+reusing the **T1 kitchen-512-torch proxy** (409 k params, trained at 512²)
+against the **1024² G-buffer** (`out/kitchen-1024/path_cache.npz`, S2's
+export) via `examples/export_webgpu_runtime.py --cache out/kitchen-1024/...`
+— no retraining, same test T4 already runs at smaller resolutions, this rung
+just runs the export/bench pipeline at 4x the pixel count.
+
+**A real bug, found before any 1024² number was trustworthy.** `bench_t4.mjs`
+passed the G-buffer/reference blobs to `page.evaluate()` as plain JS number
+arrays (`Array.from(new Float32Array(...))`); at 512² that's 2.36 M numbers
+and works, but at 1024² (9.44 M pixel floats + 3.15 M reference floats) the
+JSON-per-element encoding blows up the CDP payload and the page died with
+"Target page, context or browser has been closed" — the same class of
+argument-size ceiling H4 diagnosed and fixed by moving to an in-page
+`fetch()`. T4's harness doesn't run a static server, so the fix here is
+smaller: send `pixels.bin`/`reference.bin` as base64 strings (small JSON,
+~33% size overhead vs the binary instead of ~4-5x for a numeric-array JSON
+encoding) and `atob()`-decode them to `Float32Array` inside the page. Fixed
+in `webgpu/bench_t4.mjs`; the existing 512² regression gate (`mise run
+t4-check`) still passes bit-for-bit after the change (parity 1.2e-6, p95
+unchanged) — the fix only touches how bytes cross the CDP boundary, not
+computation.
+
+**T4 at 1024²** (Apple M1 Max, Metal 3, Chrome; `out/s6-webgpu-1024/report.json`):
+
+| resolution | mean | p95 | fps (mean) | fps (p95) | 30 fps p95 |
+|---|---:|---:|---:|---:|---|
+| 128² | 2.18 ms | 3.00 ms | 459 | 333 | pass |
+| 256² | 5.80 ms | 6.60 ms | 172 | 152 | pass |
+| 512² | 21.16 ms | 22.40 ms | 47 | 45 | pass |
+| 1024² | 84.42 ms | **88.70 ms** | 12 | **11.3** | **fail** |
+
+Parity vs the PyTorch reference at 1024²: **1.5e-6 max abs diff** (tolerance
+2e-4) — unchanged from 512², confirming the base64 transfer fix is lossless.
+1024² misses the 30 fps floor outright (11.3 Hz p95), but **beats
+`nrp.torch_backend.bench`'s extrapolated MPS full-frame number at the same
+resolution (8.6 Hz, `docs/performance.md` cross-device table)** — the WebGPU
+backend keeps its lead over TorchScript-MPS at every resolution measured so
+far, it just isn't real-time at 1024² the way it is at ≤512².
+
+**H4 rig compositing at 1024²** (same rig as S4, `out/s6-webgpu-1024/h4_report.json`
+via `examples/export_webgpu_rig.py --cache out/kitchen-1024/...` +
+`bench_h4.mjs`; H4's harness already streams blobs through its own local
+server, so it needed no fix for the larger G-buffer):
+
+| check | 512² (S4) | 1024² (S6) |
+|---|---:|---:|
+| GPU-vs-CPU composite parity | 1.19e-5 | **1.24e-5** (still PASS, tolerance 2e-4) |
+| per-light marginal cost, cold full render | 21.4 ms/light | **159.0 ms/light** (~7.4x, ~ resolution scaling) |
+| rgb-slider p95 (composite-only path) | 0.8 ms | **2.2 ms** |
+| param-edit p95 (one light re-dispatched) | 30.0 ms | **219.1 ms** |
+
+The rgb-slider path — the common case, no MLP re-dispatch — stays well under
+any interactive-latency bar at 1024² (2.2 ms). The param-edit path (one full
+MLP re-dispatch at 1024² resolution) scales roughly with pixel count as
+expected and misses the 33 ms stretch target it held at 512² — an honest
+scale-driven miss, not a regression in the compositing architecture itself
+(the per-light-slice/composite-pass structure H4 built is exactly what keeps
+the *common* rgb-edit case fast regardless of resolution).
+
+**Summary**: the T4 parity gate holds at 1024² (verify criterion met); the
+512² regression gate is unaffected by the base64 fix (verify criterion met);
+1024² is not real-time for either full-frame inference or worst-case rig
+param edits, but WebGPU still leads MPS at the resolution where both were
+measured. Device/precision plumbing is complete and tested across all five
+torch-backend entrypoints ahead of S7.
