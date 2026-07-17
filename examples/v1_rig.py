@@ -169,16 +169,25 @@ def build_per_light_config(
     rig_light: RigLight,
     out_dir: str,
     iters: int,
+    textured_quad_iters: int | None = None,
+    texture_conditioning: str | None = None,
 ) -> dict:
     """One `nrp.torch_backend.train.train`-shaped config for a single rig light,
     reusing base_cfg's cache/pool/denoise/model blocks but narrowing light_type
-    and light_bounds to this light, and the reduced per-light iteration budget."""
+    and light_bounds to this light, and the reduced per-light iteration budget.
+    `textured_quad_iters`/`texture_conditioning` override budget and conditioning
+    for textured_quad lights only (S4: H3's chosen operating point is the kernel
+    head at 3200 iters; the flat scheme plateaus at 12-15 dB)."""
     cfg = copy.deepcopy(base_cfg)
     cfg["out_dir"] = out_dir
     cfg["light_type"] = light_type_of(rig_light.light)
     cfg["light_bounds"] = _light_bounds_for(rig_light.light)
     cfg["iters"] = iters
     if cfg["light_type"] == "textured_quad":
+        if textured_quad_iters is not None:
+            cfg["iters"] = textured_quad_iters
+        if texture_conditioning is not None:
+            cfg["model"]["texture_conditioning"] = texture_conditioning
         # Documented deviation: nrp.torch_backend.gather.TorchPathCache.gather_light
         # only implements sphere/quad (it reads light.rgb unconditionally, which
         # TexturedQuadLight does not have — AttributeError). The numpy gather
@@ -204,6 +213,8 @@ def build_and_evaluate_rig(
     overhead_frames: int = 10,
     overhead_warmup: int = 2,
     denoise_method: str = "bilateral",
+    textured_quad_iters: int | None = None,
+    texture_conditioning: str | None = None,
 ) -> dict:
     """Core report logic (no argparse/IO beyond writing under out_dir): trains one
     per-light proxy per rig light, assembles the LightRig, checks additivity against
@@ -225,7 +236,14 @@ def build_and_evaluate_rig(
     train_wall_seconds = 0.0
     for rl in lights:
         light_train_dir = os.path.join(train_dir, rl.name)
-        cfg = build_per_light_config(base_cfg, rl, light_train_dir, iters)
+        cfg = build_per_light_config(
+            base_cfg,
+            rl,
+            light_train_dir,
+            iters,
+            textured_quad_iters=textured_quad_iters,
+            texture_conditioning=texture_conditioning,
+        )
         cfg_path = os.path.join(configs_dir, f"{rl.name}.json")
         with open(cfg_path, "w") as f:
             json.dump(cfg, f, indent=2)
@@ -248,7 +266,8 @@ def build_and_evaluate_rig(
         per_light_reports[rl.name] = {
             "light_type": cfg["light_type"],
             "light_bounds": cfg["light_bounds"],
-            "iters": iters,
+            "iters": cfg["iters"],
+            "texture_conditioning": cfg["model"].get("texture_conditioning"),
             "val_psnr_db_vs_raw_mean": report["val_psnr_db_vs_raw_mean"],
             "val_ssim_vs_raw_mean": report["val_ssim_vs_raw_mean"],
             "val_flip_vs_raw_mean": report["val_flip_vs_raw_mean"],
@@ -423,6 +442,19 @@ def main() -> None:
         default=None,
         help="monolithic baseline iters (default: 8 * --iters, matched total budget)",
     )
+    parser.add_argument(
+        "--textured-quad-iters",
+        type=int,
+        default=None,
+        help="iteration budget override for textured_quad lights (S4/H3 chosen "
+        "operating point: 3200)",
+    )
+    parser.add_argument(
+        "--texture-conditioning",
+        default=None,
+        choices=(None, "kernel"),
+        help="texture-conditioning scheme for textured_quad lights (S4/H3: kernel)",
+    )
     parser.add_argument("--gate-tier", default="preview", choices=("preview", "draft", "final"))
     parser.add_argument(
         "--denoise",
@@ -480,6 +512,8 @@ def main() -> None:
         monolithic_lr=0.005,
         gate_tier=args.gate_tier,
         denoise_method=args.denoise,
+        textured_quad_iters=args.textured_quad_iters,
+        texture_conditioning=args.texture_conditioning,
     )
 
 
