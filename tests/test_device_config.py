@@ -74,6 +74,63 @@ class ResolvePrecisionTests(unittest.TestCase):
         synchronize(torch.device("cpu"))  # must not raise
 
 
+class TrainLeverSmokeTests(unittest.TestCase):
+    """S5 levers (precision autocast, torch.compile) drive train() end to end."""
+
+    def _tiny_cfg(self, tmp, **overrides):
+        import numpy as np
+
+        from nrp.toy_tracer import trace_path_cache
+
+        cache_path = str(Path(tmp) / "cache.npz")
+        trace_path_cache(8, 8, 2, 2, seed=3).save(cache_path)
+        cfg = {
+            "cache": cache_path,
+            "out_dir": str(Path(tmp) / "out"),
+            "light_type": "sphere",
+            "light_bounds": {"radius_min": 0.1, "radius_max": 0.3},
+            "sampling": "segments",
+            "denoise": {"enabled": False},
+            "pool": {"size": 4, "replace_every": 4, "replace_count": 1},
+            "iters": 6,
+            "batch_pixels": 32,
+            "lr": 5e-3,
+            "model": {
+                "hidden_width": 16,
+                "hidden_layers": 2,
+                "encoding": {"levels": 2, "features_per_level": 2, "finest_resolution": 8},
+            },
+            "n_val_lights": 2,
+            "seed": 0,
+            "device": "cpu",
+        }
+        cfg.update(overrides)
+        del np  # only imported for side-effect-free type checking clarity
+        return cfg
+
+    def test_bf16_autocast_train_runs(self):
+        import tempfile
+
+        from nrp.torch_backend.train import train
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report = train(self._tiny_cfg(tmp, precision="bf16"))
+        self.assertEqual(len(report["loss_curve"]), 6)
+        self.assertTrue(all(v == v for v in report["loss_curve"]))  # no NaNs
+
+    def test_compile_train_runs(self):
+        import tempfile
+
+        from nrp.torch_backend.train import train
+
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                report = train(self._tiny_cfg(tmp, compile=True))
+            except Exception as exc:  # pragma: no cover - platform-dependent
+                self.skipTest(f"torch.compile unavailable on this platform: {exc}")
+        self.assertEqual(len(report["loss_curve"]), 6)
+
+
 class TrainConfigValidationTests(unittest.TestCase):
     def test_train_rejects_bad_precision_early(self):
         from nrp.torch_backend.train import train

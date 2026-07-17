@@ -312,11 +312,17 @@ def train(cfg: dict, resume: bool = False) -> dict:
     # fp16 on CUDA additionally needs loss scaling (GradScaler); bf16 and the
     # fp32 default do not.
     scaler = torch.amp.GradScaler("cuda") if precision == "fp16" and device.type == "cuda" else None
+    # S5 torch.compile lever: the compiled wrapper is used only for training
+    # forwards; `model` (shared parameters) keeps handling checkpointing,
+    # evaluation, and save, so the on-disk format is identical to eager runs.
+    run_model = (
+        torch.compile(model, **cfg.get("compile_options", {})) if cfg.get("compile") else model
+    )
     for it in range(start_iter, iters):
         pool_ids = torch.randint(0, pool.size, (batch,), generator=gen).to(device)
         pixel_ids = torch.randint(0, n_px, (batch,), generator=gen).to(device)
         with autocast(device, precision):
-            pred = model(xy[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
+            pred = run_model(xy[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
             loss = relative_mse_loss(pred, pool.targets[pool_ids, pixel_ids])
         opt.zero_grad()
         if scaler is not None:
