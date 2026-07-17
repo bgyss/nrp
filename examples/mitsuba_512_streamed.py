@@ -94,6 +94,8 @@ def main() -> None:
     parser.add_argument("--tile-size", type=int, default=64)
     parser.add_argument("--tile-pixels", type=int, default=16384)
     parser.add_argument("--iters", type=int, default=300)
+    parser.add_argument("--gather-backend", choices=["numpy", "torch"], default="numpy")
+    parser.add_argument("--gather-device", default="cpu")
     args = parser.parse_args()
 
     out_path = Path(args.out)
@@ -133,6 +135,8 @@ def main() -> None:
         "lr": 5e-3,
         "batch_pixels": 4096,
         "iters": args.iters,
+        "gather_backend": args.gather_backend,
+        "gather_device": args.gather_device,
     }
 
     rss_before = current_rss_bytes()

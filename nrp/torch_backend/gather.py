@@ -26,20 +26,82 @@ class TorchPathCache:
     """Device-resident copy of a PathCache's segment arrays for batched gathering."""
 
     def __init__(self, cache: PathCache, device: torch.device, dtype: torch.dtype | None = None):
+        self._init_from_arrays(
+            width=cache.width,
+            height=cache.height,
+            seg_pixel=cache.seg_pixel,
+            seg_origin=cache.seg_origin,
+            seg_dir=cache.seg_dir,
+            seg_tmax=cache.seg_tmax,
+            seg_throughput=cache.seg_throughput,
+            n_paths=cache.n_paths,
+            device=device,
+            dtype=dtype,
+        )
+
+    @classmethod
+    def from_arrays(
+        cls,
+        *,
+        width: int,
+        height: int,
+        seg_pixel: np.ndarray,
+        seg_origin: np.ndarray,
+        seg_dir: np.ndarray,
+        seg_tmax: np.ndarray,
+        seg_throughput: np.ndarray,
+        n_paths: np.ndarray,
+        device: torch.device,
+        dtype: torch.dtype | None = None,
+    ) -> TorchPathCache:
+        """Build from raw segment arrays (e.g. one decoded shard) without a PathCache.
+
+        `seg_pixel` may index the full image while the segment arrays cover only a
+        subset (a shard tile): gathers then produce that subset's contribution to the
+        full frame, so per-shard gathers sum to the whole-cache gather."""
+        self = cls.__new__(cls)
+        self._init_from_arrays(
+            width=width,
+            height=height,
+            seg_pixel=seg_pixel,
+            seg_origin=seg_origin,
+            seg_dir=seg_dir,
+            seg_tmax=seg_tmax,
+            seg_throughput=seg_throughput,
+            n_paths=n_paths,
+            device=device,
+            dtype=dtype,
+        )
+        return self
+
+    def _init_from_arrays(
+        self,
+        *,
+        width,
+        height,
+        seg_pixel,
+        seg_origin,
+        seg_dir,
+        seg_tmax,
+        seg_throughput,
+        n_paths,
+        device,
+        dtype,
+    ) -> None:
         if dtype is None:
             dtype = torch.float32 if device.type in ("mps",) else torch.float64
-        self.width = cache.width
-        self.height = cache.height
+        self.width = width
+        self.height = height
         self.device = device
         self.dtype = dtype
         to = lambda a: torch.as_tensor(a, dtype=dtype, device=device)  # noqa: E731
-        self.origin = to(cache.seg_origin)
-        self.dir = to(cache.seg_dir)
+        self.origin = to(seg_origin)
+        self.dir = to(seg_dir)
         # inf t_max (escape segments) participates in the same comparisons as numpy.
-        self.tmax = to(cache.seg_tmax)
-        self.throughput = to(cache.seg_throughput)
-        self.pixel = torch.as_tensor(cache.seg_pixel, dtype=torch.long, device=device)
-        self.inv_paths = to(1.0 / np.maximum(cache.n_paths, 1))
+        self.tmax = to(seg_tmax)
+        self.throughput = to(seg_throughput)
+        self.pixel = torch.as_tensor(seg_pixel, dtype=torch.long, device=device)
+        self.inv_paths = to(1.0 / np.maximum(n_paths, 1))
 
     @property
     def segment_count(self) -> int:
