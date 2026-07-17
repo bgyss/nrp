@@ -113,12 +113,16 @@ def numpy_forward(
     features_per_level: int,
     table_size: int,
     output_activation: str = "softplus",
+    texture_kernel: bool = False,
 ) -> np.ndarray:
     """Reimplement the exported forward pass from the flat blobs alone (float32).
 
     This is the format's semantic contract: the WGSL shader (webgpu/shader_gen.mjs)
     mirrors this function, and the exporters self-check it against the torch module.
     ``output_activation`` is "softplus" (TorchNRP) or "linear" (G1's ResidualNRP).
+    ``texture_kernel`` mirrors ``TorchNRP(texture_kernel=True)`` (H3): the MLP sees
+    only the first 8 light params (quad geometry) and its softplus output is a
+    per-texel kernel contracted with the texture (light params 8:).
     """
     if tables_flat is not None:
         feats = []
@@ -154,8 +158,10 @@ def numpy_forward(
         px = np.concatenate(feats, axis=1)
     else:
         px = xy.astype(np.float32)
+    mlp_light_params = light_params[:8] if texture_kernel else light_params
     h = np.concatenate(
-        [px, aux, np.broadcast_to(light_params, (xy.shape[0], light_params.size))], axis=1
+        [px, aux, np.broadcast_to(mlp_light_params, (xy.shape[0], mlp_light_params.size))],
+        axis=1,
     ).astype(np.float32)
     off = 0
     n_layers = len(mlp_dims) - 1
@@ -170,7 +176,11 @@ def numpy_forward(
             h = np.maximum(h, 0.0)
     if output_activation == "linear":
         return h
-    return np.log1p(np.exp(np.minimum(h, 30.0))) + np.maximum(h - 30.0, 0.0)  # stable softplus
+    h = np.log1p(np.exp(np.minimum(h, 30.0))) + np.maximum(h - 30.0, 0.0)  # stable softplus
+    if texture_kernel:
+        texture = light_params[8:].astype(np.float32)
+        return (h * texture).reshape(h.shape[0], -1, 3).sum(axis=1)
+    return h
 
 
 def main() -> None:
