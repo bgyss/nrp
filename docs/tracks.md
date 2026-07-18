@@ -11,6 +11,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 3 | Verdict | [pipeline-feasibility.md](pipeline-feasibility.md) | ✅ Complete — E10 decision document: "partly viable" for all three targets, blockers named |
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
 | 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
+| 6 | Scale & speed track | [scale-track.md](scale-track.md) | 🔜 Planned — throughput + larger scenes (S1–S6), CUDA port as stretch (S7–S8); research in [plans/2026-07-16-scale-track-research.md](plans/2026-07-16-scale-track-research.md) |
 
 ## How the phases connect
 
@@ -42,6 +43,12 @@ prompts (or, for phase 3, a decision document); each links its evidence into
    honest negative), flipped F2's storage negative (H6), and re-issued the
    feasibility verdict against the full T1–V2+H1–H6 evidence base (H7).
    Motivating audit: `status/2026-07-11.md`.
+6. **Scale & speed track** (`scale-track.md`) is the planned next phase: it
+   attacks the throughput ceilings the H7 verdict left standing (Python-bound
+   streaming, MPS training at only 1.6× CPU, nothing above 512² or beyond one
+   real scene) and carries the NVIDIA-ecosystem CUDA port as an explicit
+   stretch goal on rented cloud GPUs, with the provider comparison and cost
+   estimates in `plans/2026-07-16-scale-track-research.md`.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware

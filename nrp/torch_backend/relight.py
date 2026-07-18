@@ -17,6 +17,7 @@ import torch
 from ..gather_light import gather_lights
 from ..lights import TexturedQuadLight, light_from_dict
 from ..path_cache import PathCache
+from .device import resolve_device
 from .model import TorchNRP
 from .train import light_param_vector, pixel_tensors
 
@@ -31,9 +32,11 @@ def relight(model: TorchNRP, cache: PathCache, lights: list) -> np.ndarray:
             params = torch.as_tensor(
                 light_param_vector(light), dtype=torch.float32, device=device
             ).expand(n_px, -1)
-            rgb = torch.ones(3, dtype=torch.float32, device=device) if isinstance(
-                light, TexturedQuadLight
-            ) else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+            rgb = (
+                torch.ones(3, dtype=torch.float32, device=device)
+                if isinstance(light, TexturedQuadLight)
+                else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+            )
             image += model(xy, aux, params) * rgb
     return image.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)
 
@@ -62,9 +65,11 @@ def relight_tiled(
                 params = torch.as_tensor(
                     light_param_vector(light), dtype=torch.float32, device=device
                 ).expand(end - start, -1)
-                rgb = torch.ones(3, dtype=torch.float32, device=device) if isinstance(
-                    light, TexturedQuadLight
-                ) else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+                rgb = (
+                    torch.ones(3, dtype=torch.float32, device=device)
+                    if isinstance(light, TexturedQuadLight)
+                    else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
+                )
                 chunk += model(xy[start:end], aux[start:end], params) * rgb
             image[start:end] = chunk
     return image.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)
@@ -163,6 +168,11 @@ def main() -> None:
     )
     parser.add_argument("--bench", type=int, default=0, help="benchmark N relight frames")
     parser.add_argument(
+        "--device",
+        default="cpu",
+        help="inference device (cpu/mps/cuda; validated, cuda-unavailable fails clearly)",
+    )
+    parser.add_argument(
         "--tile-pixels",
         type=int,
         default=0,
@@ -170,7 +180,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    model = TorchNRP.load(args.model)
+    model = TorchNRP.load(args.model).to(resolve_device(args.device))
     cache = PathCache.load(args.cache)
     lights = load_light_specs(args.light)
     final_cache = PathCache.load(args.final_cache) if args.final_cache else None

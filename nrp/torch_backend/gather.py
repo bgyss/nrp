@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from ..lights import QuadLight, SphereLight, quad_tangent_frame
+from ..lights import QuadLight, SphereLight, TexturedQuadLight, quad_tangent_frame
 from ..path_cache import PathCache
 
 
@@ -26,20 +26,82 @@ class TorchPathCache:
     """Device-resident copy of a PathCache's segment arrays for batched gathering."""
 
     def __init__(self, cache: PathCache, device: torch.device, dtype: torch.dtype | None = None):
+        self._init_from_arrays(
+            width=cache.width,
+            height=cache.height,
+            seg_pixel=cache.seg_pixel,
+            seg_origin=cache.seg_origin,
+            seg_dir=cache.seg_dir,
+            seg_tmax=cache.seg_tmax,
+            seg_throughput=cache.seg_throughput,
+            n_paths=cache.n_paths,
+            device=device,
+            dtype=dtype,
+        )
+
+    @classmethod
+    def from_arrays(
+        cls,
+        *,
+        width: int,
+        height: int,
+        seg_pixel: np.ndarray,
+        seg_origin: np.ndarray,
+        seg_dir: np.ndarray,
+        seg_tmax: np.ndarray,
+        seg_throughput: np.ndarray,
+        n_paths: np.ndarray,
+        device: torch.device,
+        dtype: torch.dtype | None = None,
+    ) -> TorchPathCache:
+        """Build from raw segment arrays (e.g. one decoded shard) without a PathCache.
+
+        `seg_pixel` may index the full image while the segment arrays cover only a
+        subset (a shard tile): gathers then produce that subset's contribution to the
+        full frame, so per-shard gathers sum to the whole-cache gather."""
+        self = cls.__new__(cls)
+        self._init_from_arrays(
+            width=width,
+            height=height,
+            seg_pixel=seg_pixel,
+            seg_origin=seg_origin,
+            seg_dir=seg_dir,
+            seg_tmax=seg_tmax,
+            seg_throughput=seg_throughput,
+            n_paths=n_paths,
+            device=device,
+            dtype=dtype,
+        )
+        return self
+
+    def _init_from_arrays(
+        self,
+        *,
+        width,
+        height,
+        seg_pixel,
+        seg_origin,
+        seg_dir,
+        seg_tmax,
+        seg_throughput,
+        n_paths,
+        device,
+        dtype,
+    ) -> None:
         if dtype is None:
             dtype = torch.float32 if device.type in ("mps",) else torch.float64
-        self.width = cache.width
-        self.height = cache.height
+        self.width = width
+        self.height = height
         self.device = device
         self.dtype = dtype
         to = lambda a: torch.as_tensor(a, dtype=dtype, device=device)  # noqa: E731
-        self.origin = to(cache.seg_origin)
-        self.dir = to(cache.seg_dir)
+        self.origin = to(seg_origin)
+        self.dir = to(seg_dir)
         # inf t_max (escape segments) participates in the same comparisons as numpy.
-        self.tmax = to(cache.seg_tmax)
-        self.throughput = to(cache.seg_throughput)
-        self.pixel = torch.as_tensor(cache.seg_pixel, dtype=torch.long, device=device)
-        self.inv_paths = to(1.0 / np.maximum(cache.n_paths, 1))
+        self.tmax = to(seg_tmax)
+        self.throughput = to(seg_throughput)
+        self.pixel = torch.as_tensor(seg_pixel, dtype=torch.long, device=device)
+        self.inv_paths = to(1.0 / np.maximum(n_paths, 1))
 
     @property
     def segment_count(self) -> int:
@@ -96,8 +158,57 @@ class TorchPathCache:
         )
         return self._accumulate(hits)
 
-    def gather_light(self, light: SphereLight | QuadLight) -> torch.Tensor:
+    def gather_textured_quad(self, light: TexturedQuadLight) -> torch.Tensor:
+        """Textured-quad GATHER: throughput times hit texel rgb (numpy-reference
+        semantics from `nrp.gather_light.gather_textured_quad`, incl. the same
+        floor+clip texel lookup), already emission-scaled — textured quads have no
+        separate rgb."""
+        if not self.segment_count:
+            return torch.zeros((self.height, self.width, 3), dtype=self.dtype, device=self.device)
+        n = np.asarray(light.normal, dtype=np.float64)
+        n = n / np.linalg.norm(n)
+        u, v = quad_tangent_frame(n)
+        to = lambda a: torch.as_tensor(a, dtype=self.dtype, device=self.device)  # noqa: E731
+        c, n_t, u_t, v_t = to(light.center), to(n), to(u), to(v)
+        width, height = float(light.width), float(light.height)
+
+        denom = self.dir @ n_t
+        parallel = denom.abs() < 1e-12
+        safe = torch.where(parallel, torch.ones_like(denom), denom)
+        t = ((c - self.origin) @ n_t) / safe
+        p = self.origin + t.unsqueeze(-1) * self.dir
+        local = p - c
+        lu = local @ u_t
+        lv = local @ v_t
+        hits = (
+            ~parallel
+            & (t >= 0.0)
+            & (t <= self.tmax)
+            & (lu.abs() <= width / 2.0)
+            & (lv.abs() <= height / 2.0)
+        )
+        uv_u = torch.clamp(lu / width + 0.5, 0.0, 1.0)
+        uv_v = torch.clamp(lv / height + 0.5, 0.0, 1.0)
+        tex = to(light.texture)
+        tex_h, tex_w = tex.shape[0], tex.shape[1]
+        ti = torch.clamp((uv_u * tex_w).floor().long(), 0, tex_w - 1)
+        tj = torch.clamp((uv_v * tex_h).floor().long(), 0, tex_h - 1)
+        # misses get uv 0 in the reference; their texel value is irrelevant since
+        # the hit weight zeroes them in the scatter below.
+        ti = torch.where(hits, ti, torch.zeros_like(ti))
+        tj = torch.where(hits, tj, torch.zeros_like(tj))
+        texels = tex[tj, ti]
+        n_px = self.height * self.width
+        contrib = torch.zeros((n_px, 3), dtype=self.dtype, device=self.device)
+        weighted = self.throughput * texels * hits.to(self.dtype).unsqueeze(-1)
+        contrib.index_add_(0, self.pixel, weighted)
+        contrib *= self.inv_paths.unsqueeze(-1)
+        return contrib.reshape(self.height, self.width, 3)
+
+    def gather_light(self, light: SphereLight | QuadLight | TexturedQuadLight) -> torch.Tensor:
         """Full contribution of one light: GATHERtype scaled by emission rgb."""
+        if isinstance(light, TexturedQuadLight):
+            return self.gather_textured_quad(light)
         if isinstance(light, SphereLight):
             image = self.gather_throughput(light.center, light.radius)
         else:

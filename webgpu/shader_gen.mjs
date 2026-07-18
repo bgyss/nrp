@@ -35,6 +35,20 @@ export function buildShader(manifest, opts = {}) {
   const inDim = dims[0];
   const auxDim = manifest.aux_dim;
   const lightDim = manifest.light_param_dim;
+  // H3 kernel head (TorchNRP texture_kernel=True): the MLP consumes only the 8
+  // quad-geometry params and emits a per-texel kernel; emission is the kernel
+  // contracted with the texture (lightParams[8:]) at the head. Mirrors
+  // examples/export_webgpu_runtime.numpy_forward(texture_kernel=True).
+  const textureKernel = !!manifest.texture_kernel;
+  if (textureKernel && !rigLight) throw new Error("texture_kernel requires rigLight mode");
+  if (textureKernel && outputActivation !== "softplus") {
+    throw new Error("texture_kernel head is softplus-only");
+  }
+  const lightInDim = textureKernel ? 8 : lightDim;
+  const kernelTexels = textureKernel ? (lightDim - 8) / 3 : 0;
+  if (textureKernel && (!Number.isInteger(kernelTexels) || dims[dims.length - 1] !== kernelTexels * 3)) {
+    throw new Error(`texture_kernel dims mismatch: light_param_dim ${lightDim}, out ${dims[dims.length - 1]}`);
+  }
   let encodingCode = "";
   let encDim = 0;
   if (enc) {
@@ -70,8 +84,8 @@ export function buildShader(manifest, opts = {}) {
     encodingCode = `
   buf[0] = xy.x; buf[1] = xy.y;`;
   }
-  if (encDim + auxDim + lightDim !== inDim) {
-    throw new Error(`input dim mismatch: ${encDim}+${auxDim}+${lightDim} != ${inDim}`);
+  if (encDim + auxDim + lightInDim !== inDim) {
+    throw new Error(`input dim mismatch: ${encDim}+${auxDim}+${lightInDim} != ${inDim}`);
   }
   const maxDim = Math.max(...dims);
   // MLP with register-resident accumulators. Two earlier variants were ~4x too slow:
@@ -174,7 +188,7 @@ export function buildShader(manifest, opts = {}) {
   // what a uniform vec4 can hold.
   const lightParamsFillCode = rigLight
     ? `
-  for (var i: u32 = 0u; i < ${lightDim}u; i = i + 1u) { buf[${encDim + auxDim}u + i] = lightParams[i]; }`
+  for (var i: u32 = 0u; i < ${lightInDim}u; i = i + 1u) { buf[${encDim + auxDim}u + i] = lightParams[i]; }`
     : `
   buf[${encDim + auxDim}u] = params.light.x;
   buf[${encDim + auxDim + 1}u] = params.light.y;
@@ -202,6 +216,32 @@ export function buildShader(manifest, opts = {}) {
     outputs[pixel * 3u] = outputs[pixel * 3u] + ${head(0)};
     outputs[pixel * 3u + 1u] = outputs[pixel * 3u + 1u] + ${head(1)};
     outputs[pixel * 3u + 2u] = outputs[pixel * 3u + 2u] + ${head(2)};
+  }`;
+  } else if (rigLight && textureKernel) {
+    // per-texel kernel head: contract softplus(out) with the texture living in
+    // lightParams[8:], then the (neutral-by-default) light_rgb multiply.
+    const accum = `
+    var c = vec3<f32>(0.0);
+    for (var t: u32 = 0u; t < ${kernelTexels}u; t = t + 1u) {
+      let base = t * 3u;
+      c.x = c.x + softplus(${outArr}[base / 4u][base % 4u]) * lightParams[8u + base];
+      c.y = c.y + softplus(${outArr}[(base + 1u) / 4u][(base + 1u) % 4u]) * lightParams[9u + base];
+      c.z = c.z + softplus(${outArr}[(base + 2u) / 4u][(base + 2u) % 4u]) * lightParams[10u + base];
+    }
+    c = c * params.light_rgb.xyz;`;
+    storeCode =
+      composite === "add"
+        ? `
+  if (gid.x < params.n_pixels) {${accum}
+    outputs[pixel * 3u] = outputs[pixel * 3u] + c.x;
+    outputs[pixel * 3u + 1u] = outputs[pixel * 3u + 1u] + c.y;
+    outputs[pixel * 3u + 2u] = outputs[pixel * 3u + 2u] + c.z;
+  }`
+        : `
+  if (gid.x < params.n_pixels) {${accum}
+    outputs[pixel * 3u] = c.x;
+    outputs[pixel * 3u + 1u] = c.y;
+    outputs[pixel * 3u + 2u] = c.z;
   }`;
   } else if (rigLight) {
     const c = `vec3<f32>(${head(0)}, ${head(1)}, ${head(2)}) * params.light_rgb.xyz`;

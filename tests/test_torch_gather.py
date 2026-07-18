@@ -16,7 +16,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from nrp.gather_light import gather_light  # noqa: E402
-from nrp.lights import QuadLight, SphereLight  # noqa: E402
+from nrp.lights import QuadLight, SphereLight, TexturedQuadLight  # noqa: E402
 from nrp.torch_backend.gather import TorchPathCache  # noqa: E402
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
 
@@ -57,6 +57,25 @@ class ToyCacheParityTests(unittest.TestCase):
         rng = np.random.default_rng(0)
         for light in random_lights(rng, 50, scale=0.8, offset=0.1):
             with self.subTest(light=type(light).__name__):
+                ref = gather_light(self.cache, light)
+                got = self.torch_cache.gather_light(light).numpy()
+                np.testing.assert_allclose(got, ref, rtol=1e-5, atol=1e-12)
+
+    def test_matches_numpy_for_textured_quad_lights(self):
+        # S4: TorchPathCache.gather_textured_quad vs the authoritative numpy
+        # gather_textured_quad, incl. non-uniform textures so texel indexing
+        # (floor + clip, v-major) is actually exercised.
+        rng = np.random.default_rng(3)
+        for _ in range(25):
+            tex_h, tex_w = int(rng.integers(2, 9)), int(rng.integers(2, 9))
+            light = TexturedQuadLight(
+                center=0.1 + 0.8 * rng.random(3),
+                normal=rng.normal(size=3),
+                width=float(0.8 * rng.uniform(0.1, 0.5)),
+                height=float(0.8 * rng.uniform(0.1, 0.5)),
+                texture=rng.uniform(0.0, 3.0, size=(tex_h, tex_w, 3)),
+            )
+            with self.subTest(texture=(tex_h, tex_w)):
                 ref = gather_light(self.cache, light)
                 got = self.torch_cache.gather_light(light).numpy()
                 np.testing.assert_allclose(got, ref, rtol=1e-5, atol=1e-12)

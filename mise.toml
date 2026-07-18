@@ -261,3 +261,31 @@ run = "uv run python examples/v1_rig.py --cache out/kitchen-512/path_cache.npz -
 [tasks.v2-artloop]
 description = "V2 summit: E7 color recovery driving the full V1 rig toward a hand-authored target, then a headless interactive-grading loop"
 run = "uv run python examples/v2_art_loop.py --rig out/v1-rig/rig.json --models-dir out/v1-rig/models --cache out/kitchen-512/path_cache.npz --out-dir out/v2-artloop"
+
+[tasks.s1-streamed-bench]
+description = "S1: vectorized streamed gather parity + wall-clock vs the E5 baselines (needs the 512^2/128spp cache + shards)"
+run = "uv run python examples/s1_streamed_gather_bench.py --out out/s1-streamed-gather/report.json"
+
+[tasks.s3-shard-bench]
+description = "S3: parallel vs serial save_sharded wall-clock on the E5 512^2/128spp cache"
+run = "uv run python examples/s3_shard_write_bench.py --workers 1 8 --keep packed@8"
+
+[tasks.s3-exporter-profile]
+description = "S3: cProfile the wavefront exporter's Python-side conversion (builtin cornell box)"
+run = "uv run python examples/s3_exporter_profile.py"
+
+[tasks.s2-spp-probe]
+description = "S2: spp cost/quality probe for the 1024^2 kitchen export (needs the kitchen scene + mitsuba extra)"
+run = "uv run python examples/s2_spp_probe.py"
+
+[tasks.s2-kitchen-1024]
+description = "S2: packed shard + S1 streamed train + tiled inference on the 1024^2 kitchen export"
+run = "uv run python examples/s2_kitchen_1024.py --spp 32"
+
+[tasks.s4-rig]
+description = "S4: rebuild the 8-light rig with H3 kernel-conditioned textured-quad proxies (needs OIDN via the nix devshell)"
+run = "uv run python examples/v1_rig.py --cache out/kitchen-512/path_cache.npz --out-dir out/s4-rig --iters 1600 --textured-quad-iters 3200 --texture-conditioning kernel"
+
+[tasks.s5-sweep]
+description = "S5: paper-scale training-throughput sweep (batch / autocast / torch.compile) on cpu+mps"
+run = "uv run python examples/s5_throughput_sweep.py"

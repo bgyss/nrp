@@ -69,6 +69,44 @@ from nrp.torch_backend.train import light_param_vector, pixel_tensors  # noqa: E
 # authored for it -- recovery is undetermined, not merely slow to converge.
 _RAW_OUTPUT_EPS = 1e-6
 
+# The absolute epsilon alone produced H2's known false negative: `practical`'s raw
+# max was 1.59e-6 -- above 1e-6, so no caveat fired -- while every genuinely
+# contributing proxy peaked at 0.38-1.46 and `practical`'s recovered color stayed at
+# the untouched neutral guess (hand-checked 5/6, reported 6/6). A light whose peak
+# raw output is orders of magnitude below the rig's strongest colorable proxy has
+# negligible loss gradient in practice even if it is not exactly zero, so the
+# caveat threshold is also relative to that per-run peak.
+_RAW_OUTPUT_REL_EPS = 1e-3
+
+
+def flag_recovery_caveats(raw_output: dict) -> list[dict]:
+    """Caveat entries for colorable lights whose proxy has ~no signal to optimize.
+
+    A light is flagged when its peak raw output is below `_RAW_OUTPUT_EPS`
+    (absolute floor) or below `_RAW_OUTPUT_REL_EPS` x the strongest colorable
+    proxy's peak (the H2 false-negative fix; must report `practical` -- 5/6 -- on
+    the H2 artifacts). This keeps the genuine/vacuous recovery distinction: flagged
+    lights' "recovered_rgbs" are the untouched neutral guess, not verified
+    recoveries."""
+    peak = max((mag["max"] for mag in raw_output.values()), default=0.0)
+    threshold = max(_RAW_OUTPUT_EPS, peak * _RAW_OUTPUT_REL_EPS)
+    return [
+        {
+            "light": name,
+            "reason": (
+                f"proxy raw output on this cache is negligible (max={mag['max']:.3e} "
+                f"< threshold {threshold:.3e} = max(abs {_RAW_OUTPUT_EPS:.0e}, "
+                f"{_RAW_OUTPUT_REL_EPS:.0e} x strongest colorable proxy peak "
+                f"{peak:.3e})); u_rgb has ~no gradient, so this light's "
+                "recovered_rgb below is the untouched neutral guess, not a "
+                "verified recovery"
+            ),
+        }
+        for name, mag in raw_output.items()
+        if mag["max"] < threshold
+    ]
+
+
 # ---------------------------------------------------------------------------
 # The hand-authored "art direction" target: new RGB intensities for the 6
 # colorable (sphere/quad) V1 rig lights, chosen to read as a distinct grade from
@@ -196,18 +234,7 @@ def run_art_loop(
     # contribution to both predicted and target is ~0 regardless of rgb).
     colorable_names = list(target_rgbs.keys())
     raw_output = _raw_proxy_magnitude(rig, cache, colorable_names)
-    recovery_caveats = [
-        {
-            "light": name,
-            "reason": (
-                f"proxy raw output on this cache is ~0 (max={mag['max']:.3e}); "
-                "u_rgb has no gradient, so this light's recovered_rgb below is the "
-                "untouched neutral guess, not a verified recovery"
-            ),
-        }
-        for name, mag in raw_output.items()
-        if mag["max"] < _RAW_OUTPUT_EPS
-    ]
+    recovery_caveats = flag_recovery_caveats(raw_output)
 
     report = {
         "steps": steps,

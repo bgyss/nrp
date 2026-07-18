@@ -78,6 +78,7 @@ def export_light(
         level_meta,
         features_per_level,
         table_size,
+        texture_kernel=model.texture_kernel,
     ).astype(np.float32)
     self_check = float(np.max(np.abs(replica - reference)))
 
@@ -92,6 +93,7 @@ def export_light(
         "mlp_dims": mlp_dims,
         "aux_dim": 7,
         "light_param_dim": model.light_param_dim,
+        "texture_kernel": model.texture_kernel,
         "encoding": None
         if level_meta is None
         else {

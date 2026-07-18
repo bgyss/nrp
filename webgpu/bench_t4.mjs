@@ -23,16 +23,33 @@ import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const exportDir = path.join(repoRoot, "out", "t4-runtime", "export");
-const reportPath = path.join(repoRoot, "out", "t4-runtime", "report.json");
+// S6: --export-dir/--report/--resolutions let the same harness run non-default
+// exports (e.g. the 1024^2 kitchen G-buffer) without touching the committed
+// t4-runtime baseline paths.
+function argValue(flag, fallback) {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+const exportDir = path.resolve(argValue("--export-dir", path.join(repoRoot, "out", "t4-runtime", "export")));
+const reportPath = path.resolve(argValue("--report", path.join(repoRoot, "out", "t4-runtime", "report.json")));
 const baselinePath = path.join(repoRoot, "out", "t4-runtime", "baseline.json");
+const resolutionsArg = argValue("--resolutions", "128,256,512").split(",").map(Number);
 
 const PARITY_TOLERANCE = 2e-4; // f32 op-order drift over hashgrid + 128-wide MLP
 const REGRESSION_THRESHOLD = 0.3; // fail --check if p95 exceeds baseline p95 by >30%
 const FLOOR_P95_MS_512 = 1000 / 30; // the E10/T4 floor: 30 fps sustained at 512^2
 
 // Runs inside the browser page — self-contained.
-async function runInPage({ shaderCode, pixels, tables, mlp, reference, manifest, resolutions, warmup, timedRuns }) {
+async function runInPage({ shaderCode, pixelsB64, tables, mlp, referenceB64, manifest, resolutions, warmup, timedRuns }) {
+  // Large G-buffer/reference arrays travel as base64 (not JS number arrays) — at
+  // 1024^2 the per-element JSON encoding of a plain array is large enough that
+  // page.evaluate's CDP round-trip crashes the target page.
+  const decodeF32 = (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+  };
+  const pixels = decodeF32(pixelsB64);
+  const reference = decodeF32(referenceB64);
   const adapter = await navigator.gpu.requestAdapter();
   const adapterInfo = adapter.info || {};
   const device = await adapter.requestDevice();
@@ -158,6 +175,10 @@ function loadF32(name) {
   return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
 }
 
+function loadB64(name) {
+  return readFileSync(path.join(exportDir, name)).toString("base64");
+}
+
 async function main() {
   const mode = process.argv.includes("--check") ? "check" : process.argv.includes("--freeze") ? "freeze" : "run";
   if (!existsSync(path.join(exportDir, "manifest.json"))) {
@@ -178,12 +199,12 @@ async function main() {
   await page.goto(`file://${pagePath}`);
   const result = await page.evaluate(runInPage, {
     shaderCode,
-    pixels: loadF32("pixels.bin"),
+    pixelsB64: loadB64("pixels.bin"),
     tables: manifest.encoding ? loadF32("tables.bin") : [],
     mlp: repackMlp(loadF32("mlp.bin"), manifest.mlp_dims),
-    reference: loadF32("reference.bin"),
+    referenceB64: loadB64("reference.bin"),
     manifest,
-    resolutions: [128, 256, 512],
+    resolutions: resolutionsArg,
     warmup: 10,
     timedRuns: 200,
   });
@@ -201,7 +222,7 @@ async function main() {
     notes: [
       "Per timed frame only the light uniform changes (jittered): G-buffer, weights, " +
         "and hashgrid tables stay resident — the interactive-relight access pattern.",
-      "Sub-512 resolutions use strided subsampling of the real 512^2 G-buffer.",
+      "Sub-full resolutions use strided subsampling of the export's full-res G-buffer.",
       "Timing includes uniform upload, dispatch, and onSubmittedWorkDone (no readback).",
     ],
   };

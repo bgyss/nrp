@@ -64,6 +64,31 @@ class PathCacheTests(unittest.TestCase):
         np.testing.assert_allclose(again.albedo, cache.albedo)
         np.testing.assert_allclose(gather_light(again, light), gather_light(cache, light))
 
+    def test_parallel_sharded_write_bit_identical_to_serial(self):
+        from nrp.toy_tracer import trace_path_cache
+
+        cache = trace_path_cache(12, 12, 4, 2, seed=5)
+        for packed in (False, True):
+            with tempfile.TemporaryDirectory() as tmp:
+                serial_dir = Path(tmp) / "serial"
+                parallel_dir = Path(tmp) / "parallel"
+                cache.save_sharded(str(serial_dir), tile_size=4, packed=packed, workers=1)
+                cache.save_sharded(str(parallel_dir), tile_size=4, packed=packed, workers=4)
+                self.assertEqual(
+                    (serial_dir / "manifest.json").read_text(),
+                    (parallel_dir / "manifest.json").read_text(),
+                )
+                names = sorted(p.name for p in serial_dir.glob("*.npz"))
+                self.assertEqual(names, sorted(p.name for p in parallel_dir.glob("*.npz")))
+                for name in names:
+                    with (
+                        np.load(serial_dir / name) as a,
+                        np.load(parallel_dir / name) as b,
+                    ):
+                        self.assertEqual(sorted(a.files), sorted(b.files))
+                        for key in a.files:
+                            np.testing.assert_array_equal(a[key], b[key], err_msg=f"{name}:{key}")
+
     def test_json_round_trip_preserves_escape_segments(self):
         cache = tiny_cache()
         again = PathCache.from_dict(cache.to_dict())

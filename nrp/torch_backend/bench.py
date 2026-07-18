@@ -24,6 +24,7 @@ import time
 
 import torch
 
+from .device import resolve_device, synchronize
 from .model import LIGHT_PARAM_DIMS, TorchNRP
 
 
@@ -37,10 +38,7 @@ def available_devices() -> list[str]:
 
 
 def _synchronize(device: torch.device) -> None:
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    elif device.type == "mps":
-        torch.mps.synchronize()
+    synchronize(device)
 
 
 def bench_model(
@@ -133,7 +131,7 @@ def bench_gather(
         }
     )
     for device_name in devices:
-        device = torch.device(device_name)
+        device = resolve_device(device_name)
         tc = TorchPathCache(cache, device)
         ms = timed(
             lambda light, tc=tc: tc.gather_light(light),
@@ -189,7 +187,7 @@ def main() -> None:
     print(f"benchmarking {model.parameter_count} params ({model.light_type}) on {devices}")
     print(f"{'device':>8} {'resolution':>11} {'ms/frame':>10} {'Hz':>10}")
     for device_name in devices:
-        device = torch.device(device_name)
+        device = resolve_device(device_name)
         for res in args.resolutions:
             row = bench_model(model, device, res, frames=args.frames)
             results.append(row)

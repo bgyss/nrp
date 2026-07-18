@@ -86,6 +86,55 @@ class NumpyReplicaTests(unittest.TestCase):
     def test_no_encoding_model_matches_torch(self):
         self._check(_tiny_model(use_encoding=False))
 
+    def test_texture_kernel_model_matches_torch(self):
+        # H3 kernel head (S4): MLP consumes only the 8 quad-geometry params;
+        # softplus output is a per-texel kernel contracted with the texture.
+        torch.manual_seed(7)
+        texels = 4 * 4
+        model = TorchNRP(
+            light_type="textured_quad",
+            light_param_dim=8 + 3 * texels,
+            hidden_width=16,
+            hidden_layers=2,
+            encoding={
+                "levels": 4,
+                "features_per_level": 2,
+                "table_size_log2": 6,
+                "base_resolution": 2,
+                "finest_resolution": 32,
+            },
+            texture_kernel=True,
+        )
+        model.eval()
+        rng = np.random.default_rng(0)
+        n = 129
+        xy = rng.uniform(0.001, 0.999, size=(n, 2)).astype(np.float32)
+        aux = rng.uniform(-1, 1, size=(n, 7)).astype(np.float32)
+        light = rng.uniform(0.1, 1.0, size=(8 + 3 * texels,)).astype(np.float32)
+        mlp_flat, mlp_dims = export_mlp(model)
+        tables_flat, level_meta = export_encoding(model)
+        fpl, ts = model.encoding.features_per_level, model.encoding.table_size
+        replica = numpy_forward(
+            xy,
+            aux,
+            light,
+            mlp_flat,
+            mlp_dims,
+            tables_flat,
+            level_meta,
+            fpl,
+            ts,
+            texture_kernel=True,
+        )
+        with torch.no_grad():
+            ref = model(
+                torch.as_tensor(xy),
+                torch.as_tensor(aux),
+                torch.as_tensor(light).expand(n, -1),
+            ).numpy()
+        self.assertEqual(replica.shape, (n, 3))
+        self.assertLess(float(np.max(np.abs(replica - ref))), 1e-5)
+
 
 class ExporterEndToEndTests(unittest.TestCase):
     def test_export_from_saved_cache(self):

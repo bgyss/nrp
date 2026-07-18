@@ -33,6 +33,7 @@ from ..gather_light import gather_lights
 from ..lights import QuadLight, SphereLight, light_from_dict
 from ..metrics import psnr, smape
 from ..path_cache import PathCache
+from .device import resolve_device
 from .model import TorchNRP, quad_params, sphere_params
 from .train import pixel_tensors
 
@@ -347,12 +348,17 @@ def main() -> None:
         "--restarts", type=int, default=1, help="random restarts; lowest final loss wins"
     )
     parser.add_argument("--out-dir", required=True)
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="optimization device (cpu/mps/cuda; validated, cuda-unavailable fails clearly)",
+    )
     args = parser.parse_args()
 
     if bool(args.target_light) == bool(args.target):
         parser.error("exactly one of --target-light / --target is required")
 
-    model = TorchNRP.load(args.model)
+    model = TorchNRP.load(args.model).to(resolve_device(args.device))
     cache = PathCache.load(args.cache)
     bounds = DEFAULT_BOUNDS
 

@@ -2340,3 +2340,391 @@ assumes a 3-output head, so a kernel-head proxy needs a small shader
 extension (predict kernel, contract with a texture uniform) before it can
 replace the flat textured_quad models in the H4 rig export -- follow-up
 work, not blocking this rung's quality finding.
+
+## Export/shard throughput at scale (scale track, rung S3)
+
+`PathCache.save_sharded` had two measured costs at 512²: a per-tile boolean mask
+pass over all segments (O(tiles × segments)) and serial `np.savez_compressed`
+writes. S3 replaces the mask passes with **one stable segment sort by owning
+tile** (per-tile slices then reproduce the old selection exactly) and writes
+shard files on a **thread pool** (zlib compression releases the GIL; each worker
+owns whole shards, so output is bit-identical for any worker count —
+`tests/test_path_cache.py::test_parallel_sharded_write_bit_identical_to_serial`
+asserts equality per shard member, both layouts). `workers=None` defaults to
+`min(8, cpu_count)`; `workers=1` is the fully serial reference.
+
+Measured by `examples/s3_shard_write_bench.py` (report:
+`out/s3-shard-write/report.json`) on the E5 512²/128spp cornell cache
+(94,237,448 segments, 64×64 tiles), Apple M1 Max, vs the committed 306.3 s
+serial baseline:
+
+| layout | workers | wall-clock | shard bytes | speedup vs 306.3 s |
+|---|---|---:|---:|---:|
+| float64 | 1 (sort fix only) | 286.7 s | 3.50 GB | 1.07× |
+| float64 | 8 | **53.0 s** | 3.50 GB | **5.78×** |
+| packed  | 1 | 139.7 s | 1.08 GB | 2.19× |
+| packed  | 8 | **33.5 s** | 1.08 GB | **9.13×** |
+
+The ≥3× target is met with headroom in both layouts. The sort fix alone is worth
+only 1.07× — compression, not tile selection, dominated the serial path — and
+threading recovers most of the machine (5.4× over serial at 8 workers). A
+parallel-written cache loads bit-identically to a serial one (spot parity in the
+bench, exhaustive parity in the unit test).
+
+## Vectorized streamed gather (scale track, rung S1)
+
+E5's streamed pool was scalar-numpy-bound: one full pass over the sharded cache
+per pool slot, `np.add.at` per shard. S1 lands three composable changes in
+`nrp.torch_backend.streamed_train`, all preserving the bounded-residency
+guarantee (never more than one shard's decoded segments resident — asserted
+per run below, identical 150.3 MB peak in every row):
+
+1. **multi-light shard passes** — a pool fill batch samples its lights in slot
+   order first (identical rng stream; numpy targets bit-identical, the existing
+   streamed-vs-monolithic loss-curve equality test still passes), then tests
+   each decoded shard against all of them, so a 16-slot pool build decodes the
+   cache once instead of 16 times;
+2. **`gather_backend: torch`** — a per-shard `TorchPathCache` built on the fly
+   runs the overlap test + scatter as batched ops on `gather_device`
+   (cpu float64: rtol 1e-5 vs numpy, full-frame parity asserted in the report;
+   mps float32: rel-L1 < 1e-4, same convention as the in-memory gather);
+3. **`decode_workers: N`** — shard npz members decompress on N threads (own
+   handle per thread; zlib + float64 conversion release the GIL), still one
+   shard at a time.
+
+Per-shard gather on the largest real shard (1.71M segments): numpy 31.9 ms,
+torch-cpu 17.4 ms, torch-mps **7.9 ms** (4.0×). Per-shard decode: 335 ms serial
+→ 174 ms at 4 threads (bounded by the three large float64 members).
+
+End-to-end (`examples/s1_streamed_gather_bench.py`, reports under
+`out/s1-streamed-gather/`), 512²/128spp, 150 iters, same config/seed as the
+committed E5 baseline (382.2 s pool / 1,004.9 s total; held-out 32.57 dB),
+Apple M1 Max:
+
+| configuration | pool build | decode | gather | total | speedup | held-out |
+|---|---:|---:|---:|---:|---:|---:|
+| numpy, batched fills only | 114.3 s | 474.7 s | 227.6 s | 713.9 s | 1.41× | 32.57 dB |
+| torch-cpu | — | — | — | 528.2 s | 1.90× | 32.57 dB |
+| torch-mps | 30.8 s | 488.6 s | 43.1 s | 543.2 s | 1.85× | 32.57 dB |
+| numpy + 4 decode threads | 101.9 s | 292.2 s | 224.9 s | 529.7 s | 1.90× | 32.57 dB |
+| torch-mps + 4 decode threads | 21.9 s | 284.6 s | ~29 s | 335.3 s | 3.00× | 32.57 dB |
+| torch-mps + 4 threads + **packed shards** | 16.1 s | 109.4 s | 44.7 s | **166.4 s** | **6.04×** | 32.52 dB |
+
+The **≥5× target is met** (6.04×); the 10× stretch is not. Honest accounting of
+the last row: the packed (§4.2 fp16+rgb9e5) shards are the same committed cache
+representation T2 validated (≥44.9 dB image fidelity, identical training PSNR
+at 512²/64spp); on this cache the packed-target proxy lands within 0.05 dB of
+the float64 baseline. On float64 shards alone the ceiling is 3.0× — inflating
+3.5 GB of zlib per full pass dominates everything else once the gather is
+batched (284.6 s of the 335.3 s run), which is exactly the paper's motivation
+for the packed layout. rng-order: numpy-backend targets remain bit-identical to
+per-slot fills; the torch backend changes accumulation order (documented, loss
+curves match the numpy path at rtol 1e-4 on the toy cache, statistically
+identical here: same 4.15 → 0.00136 loss, same 32.57 dB).
+
+### Exporter Python-side conversion profile (S3, second half)
+
+`examples/s3_exporter_profile.py` (`mise run s3-exporter-profile`, report:
+`out/s3-shard-write/exporter_profile.json`) cProfiles
+`export_path_cache_wavefront` on the builtin cornell box at 256²/64spp
+(11.78M segments, metal_ad_rgb). The top measured cost was **not** the
+drjit→numpy conversion (0.44 s, and that row also absorbs the lazily-evaluated
+kernel work) but `np.add.at` — the bounce-0 G-buffer scatter — at **1.63 s of
+3.05 s wall (53%)**. Replacing it with `np.bincount` accumulation
+(`_bincount_rows`; same sums, per-pixel addition order differs by float
+rounding only) drops the profiled export from **3.05 s → 1.63 s (1.87×)**,
+i.e. 3.86M → **7.21M segments/s**; exporter schema/equivalence tests unchanged
+and green. Remaining costs are the genuine drjit conversions (0.44 s) and the
+final concatenate/normalize/validate passes — no single Python-side hotspot
+above 27% remains.
+
+## 1024² and a second real scene (scale track, rung S2)
+
+Nothing had run above 512², and every real-scene claim rested on the Country
+Kitchen. S2 adds both axes. All runs Apple M1 Max (64 GiB), wavefront exporter
+(metal_ad_rgb) with the S3 bincount fix, S3 parallel packed shard writer, and
+the S1 streamed path (torch-mps gather, 4 decode threads).
+
+**spp probe (choosing the 1024² export deliberately).**
+`examples/s2_spp_probe.py` (`out/s2-scale/spp_probe.json`) exports the kitchen
+at 256² for spp ∈ {16, 32, 64} plus a 256-spp reference and compares
+GATHERLIGHT images for 4 fixed sphere lights — gather noise is per-pixel MC
+noise, so these transfer to 1024²:
+
+| spp | gather PSNR vs 256 spp (mean / min) | export wall | peak RSS |
+|---|---|---:|---:|
+| 16 | 36.5 / 31.8 dB | 10.7 s | 1.03 GB |
+| 32 | **39.8 / 35.2 dB** | 20.8 s | 1.64 GB |
+| 64 | 43.5 / 38.8 dB | 47.3 s | 2.82 GB |
+
+**Chosen: 32 spp** — target fidelity ≥ 35 dB even in the worst probe light is
+an order of magnitude above the ~21–23 dB proxy operating point, while 64 spp
+would have put the 1024² export's peak RSS at an extrapolated ~41 GB (vs the
+measured 17.1 GB at 32 spp) for quality the proxy cannot use.
+
+**Scaling table** ({512², 1024²} × kitchen, 512² × bedroom):
+
+| | kitchen 512²/64spp (T1/T2, committed) | kitchen 1024²/32spp (S2) | bedroom 512²/64spp (S2) |
+|---|---:|---:|---:|
+| export wall-clock | 182.4 s | 382.2 s (trace 30.5 s) | 182.2 s (trace 17.5 s) |
+| export peak RSS | 10.33 GB | 17.13 GB | 10.69 GB |
+| segments | 52.3M | 104.5M | 53.8M |
+| float64 cache | 2.09 GB | 4.34 GB | 2.21 GB |
+| packed sharded cache | 630 MB (T2) | 1.35 GB | — |
+| shard write | 115.0 s (T2, pre-S3) | **35.1 s** (S3 writer, w8) | — |
+| pool build + train | 44 + 854 s (T1 config, 3k iters) | 15.3 + 312.8 s (streamed E5 config, 300 iters) | 38 + 745 s (T1 config, 3k iters) |
+| peak resident segment bytes | 0.80 GiB RSS (T2 streamed) | **158.2 MB** (58.2× under monolithic) | in-memory (torch pool) |
+| held-out PSNR vs raw | 21.01 dB | **23.0 dB** | **21.89 dB** |
+| full-frame inference | 224.3 ms tiled (T2) | 371.2 ms tiled (16k-px tiles) | 92.5 ms |
+
+Reports: `out/kitchen-1024/export_report.json`,
+`out/s2-scale/kitchen_1024_report.json`, `out/bedroom-512/export_report.json`,
+`out/bedroom-512-torch/torch_train_report.json`. Config notes, honestly stated:
+the 1024² training row uses the streamed E5-scale config (64×3 net, 300 iters,
+raw targets) — it is the "does the streamed path scale" datapoint, not a
+quality ceiling; its 23.0 dB already beats both 512² full-config runs because
+32 spp at 1024² still supplies ~2× the kitchen-512 cache's segments. The
+bedroom run is config-identical to T1's kitchen run (`examples/
+bedroom_512_torch.json`, OIDN targets, torch gather, 3000 iters, seed 0) and
+lands at 21.89 dB held-out — **above the 18 dB envelope floor** and within
+0.9 dB of the kitchen, so the pipeline's quality story is no longer
+single-scene. Both caches pass `PathCache.validate()` (the 1024² cache is
+additionally validated by `save_sharded` before writing).
+
+## Re-earning the rig additivity gate with kernel conditioning (scale track, rung S4)
+
+H2's additivity fail was measured with the rig's two `TexturedQuadLight` proxies
+at their pre-H3 12–13 dB floor. S4 rebuilds the full 8-light rig
+(`mise run s4-rig` / `examples/s4_pipeline.sh` under the nix devshell; reports
+under `out/s4-rig/`, `out/s4-artloop/`) with H3's chosen operating point for the
+textured quads — kernel conditioning, 3200 iters — and the H2 budget (1600
+iters, OIDN targets) for the other six. Because
+`TorchPathCache.gather_textured_quad` now exists, the textured-quad pool builds
+use the batched torch gather: each kernel proxy trains in **1,056/1,058 s vs
+H3's 3,076/2,915 s (2.9× faster)** at the same quality. Total rig train:
+5,191 s.
+
+| light | type | iters | val PSNR (dB) |
+|---|---|---:|---:|
+| key / fill / rim | sphere | 1600 | 19.05 / 20.14 / 19.77 |
+| window / ceiling_panel / practical | quad | 1600 | 17.44 / 20.11 / 22.47 |
+| neon_sign | textured_quad, **kernel** | 3200 | **19.99** |
+| tv_glow | textured_quad, **kernel** | 3200 | **19.65** |
+
+Both textured quads land inside the sphere/quad envelope at rig level,
+reproducing H3's finding in situ. 8/8 proxies have nonzero output.
+
+**Additivity gate (preview tier): honest fail.** PSNR 25.67 dB (pass ≥ 20),
+SSIM 0.727 (< 0.80), FLIP 0.316 (> 0.15) — SSIM essentially unchanged from
+H2's 0.725, FLIP slightly worse (0.257 → 0.316; different training runs, same
+verdict). The per-light residual decomposition
+(`examples/s4_residual_decomposition.py`,
+`out/s4-rig/residual_decomposition.json`; per-light denoised references, so
+shares are approximate attribution) names the next floor:
+
+| light | residual energy share | proxy vs own denoised gather |
+|---|---:|---:|
+| key | 27.9% | 26.16 dB |
+| neon_sign | 20.6% | 27.75 dB |
+| tv_glow | 18.9% | 18.71 dB |
+| fill | 8.7% | 28.10 dB |
+| ceiling_panel | 7.2% | 30.49 dB |
+| rim | 4.5% | 30.81 dB |
+| practical | 2.9% | 33.00 dB |
+| window | 2.4% | 34.37 dB |
+
+The failure is no longer a textured-quad outlier: residual energy is spread
+across the brightest lights, led by `key` (the strongest emitter) and the two
+textured quads. **The named next floor is uniform per-light proxy fidelity at
+the H2 budget** — every light sits at 19–22 dB val PSNR, and a preview-tier
+SSIM on the 8-light composite needs the per-light proxies themselves to move,
+via budget/capacity or H6-style residual layers, not further conditioning
+changes.
+
+**V2 art-direction loop** (`out/s4-artloop/report.json`): convergence gate
+**passes at draft tier** (no fallback; H2 used the preview fallback), rig
+save/reload round trip **bit-identical**, and the recovery table shows **5/6
+colorable lights genuinely gradient-recovered**. The corrected caveat logic
+(relative threshold, `flag_recovery_caveats`; unit-tested to report 5/6 on the
+committed H2 artifacts) also fires correctly on this fresh run: `practical`'s
+proxy peaks at 9.2e-4 raw — above the old absolute epsilon, three orders below
+the other proxies — and its "recovered" [5.75, 1.00, 1.30] vs target
+[3.5, 2.0, 0.5] confirms the flag is a true positive. The automated count now
+matches the hand-checked truth on both H2 and S4 artifacts.
+
+**WebGPU runtime with the kernel-head rig** (`out/s4-rig/webgpu_report.json`;
+the WGSL generator's texture_kernel head landed with this rung): GPU-vs-CPU
+composite parity **1.19e-5** (tolerance 2e-4) in real Chrome — the per-texel
+contraction is numerically correct in WGSL. Slider-session latency holds
+against H4's committed numbers despite the wider kernel head: rgb-only p95
+**0.8 ms** (H4: 1.3 ms), param-edit p95 **30 ms** (H4: 30.9 ms), cold 8-light
+full render 173.5 ms (21.4 ms/light fit vs H4's 22.47).
+
+## Local training throughput: torch.compile / AMP / batch sweep (scale track, rung S5)
+
+Paper-scale training (`examples/mitsuba_cornell_128_torch.json`: 8×256 MLP,
+2^14 hashgrid, 50k iters) was committed at 22.4 min / 37.2 iters/s on MPS —
+only 1.6x the CPU rate, the signature of a small MLP under-filling the GPU
+at batch 4096. `examples/s5_throughput_sweep.py` sweeps batch size
+(4096→16384→65536, iters/LR scaled to an equal effective sample budget),
+fp16/bf16 autocast, and `torch.compile`, each in isolation, on both cpu and
+mps (`out/s5-throughput/report.json`; per-arm reports under
+`out/s5-throughput/runs/`).
+
+**Batch size: quality loss outweighs any throughput gain, on both devices.**
+Scaling batch 4x/16x while shrinking iters by the same factor (equal sample
+budget, sqrt-scaled LR) should hold quality roughly constant if the model
+were GPU-starved rather than sample-starved — it doesn't:
+
+| arm | device | iters/s | held-out PSNR (dB) | Δ vs baseline |
+|---|---|---:|---:|---:|
+| baseline (batch 4096) | mps | 37.63 | 34.36 | — |
+| batch16384 | mps | 19.04 | 32.09 | **−2.27** |
+| batch65536 | mps | 7.00 | 29.25 | **−5.11** |
+| baseline (batch 4096) | cpu | 27.31 | 34.50 | — |
+| batch16384 | cpu | 11.88 | 31.35 | **−3.16** |
+| batch65536 | cpu | 3.60 | 28.29 | **−5.99** |
+
+The equal-quality criterion (within 0.5 dB at equal samples) fails outright
+at every larger batch on both devices, and iters/s itself *drops* — bigger
+batches take proportionally longer per iteration than the iter-count
+shrinks, on this small model at these batch sizes. Batch size is not a lever
+this workload benefits from; **the committed default (4096) stays**.
+
+**fp16/bf16 autocast: bf16 is quality-neutral but not faster on MPS; fp16
+diverges; both are catastrophically slow on CPU.** On MPS, bf16 lands
+within the equal-quality bar (34.87 dB, actually +0.5 dB over baseline) but
+at 34.74 iters/s — *slower* than the 37.63 iters/s fp32 baseline, autocast
+overhead exceeding any compute saving for a model this small. fp16 on MPS
+matches baseline throughput exactly (37.63 iters/s) but **diverges to NaN**
+— an honest numerical-stability negative, not a throughput result. On CPU,
+both autocast dtypes are not merely slower but unusable at the 50k budget:
+a bounded 500-iteration diagnostic (`out/s5-throughput/report_diag500.json`,
+run after killing an earlier attempt that silently stalled for hours — see
+below) measured **1.07 iters/s for bf16** and **0.95 iters/s for fp16**, 25–29x
+under the 27.31 iters/s fp32 baseline. Extrapolated to the full 50k-iter
+budget: **~12.9 h (bf16) / ~14.6 h (fp16)** — this Apple Silicon CPU has no
+native low-precision GEMM path in PyTorch's ATen backend for these op
+shapes, so autocast falls back to a much slower path. Quality at the
+truncated 500-iter budget (25.11 dB bf16, 23.77 dB fp16) is unremarkable on
+its own but confirms the arms ran correctly, not that they hung.
+
+**A stalled sweep, diagnosed.** The CPU sweep was first launched as a long
+background job; after several hours it had produced no progress output past
+"== arm bf16 on cpu ==". `vm_stat`/`sysctl vm.swapusage` showed 9.9/11.2 GB
+swap in use — plausible thrashing, so the process was killed and relaunched
+clean. The relaunch (fresh swap state, `ps` confirmed >100% CPU utilization
+throughout) still produced no first-1000-iters checkpoint after ~12 minutes
+of genuine compute — ruling out thrashing as the explanation. The bounded
+500-iter diagnostic above confirms the real cause: bf16/fp16 autocast on
+this CPU backend is ~25-29x slower per iteration, not hung. (Separately, the
+very first relaunch attempt failed instantly on all three arms with an OIDN
+`libtbb.12.dylib` load error — a `nix develop --command` wrapping mistake,
+unrelated to the throughput question; see `tbb-keeps-disappearing` in
+project notes. Re-run correctly wrapped, it reproduced the slow-but-real
+result above.)
+
+**`torch.compile`: crashes on MPS, no net win on CPU.** MPS: Inductor's
+Metal codegen backend fails to compile the generated kernel — a `SyntaxError`
+from `metal::floor`/pointer-cast codegen inside `#include <c10/metal/...>`
+— confirming the roadmap's expected "torch.compile immaturity on MPS"
+negative outright (`status: failed`, full traceback in the report). CPU:
+`torch.compile` does work, but bounded diagnostics at 500 and 3000 iters
+(`out/s5-throughput/report_diag500_compile.json`,
+`report_diag3000_compile.json`) show why it's not worth it here — one-time
+compilation overhead of **~20 s**, then steady-state throughput of
+**~26.4 iters/s** (computed from the 500→3000-iter delta), essentially tied
+with (very slightly under) the 27.31 iters/s fp32-eager baseline.
+Extrapolated to 50k iters: ~1,914 s compiled vs 1,831 s eager — **~5%
+slower**, all in fixed compile overhead that a model this small and cheap
+per-iteration can't amortize away. `torch.compile` is not the right lever
+for this MLP-plus-hashgrid workload on either backend tested.
+
+**Verdict: no lever wins on this laptop.** Larger batches lose quality
+faster than they gain speed; fp16/bf16 autocast is a wash-to-negative on
+MPS and unusable on CPU; `torch.compile` crashes on MPS and is a net loss
+on CPU. The committed default (fp32 eager, batch 4096) remains the right
+choice locally. Per the rung's framing, this is the deliverable: it sets
+S7's baseline expectation on CUDA — none of these three levers should be
+assumed to "just work" there either; each needs its own on-GPU
+measurement, though CUDA's mature Triton/Inductor backend and native
+fp16/bf16 tensor cores make a different outcome plausible.
+
+## WebGPU runtime at 1024² + device/precision plumbing (scale track, rung S6)
+
+Device (`cpu|mps|cuda`) and precision (`fp32|fp16|bf16`) became first-class,
+validated options in this rung (`nrp/torch_backend/device.py`): every torch
+entrypoint (`train`/`bench`/`relight`/`optimize_lights`/`streamed_train`) now
+funnels through `resolve_device`/`resolve_precision`, `cuda`/`mps`
+requested-but-unavailable fails immediately with an actionable message
+instead of a deep torch traceback, and `synchronize()` is device-dispatched
+— the exact seam S7 needs. Unit-tested in `tests/test_device_config.py`,
+including the cuda-unavailable path on this CUDA-less laptop.
+
+T4's harness (`webgpu/bench_t4.mjs`) and H4's (`webgpu/bench_h4.mjs`) already
+took `--export-dir`/`--report` from S4's prep, so extending to 1024² is
+reusing the **T1 kitchen-512-torch proxy** (409 k params, trained at 512²)
+against the **1024² G-buffer** (`out/kitchen-1024/path_cache.npz`, S2's
+export) via `examples/export_webgpu_runtime.py --cache out/kitchen-1024/...`
+— no retraining, same test T4 already runs at smaller resolutions, this rung
+just runs the export/bench pipeline at 4x the pixel count.
+
+**A real bug, found before any 1024² number was trustworthy.** `bench_t4.mjs`
+passed the G-buffer/reference blobs to `page.evaluate()` as plain JS number
+arrays (`Array.from(new Float32Array(...))`); at 512² that's 2.36 M numbers
+and works, but at 1024² (9.44 M pixel floats + 3.15 M reference floats) the
+JSON-per-element encoding blows up the CDP payload and the page died with
+"Target page, context or browser has been closed" — the same class of
+argument-size ceiling H4 diagnosed and fixed by moving to an in-page
+`fetch()`. T4's harness doesn't run a static server, so the fix here is
+smaller: send `pixels.bin`/`reference.bin` as base64 strings (small JSON,
+~33% size overhead vs the binary instead of ~4-5x for a numeric-array JSON
+encoding) and `atob()`-decode them to `Float32Array` inside the page. Fixed
+in `webgpu/bench_t4.mjs`; the existing 512² regression gate (`mise run
+t4-check`) still passes bit-for-bit after the change (parity 1.2e-6, p95
+unchanged) — the fix only touches how bytes cross the CDP boundary, not
+computation.
+
+**T4 at 1024²** (Apple M1 Max, Metal 3, Chrome; `out/s6-webgpu-1024/report.json`):
+
+| resolution | mean | p95 | fps (mean) | fps (p95) | 30 fps p95 |
+|---|---:|---:|---:|---:|---|
+| 128² | 2.18 ms | 3.00 ms | 459 | 333 | pass |
+| 256² | 5.80 ms | 6.60 ms | 172 | 152 | pass |
+| 512² | 21.16 ms | 22.40 ms | 47 | 45 | pass |
+| 1024² | 84.42 ms | **88.70 ms** | 12 | **11.3** | **fail** |
+
+Parity vs the PyTorch reference at 1024²: **1.5e-6 max abs diff** (tolerance
+2e-4) — unchanged from 512², confirming the base64 transfer fix is lossless.
+1024² misses the 30 fps floor outright (11.3 Hz p95), but **beats
+`nrp.torch_backend.bench`'s extrapolated MPS full-frame number at the same
+resolution (8.6 Hz, `docs/performance.md` cross-device table)** — the WebGPU
+backend keeps its lead over TorchScript-MPS at every resolution measured so
+far, it just isn't real-time at 1024² the way it is at ≤512².
+
+**H4 rig compositing at 1024²** (same rig as S4, `out/s6-webgpu-1024/h4_report.json`
+via `examples/export_webgpu_rig.py --cache out/kitchen-1024/...` +
+`bench_h4.mjs`; H4's harness already streams blobs through its own local
+server, so it needed no fix for the larger G-buffer):
+
+| check | 512² (S4) | 1024² (S6) |
+|---|---:|---:|
+| GPU-vs-CPU composite parity | 1.19e-5 | **1.24e-5** (still PASS, tolerance 2e-4) |
+| per-light marginal cost, cold full render | 21.4 ms/light | **159.0 ms/light** (~7.4x, ~ resolution scaling) |
+| rgb-slider p95 (composite-only path) | 0.8 ms | **2.2 ms** |
+| param-edit p95 (one light re-dispatched) | 30.0 ms | **219.1 ms** |
+
+The rgb-slider path — the common case, no MLP re-dispatch — stays well under
+any interactive-latency bar at 1024² (2.2 ms). The param-edit path (one full
+MLP re-dispatch at 1024² resolution) scales roughly with pixel count as
+expected and misses the 33 ms stretch target it held at 512² — an honest
+scale-driven miss, not a regression in the compositing architecture itself
+(the per-light-slice/composite-pass structure H4 built is exactly what keeps
+the *common* rgb-edit case fast regardless of resolution).
+
+**Summary**: the T4 parity gate holds at 1024² (verify criterion met); the
+512² regression gate is unaffected by the base64 fix (verify criterion met);
+1024² is not real-time for either full-frame inference or worst-case rig
+param edits, but WebGPU still leads MPS at the resolution where both were
+measured. Device/precision plumbing is complete and tested across all five
+torch-backend entrypoints ahead of S7.

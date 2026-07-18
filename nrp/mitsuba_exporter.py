@@ -50,6 +50,7 @@ JIT_VARIANTS = ("llvm_ad_rgb", "metal_ad_rgb")
 
 def _hardware_context() -> dict:
     """Best-effort machine context for reproducible benchmark reports."""
+
     def sysctl(name: str) -> str | None:
         try:
             return subprocess.check_output(
@@ -398,11 +399,15 @@ def export_path_cache_wavefront(
                 valid_np = np.array(valid)
                 pix = pixel_np[valid_np]
                 alb_np = np.array(bsdf.eval_diffuse_reflectance(si)).T
-                np.add.at(albedo, pix, alb_np[valid_np])
-                np.add.at(position, pix, np.array(si.p).T[valid_np])
-                np.add.at(depth, pix, tmax_np[valid_np])
-                np.add.at(normal, pix, np.array(si.sh_frame.n).T[valid_np])
-                np.add.at(aux_weight, pix, 1.0)
+                # S3: np.bincount instead of np.add.at -- profiling showed the
+                # ufunc.at scatter was 53% of export wall-clock; bincount sums the
+                # same values (per-pixel accumulation order may differ by float
+                # rounding only).
+                _bincount_rows(albedo, pix, alb_np[valid_np])
+                _bincount_rows(position, pix, np.array(si.p).T[valid_np])
+                depth += np.bincount(pix, weights=tmax_np[valid_np], minlength=depth.size)
+                _bincount_rows(normal, pix, np.array(si.sh_frame.n).T[valid_np])
+                aux_weight += np.bincount(pix, minlength=aux_weight.size)
 
             bs, weight = bsdf.sample(
                 ctx, si, sampler.next_1d(active), sampler.next_2d(active), valid
@@ -436,6 +441,13 @@ def export_path_cache_wavefront(
     )
     cache.validate()
     return cache
+
+
+def _bincount_rows(target: np.ndarray, pix: np.ndarray, values: np.ndarray) -> None:
+    """target[pix] += values, per column, via np.bincount (much faster than
+    np.add.at for large scatters)."""
+    for c in range(target.shape[1]):
+        target[:, c] += np.bincount(pix, weights=values[:, c], minlength=target.shape[0])
 
 
 def _normalize_rows(v: np.ndarray) -> np.ndarray:
@@ -495,7 +507,7 @@ def main() -> None:
     parser.add_argument(
         "--move-shape",
         help="H5 scene-edit/retrace path: id of a shape in --scene to translate before "
-        "tracing (e.g. an <shape id=\"...\"> in the XML); requires --translate",
+        'tracing (e.g. an <shape id="..."> in the XML); requires --translate',
     )
     parser.add_argument(
         "--translate",

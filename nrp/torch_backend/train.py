@@ -39,6 +39,7 @@ from ..metrics import flip, psnr, smape, ssim
 from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
 from .denoise import denoise_image
+from .device import autocast, resolve_device, resolve_precision
 from .gather import TorchPathCache
 from .model import LIGHT_PARAM_DIMS, TorchNRP, relative_mse_loss
 from .sampling import sample_light
@@ -234,7 +235,8 @@ def save_checkpoint(path, iteration, model, opt, sched, gen, rng, pool, state) -
 def train(cfg: dict, resume: bool = False) -> dict:
     rng = np.random.default_rng(cfg.get("seed", 0))
     torch.manual_seed(cfg.get("seed", 0))
-    device = torch.device(cfg.get("device", "cpu"))
+    device = resolve_device(cfg.get("device"))
+    precision = resolve_precision(cfg.get("precision"))
     cache = ensure_cache(cfg)
     n_px = cache.height * cache.width
     xy, aux = pixel_tensors(cache, device)
@@ -305,14 +307,31 @@ def train(cfg: dict, resume: bool = False) -> dict:
     batch = cfg.get("batch_pixels", 4096)
     replace_every = cfg["pool"]["replace_every"]
     t_train0 = time.perf_counter()
+    # S5/S6 precision lever: forward + loss run under torch.autocast for
+    # fp16/bf16; fp32 keeps the eager path (autocast() is a no-op context then).
+    # fp16 on CUDA additionally needs loss scaling (GradScaler); bf16 and the
+    # fp32 default do not.
+    scaler = torch.amp.GradScaler("cuda") if precision == "fp16" and device.type == "cuda" else None
+    # S5 torch.compile lever: the compiled wrapper is used only for training
+    # forwards; `model` (shared parameters) keeps handling checkpointing,
+    # evaluation, and save, so the on-disk format is identical to eager runs.
+    run_model = (
+        torch.compile(model, **cfg.get("compile_options", {})) if cfg.get("compile") else model
+    )
     for it in range(start_iter, iters):
         pool_ids = torch.randint(0, pool.size, (batch,), generator=gen).to(device)
         pixel_ids = torch.randint(0, n_px, (batch,), generator=gen).to(device)
-        pred = model(xy[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
-        loss = relative_mse_loss(pred, pool.targets[pool_ids, pixel_ids])
+        with autocast(device, precision):
+            pred = run_model(xy[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
+            loss = relative_mse_loss(pred, pool.targets[pool_ids, pixel_ids])
         opt.zero_grad()
-        loss.backward()
-        opt.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+        else:
+            loss.backward()
+            opt.step()
         if sched is not None:
             sched.step()
         loss_curve.append(loss.detach().item())
@@ -435,6 +454,12 @@ def main() -> None:
         "--device", default=None, help="override the config's device (cpu/mps/cuda)"
     )
     parser.add_argument(
+        "--precision",
+        default=None,
+        choices=["fp32", "fp16", "bf16"],
+        help="override the config's precision (autocast dtype; fp32 = eager default)",
+    )
+    parser.add_argument(
         "--resume",
         action="store_true",
         help="continue from out_dir/checkpoint.pt (requires a 'checkpoint' config block)",
@@ -445,6 +470,8 @@ def main() -> None:
         cfg["gather_backend"] = args.gather_backend
     if args.device is not None:
         cfg["device"] = args.device
+    if args.precision is not None:
+        cfg["precision"] = args.precision
     train(cfg, resume=args.resume)
 
 

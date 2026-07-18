@@ -23,7 +23,8 @@
 // boundary with small JSON (never a pixel buffer).
 import { buildShader, repackMlp } from "./shader_gen.mjs";
 
-const EXPORT = "/out/h4-rig-export";
+// S4: ?export=<repo-relative dir> overrides the default rig export location.
+const EXPORT = new URLSearchParams(location.search).get("export") || "/out/h4-rig-export";
 
 async function fetchJson(url) {
   const r = await fetch(url);
