@@ -1,0 +1,156 @@
+{
+  "rung": "R1",
+  "title": "World-space encoding at parity",
+  "gate": {
+    "definition": "world3d held-out PSNR must be within 0.5 dB of the committed pixel2d baseline at matched parameters and iterations, per scene",
+    "device": "cpu",
+    "complete": true,
+    "pass": false
+  },
+  "hardware": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "cpu_brand": "Apple M1 Max",
+    "torch_version": "2.12.1",
+    "mps_built": true,
+    "mps_available": true,
+    "cuda_available": false
+  },
+  "denoise_override": null,
+  "pairs": [
+    {
+      "scene": "kitchen",
+      "device": "cpu",
+      "iterations": 3000,
+      "seed": 0,
+      "pixel2d": {
+        "parameter_count": 106085,
+        "iters_per_second": 24.071800958678566,
+        "held_out_psnr_db": 22.16387410795051,
+        "report": "out/r1-worldgrid/kitchen/cpu/pixel2d/torch_train_report.json"
+      },
+      "world3d": {
+        "parameter_count": 106345,
+        "iters_per_second": 20.79878815306495,
+        "held_out_psnr_db": 21.6198460978591,
+        "report": "out/r1-worldgrid/kitchen/cpu/world3d/torch_train_report.json"
+      },
+      "parameter_delta": 260,
+      "parameter_delta_percent": 0.24508648725078963,
+      "same_run_control": {
+        "psnr_delta_db_world3d_minus_pixel2d": -0.5440280100914094,
+        "gate_pass": false
+      },
+      "committed_baseline": {
+        "report": "out/kitchen-torch/torch_train_report.json",
+        "parameter_count": 106085,
+        "iterations": 3000,
+        "held_out_psnr_db": 25.23644271401069
+      },
+      "psnr_delta_db_world3d_minus_committed_pixel2d": -3.6165966161515897,
+      "gate_threshold_db": -0.5,
+      "gate_pass": false
+    },
+    {
+      "scene": "kitchen",
+      "device": "mps",
+      "iterations": 3000,
+      "seed": 0,
+      "pixel2d": {
+        "parameter_count": 106085,
+        "iters_per_second": 21.79929651290594,
+        "held_out_psnr_db": 21.0735992354892,
+        "report": "out/r1-worldgrid/kitchen/mps/pixel2d/torch_train_report.json"
+      },
+      "world3d": {
+        "parameter_count": 106345,
+        "iters_per_second": 19.695259161224744,
+        "held_out_psnr_db": 21.790618124605558,
+        "report": "out/r1-worldgrid/kitchen/mps/world3d/torch_train_report.json"
+      },
+      "parameter_delta": 260,
+      "parameter_delta_percent": 0.24508648725078963,
+      "same_run_control": {
+        "psnr_delta_db_world3d_minus_pixel2d": 0.7170188891163569,
+        "gate_pass": true
+      },
+      "committed_baseline": {
+        "report": "out/kitchen-torch/torch_train_report.json",
+        "parameter_count": 106085,
+        "iterations": 3000,
+        "held_out_psnr_db": 25.23644271401069
+      },
+      "psnr_delta_db_world3d_minus_committed_pixel2d": -3.445824589405131,
+      "gate_threshold_db": -0.5,
+      "gate_pass": false
+    },
+    {
+      "scene": "toy",
+      "device": "cpu",
+      "iterations": 3000,
+      "seed": 0,
+      "pixel2d": {
+        "parameter_count": 62923,
+        "iters_per_second": 67.66531880733397,
+        "held_out_psnr_db": 19.977491644739136,
+        "report": "out/r1-worldgrid/toy/cpu/pixel2d/torch_train_report.json"
+      },
+      "world3d": {
+        "parameter_count": 63155,
+        "iters_per_second": 46.77645461783568,
+        "held_out_psnr_db": 20.836616331921814,
+        "report": "out/r1-worldgrid/toy/cpu/world3d/torch_train_report.json"
+      },
+      "parameter_delta": 232,
+      "parameter_delta_percent": 0.36870460721833975,
+      "same_run_control": {
+        "psnr_delta_db_world3d_minus_pixel2d": 0.8591246871826783,
+        "gate_pass": true
+      },
+      "committed_baseline": {
+        "report": "out/toy-torch/torch_train_report.json",
+        "parameter_count": 62923,
+        "iterations": 3000,
+        "held_out_psnr_db": 19.17074132333809
+      },
+      "psnr_delta_db_world3d_minus_committed_pixel2d": 1.6658750085837255,
+      "gate_threshold_db": -0.5,
+      "gate_pass": true
+    },
+    {
+      "scene": "toy",
+      "device": "mps",
+      "iterations": 3000,
+      "seed": 0,
+      "pixel2d": {
+        "parameter_count": 62923,
+        "iters_per_second": 51.18133960261313,
+        "held_out_psnr_db": 22.053286627216526,
+        "report": "out/r1-worldgrid/toy/mps/pixel2d/torch_train_report.json"
+      },
+      "world3d": {
+        "parameter_count": 63155,
+        "iters_per_second": 27.898263813532978,
+        "held_out_psnr_db": 22.408462026302857,
+        "report": "out/r1-worldgrid/toy/mps/world3d/torch_train_report.json"
+      },
+      "parameter_delta": 232,
+      "parameter_delta_percent": 0.36870460721833975,
+      "same_run_control": {
+        "psnr_delta_db_world3d_minus_pixel2d": 0.3551753990863311,
+        "gate_pass": true
+      },
+      "committed_baseline": {
+        "report": "out/toy-torch/torch_train_report.json",
+        "parameter_count": 62923,
+        "iterations": 3000,
+        "held_out_psnr_db": 19.17074132333809
+      },
+      "psnr_delta_db_world3d_minus_committed_pixel2d": 3.2377207029647685,
+      "gate_threshold_db": -0.5,
+      "gate_pass": true
+    }
+  ],
+  "skipped": []
+}

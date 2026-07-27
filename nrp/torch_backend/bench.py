@@ -51,18 +51,22 @@ def bench_model(
     model = model.to(device).eval()
     n = resolution * resolution
     gen = torch.Generator(device="cpu").manual_seed(0)
-    xy = torch.rand((n, 2), generator=gen).to(device)
+    if model.spatial_encoding == "world3d":
+        unit = torch.rand((n, 3), generator=gen).to(device)
+        spatial = model.world_min + unit * model.world_extent
+    else:
+        spatial = torch.rand((n, 2), generator=gen).to(device)
     aux = torch.rand((n, 7), generator=gen).to(device)
     params = torch.rand((1, LIGHT_PARAM_DIMS[model.light_type]), generator=gen).to(device)
     params = params.expand(n, -1)
 
     with torch.no_grad():
         for _ in range(warmup):
-            model(xy, aux, params)
+            model(spatial, aux, params)
         _synchronize(device)
         t0 = time.perf_counter()
         for _ in range(frames):
-            model(xy, aux, params)
+            model(spatial, aux, params)
         _synchronize(device)
         ms = (time.perf_counter() - t0) / frames * 1000.0
     return {

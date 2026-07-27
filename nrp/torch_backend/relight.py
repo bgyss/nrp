@@ -19,13 +19,13 @@ from ..lights import TexturedQuadLight, light_from_dict
 from ..path_cache import PathCache
 from .device import resolve_device
 from .model import TorchNRP
-from .train import light_param_vector, pixel_tensors
+from .train import light_param_vector, model_tensors
 
 
 def relight(model: TorchNRP, cache: PathCache, lights: list) -> np.ndarray:
     device = next(model.parameters()).device
     n_px = cache.height * cache.width
-    xy, aux = pixel_tensors(cache, device)
+    spatial, aux = model_tensors(cache, model, device)
     image = torch.zeros((n_px, 3), device=device)
     with torch.no_grad():
         for light in lights:
@@ -37,7 +37,7 @@ def relight(model: TorchNRP, cache: PathCache, lights: list) -> np.ndarray:
                 if isinstance(light, TexturedQuadLight)
                 else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
             )
-            image += model(xy, aux, params) * rgb
+            image += model(spatial, aux, params) * rgb
     return image.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)
 
 
@@ -55,7 +55,7 @@ def relight_tiled(
         raise ValueError("tile_pixels must be positive")
     device = next(model.parameters()).device
     n_px = cache.height * cache.width
-    xy, aux = pixel_tensors(cache, device)
+    spatial, aux = model_tensors(cache, model, device)
     image = torch.zeros((n_px, 3), device=device)
     with torch.no_grad():
         for start in range(0, n_px, tile_pixels):
@@ -70,7 +70,7 @@ def relight_tiled(
                     if isinstance(light, TexturedQuadLight)
                     else torch.as_tensor(light.rgb, dtype=torch.float32, device=device)
                 )
-                chunk += model(xy[start:end], aux[start:end], params) * rgb
+                chunk += model(spatial[start:end], aux[start:end], params) * rgb
             image[start:end] = chunk
     return image.cpu().numpy().astype(np.float64).reshape(cache.height, cache.width, 3)
 

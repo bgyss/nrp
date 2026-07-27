@@ -107,6 +107,8 @@ machinery improves on it.
 
 - **`encoding.py`** — 2D multiresolution hash encoding [MESK22]: per-level dense or
   hashed feature tables, bilinear interpolation, geometric resolution growth.
+  Representation-track R1 adds a selectable 3D first-hit world-position grid with
+  trilinear interpolation; the paper's 2D pixel grid remains the default.
 - **`model.py`** — `TorchNRP`: hashgrid(px) ⊕ aux(7 = albedo+depth+normal) ⊕ light
   shape params (4 sphere / 8 quad) → MLP → softplus. `relative_mse_loss` is Eq. 4
   exactly (stop-gradient prediction in the denominator, ε = 0.01); its gradient is

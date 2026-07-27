@@ -41,7 +41,12 @@ from ..train import ensure_cache, load_config
 from .denoise import denoise_image
 from .device import autocast, resolve_device, resolve_precision
 from .gather import TorchPathCache
-from .model import LIGHT_PARAM_DIMS, TorchNRP, relative_mse_loss
+from .model import (
+    LIGHT_PARAM_DIMS,
+    SUPPORTED_SPATIAL_ENCODINGS,
+    TorchNRP,
+    relative_mse_loss,
+)
 from .sampling import sample_light
 
 
@@ -78,6 +83,62 @@ def pixel_tensors(cache: PathCache, device: torch.device) -> tuple[torch.Tensor,
     )
     to = lambda a: torch.as_tensor(a, dtype=torch.float32, device=device)  # noqa: E731
     return to(xy), to(aux)
+
+
+def spatial_tensors(
+    cache: PathCache, device: torch.device, spatial_encoding: str
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return model spatial coordinates and the unchanged seven-column aux block."""
+    xy, aux = pixel_tensors(cache, device)
+    if spatial_encoding == "pixel2d":
+        return xy, aux
+    if spatial_encoding == "world3d":
+        return torch.as_tensor(
+            cache.position.reshape(-1, 3), dtype=torch.float32, device=device
+        ), aux
+    raise ValueError(f"unsupported spatial_encoding {spatial_encoding!r}")
+
+
+def model_tensors(
+    cache: PathCache, model: TorchNRP, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build the spatial-coordinate and aux pair expected by a loaded model."""
+    return spatial_tensors(cache, device, model.spatial_encoding)
+
+
+def world_bounds(cache: PathCache) -> dict:
+    """Finite, non-degenerate normalization bounds for first-hit positions."""
+    position = np.asarray(cache.position, dtype=np.float64).reshape(-1, 3)
+    if not np.isfinite(position).all():
+        raise ValueError("cache.position contains non-finite values")
+    lo = position.min(axis=0)
+    hi = position.max(axis=0)
+    if np.any(hi <= lo):
+        raise ValueError("cache.position must span a non-zero range on every axis")
+    return {"min": lo.tolist(), "max": hi.tolist()}
+
+
+def validate_torch_config(cfg: dict) -> str:
+    """Validate and return the selected spatial encoding.
+
+    The flag lives at ``model.spatial_encoding`` and defaults to the committed
+    ``pixel2d`` path for backward compatibility.
+    """
+    model_cfg = cfg.get("model")
+    if not isinstance(model_cfg, dict):
+        raise ValueError("config.model must be an object")
+    selected = model_cfg.get("spatial_encoding", "pixel2d")
+    if selected not in SUPPORTED_SPATIAL_ENCODINGS:
+        raise ValueError(
+            "model.spatial_encoding must be one of "
+            f"{sorted(SUPPORTED_SPATIAL_ENCODINGS)}, got {selected!r}"
+        )
+    if selected == "world3d" and model_cfg.get("use_encoding", True) is False:
+        raise ValueError("model.spatial_encoding 'world3d' requires use_encoding=true")
+    encoding_cfg = model_cfg.get("encoding", {})
+    if not isinstance(encoding_cfg, dict):
+        raise ValueError("config.model.encoding must be an object")
+    return selected
 
 
 class ImagePool:
@@ -233,13 +294,14 @@ def save_checkpoint(path, iteration, model, opt, sched, gen, rng, pool, state) -
 
 
 def train(cfg: dict, resume: bool = False) -> dict:
+    spatial_encoding = validate_torch_config(cfg)
     rng = np.random.default_rng(cfg.get("seed", 0))
     torch.manual_seed(cfg.get("seed", 0))
     device = resolve_device(cfg.get("device"))
     precision = resolve_precision(cfg.get("precision"))
     cache = ensure_cache(cfg)
     n_px = cache.height * cache.width
-    xy, aux = pixel_tensors(cache, device)
+    spatial, aux = spatial_tensors(cache, device, spatial_encoding)
 
     model = TorchNRP(
         light_type=cfg["light_type"],
@@ -247,6 +309,8 @@ def train(cfg: dict, resume: bool = False) -> dict:
         hidden_width=cfg["model"].get("hidden_width", 128),
         hidden_layers=cfg["model"].get("hidden_layers", 4),
         encoding=cfg["model"].get("encoding"),
+        spatial_encoding=spatial_encoding,
+        world_bounds=world_bounds(cache) if spatial_encoding == "world3d" else None,
         use_encoding=cfg["model"].get("use_encoding", True),
         use_aux=cfg["model"].get("use_aux", True),
         texture_kernel=cfg["model"].get("texture_conditioning") == "kernel",
@@ -322,7 +386,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
         pool_ids = torch.randint(0, pool.size, (batch,), generator=gen).to(device)
         pixel_ids = torch.randint(0, n_px, (batch,), generator=gen).to(device)
         with autocast(device, precision):
-            pred = run_model(xy[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
+            pred = run_model(spatial[pixel_ids], aux[pixel_ids], pool.params[pool_ids])
             loss = relative_mse_loss(pred, pool.targets[pool_ids, pixel_ids])
         opt.zero_grad()
         if scaler is not None:
@@ -340,7 +404,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
         if ckpt_cfg is not None and (it + 1) % ckpt_cfg["every"] == 0:
             # Checkpoint evaluation and I/O are excluded from the training clock.
             train_seconds += time.perf_counter() - t_train0
-            metrics = evaluate(model, val_set, xy, aux, device)
+            metrics = evaluate(model, val_set, spatial, aux, device)
             checkpoint_metrics.append(
                 {
                     "iteration": it + 1,
@@ -377,7 +441,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
             t_train0 = time.perf_counter()
     train_seconds += time.perf_counter() - t_train0
 
-    val_metrics = evaluate(model, val_set, xy, aux, device, hw=(cache.height, cache.width))
+    val_metrics = evaluate(model, val_set, spatial, aux, device, hw=(cache.height, cache.width))
     model.eval()
 
     # Single-frame inference latency (full image forward, no gather).
@@ -386,7 +450,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
     with torch.no_grad():
         t_inf0 = time.perf_counter()
         for _ in range(n_bench):
-            model(xy, aux, fixed)
+            model(spatial, aux, fixed)
         inference_ms = (time.perf_counter() - t_inf0) / n_bench * 1000.0
 
     os.makedirs(cfg["out_dir"], exist_ok=True)

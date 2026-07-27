@@ -183,8 +183,15 @@ description = "E3 toy standard-vs-guided proxy A/B report"
 run = "uv run python examples/light_aware_proxy_ab.py --out out/light-aware-proxy-ab/report.json"
 
 [tasks.pipeline-audit]
-description = "E10 audit: verify pipeline feasibility doc references existing out/ artifacts"
-run = "uv run python examples/audit_pipeline_claims.py --doc docs/pipeline-feasibility.md --out out/pipeline-feasibility/audit.json"
+description = "Audit tracked claim docs for references to existing out/ artifacts"
+run = [
+  "uv run python examples/audit_pipeline_claims.py --doc docs/pipeline-feasibility.md --out out/pipeline-feasibility/audit.json",
+  "uv run python examples/audit_pipeline_claims.py --doc docs/representation-track.md --out out/r1-worldgrid/audit.json",
+]
+
+[tasks.r1-worldgrid]
+description = "R1 matched-budget pixel2d vs world3d matrix (writes evidence before failing the negative gate)"
+run = "uv run python examples/r1_worldgrid.py --devices cpu mps"
 
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"

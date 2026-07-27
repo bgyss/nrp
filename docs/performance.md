@@ -2728,3 +2728,47 @@ the *common* rgb-edit case fast regardless of resolution).
 param edits, but WebGPU still leads MPS at the resolution where both were
 measured. Device/precision plumbing is complete and tested across all five
 torch-backend entrypoints ahead of S7.
+
+## World-space encoding at parity (representation track, rung R1)
+
+`UV_CACHE_DIR=.uv-cache uv run python examples/r1_worldgrid.py --devices cpu mps`
+trains matched `pixel2d` and `world3d` pairs for the standard toy and 128² Country
+Kitchen configs. Hardware: Apple M1 Max (10 CPU cores, 64 GB), macOS 27.0,
+PyTorch 2.12.1; CPU and MPS. Every run uses seed 0, 3,000 iterations, batch 4,096,
+the standard 64-image pool, and the standard scene denoiser (bilateral for toy,
+OIDN for kitchen). Full configs and per-light metrics are in
+`out/r1-worldgrid/*/*/*/torch_train_report.json`; the binding verdict is
+`out/r1-worldgrid/report.json`.
+
+The 3D budgets stay within 0.5% of the committed 2D models: toy 63,155 versus
+62,923 parameters (+0.37%); kitchen 106,345 versus 106,085 (+0.25%). The MLP depth,
+width, iteration count, training-light stream, and held-out-light stream are
+unchanged. Only the spatial encoding and its table budget differ.
+
+| scene | device | pixel2d it/s | world3d it/s | world3d PSNR | Δ vs same-run 2D | Δ vs committed 2D | binding gate |
+|---|---|---:|---:|---:|---:|---:|---|
+| toy 48² | CPU | 67.67 | 46.78 | 20.84 dB | +0.86 dB | +1.67 dB | **pass** |
+| toy 48² | MPS | 51.18 | 27.90 | 22.41 dB | +0.36 dB | +3.24 dB | pass (diagnostic device) |
+| kitchen 128² | CPU | 24.07 | 20.80 | 21.62 dB | **−0.544 dB** | **−3.62 dB** | **fail** |
+| kitchen 128² | MPS | 21.80 | 19.70 | 21.79 dB | +0.72 dB | **−3.45 dB** | fail vs committed baseline |
+
+**Binding verdict: R1 fails.** The approved gate is per scene and requires world3d
+within 0.5 dB of the committed pixel2d baseline. Toy passes. Kitchen fails by
+3.62 dB on the gate device (CPU), so the representation track stops before R2.
+This remains a negative even under the more favorable same-run comparison: the
+kitchen world grid is 0.544 dB below its current CPU control, 0.044 dB outside the
+allowed loss.
+
+The current kitchen pixel2d control (22.16 dB) also sits 3.08 dB below its committed
+25.24 dB artifact despite the same config. That drift is reported rather than used
+to redefine the gate. MPS shows a different ordering, with world3d above its
+same-run control, so the data does not support pinning the entire committed-baseline
+gap on one mechanism. The design's named 3D collision/locality risk remains
+plausible—equal total parameters force earlier hashing in 3D—but is not isolated
+causally here.
+
+Trilinear lookup also costs throughput: world3d is 31% slower than pixel2d on toy
+CPU and 45% slower on toy MPS; the kitchen penalties are 14% CPU and 10% MPS.
+Inference shows the same expected direction because each level interpolates eight
+vertices rather than four. R1 nevertheless remains selectable for follow-up
+diagnostics; it is not the default and does not authorize the blocked R2–R6 claims.
