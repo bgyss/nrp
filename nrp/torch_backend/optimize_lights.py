@@ -35,7 +35,7 @@ from ..metrics import psnr, smape
 from ..path_cache import PathCache
 from .device import resolve_device
 from .model import TorchNRP, quad_params, sphere_params
-from .train import pixel_tensors
+from .train import model_tensors
 
 DEFAULT_BOUNDS = {
     "center_min": [0.1, 0.1, 0.15],
@@ -233,7 +233,7 @@ def optimize(
 ) -> dict:
     device = next(model.parameters()).device
     n_px = cache.height * cache.width
-    xy, aux = pixel_tensors(cache, device)
+    xy, aux = model_tensors(cache, model, device)
     tgt = torch.as_tensor(target.reshape(n_px, 3), dtype=torch.float32, device=device)
     w = None
     if weight_mask is not None:

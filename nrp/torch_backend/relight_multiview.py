@@ -35,7 +35,7 @@ from ..metrics import psnr
 from ..path_cache import PathCache
 from .bench import _synchronize
 from .model import TorchNRP
-from .train import light_param_vector, pixel_tensors
+from .train import light_param_vector, model_tensors
 
 
 class ViewProxy:
@@ -50,7 +50,7 @@ class ViewProxy:
         self.model = model.to(device).eval()
         self.cache = cache
         self.device = device
-        self.xy, self.aux = pixel_tensors(cache, device)
+        self.xy, self.aux = model_tensors(cache, self.model, device)
 
     @property
     def model_bytes(self) -> int:

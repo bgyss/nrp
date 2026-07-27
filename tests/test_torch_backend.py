@@ -13,7 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 from nrp.gather_light import gather_light, gather_lights  # noqa: E402
 from nrp.lights import SphereLight, TexturedQuadLight  # noqa: E402
 from nrp.torch_backend.denoise import joint_bilateral_denoise  # noqa: E402
-from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
+from nrp.torch_backend.encoding import (  # noqa: E402
+    HashEncoding2D,
+    HashEncoding3D,
+    HashEncodingTriPlane,
+)
 from nrp.torch_backend.model import (  # noqa: E402
     TorchNRP,
     inverse_softplus,
@@ -33,7 +37,12 @@ from nrp.torch_backend.relight import (  # noqa: E402
     write_image_with_metadata,
 )
 from nrp.torch_backend.sampling import sample_light, sample_positions  # noqa: E402
-from nrp.torch_backend.train import light_param_vector, load_config, train  # noqa: E402
+from nrp.torch_backend.train import (  # noqa: E402
+    light_param_vector,
+    load_config,
+    train,
+    validate_torch_config,
+)
 from nrp.toy_tracer import trace_path_cache  # noqa: E402
 
 
@@ -66,6 +75,80 @@ class HashEncodingTests(unittest.TestCase):
         self.assertEqual(enc.resolutions[0], 4)
         self.assertEqual(enc.resolutions[-1], 64)
         self.assertEqual(enc.resolutions, sorted(enc.resolutions))
+
+    def test_3d_cell_corners_select_exact_dense_vertices(self):
+        enc = HashEncoding3D(
+            levels=1,
+            features_per_level=1,
+            table_size_log2=6,
+            base_resolution=1,
+            finest_resolution=1,
+        )
+        with torch.no_grad():
+            enc.tables[0][:, 0] = torch.arange(8, dtype=torch.float32)
+        corners = torch.tensor(
+            [[x, y, z] for z in (0.0, 1.0) for y in (0.0, 1.0) for x in (0.0, 1.0)]
+        )
+        torch.testing.assert_close(enc(corners)[:, 0], torch.arange(8, dtype=torch.float32))
+
+    def test_3d_trilinear_interpolation_at_cell_center(self):
+        enc = HashEncoding3D(
+            levels=1,
+            features_per_level=1,
+            table_size_log2=6,
+            base_resolution=1,
+            finest_resolution=1,
+        )
+        with torch.no_grad():
+            enc.tables[0][:, 0] = torch.arange(8, dtype=torch.float32)
+        value = enc(torch.tensor([[0.5, 0.5, 0.5]])).detach()
+        self.assertAlmostEqual(float(value[0, 0]), 3.5)
+
+    def test_3d_dense_hashed_threshold(self):
+        dense = HashEncoding3D(
+            levels=1, table_size_log2=6, base_resolution=3, finest_resolution=3
+        )
+        hashed = HashEncoding3D(
+            levels=1, table_size_log2=6, base_resolution=4, finest_resolution=4
+        )
+        self.assertEqual(dense.tables[0].shape[0], 64)
+        self.assertTrue(dense._dense[0])
+        self.assertEqual(hashed.tables[0].shape[0], 64)
+        self.assertFalse(hashed._dense[0])
+
+    def test_3d_gradients_reach_inputs_and_tables(self):
+        enc = HashEncoding3D(levels=2, finest_resolution=8)
+        xyz = torch.rand(5, 3, requires_grad=True)
+        enc(xyz).sum().backward()
+        self.assertGreater(float(xyz.grad.abs().sum()), 0.0)
+        self.assertTrue(
+            any(t.grad is not None and float(t.grad.abs().sum()) > 0 for t in enc.tables)
+        )
+
+    def test_triplane_shape_determinism_and_gradients(self):
+        enc = HashEncodingTriPlane(
+            levels=2,
+            features_per_level=2,
+            table_size_log2=6,
+            base_resolution=2,
+            finest_resolution=8,
+        )
+        xyz = torch.rand(5, 3, requires_grad=True)
+        first = enc(xyz)
+        second = enc(xyz)
+        self.assertEqual(first.shape, (5, 12))
+        torch.testing.assert_close(first, second)
+        first.sum().backward()
+        self.assertGreater(float(xyz.grad.abs().sum()), 0.0)
+        self.assertTrue(
+            all(
+                any(
+                    p.grad is not None and float(p.grad.abs().sum()) > 0
+                    for p in plane.parameters()
+                )
+                for plane in enc.planes
+            )
+        )
 
 
 class RelativeMSELossTests(unittest.TestCase):
@@ -111,6 +194,99 @@ class ModelTests(unittest.TestCase):
             model.save(path)
             loaded = TorchNRP.load(path)
         torch.testing.assert_close(model(xy, aux, lp), loaded(xy, aux, lp))
+
+    def test_world3d_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=16,
+            hidden_layers=2,
+            encoding={"levels": 2, "table_size_log2": 8, "finest_resolution": 8},
+            spatial_encoding="world3d",
+            world_bounds={"min": [-2.0, 0.0, 1.0], "max": [2.0, 4.0, 5.0]},
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.spatial_encoding, "world3d")
+        torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
+
+    def test_world_triplane_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=16,
+            hidden_layers=2,
+            encoding={
+                "levels": 2,
+                "features_per_level": 2,
+                "table_size_log2": 8,
+                "finest_resolution": 8,
+            },
+            spatial_encoding="world_triplane",
+            world_bounds={"min": [-2.0, 0.0, 1.0], "max": [2.0, 4.0, 5.0]},
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.spatial_encoding, "world_triplane")
+        torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
+
+    def test_spatial_encoding_config_validation(self):
+        self.assertEqual(validate_torch_config({"model": {}}), "pixel2d")
+        self.assertEqual(
+            validate_torch_config({"model": {"spatial_encoding": "world3d"}}), "world3d"
+        )
+        self.assertEqual(
+            validate_torch_config({"model": {"spatial_encoding": "world_triplane"}}),
+            "world_triplane",
+        )
+        with self.assertRaisesRegex(ValueError, "model.spatial_encoding"):
+            validate_torch_config({"model": {"spatial_encoding": "ray5d"}})
+        with self.assertRaisesRegex(ValueError, "requires use_encoding=true"):
+            validate_torch_config(
+                {"model": {"spatial_encoding": "world3d", "use_encoding": False}}
+            )
+        with self.assertRaisesRegex(ValueError, "init_output_scale"):
+            validate_torch_config({"model": {"init_output_scale": "yes"}})
+
+    def test_world3d_training_and_relight_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 8, "height": 8, "spp": 2, "bounces": 1, "seed": 2},
+                "light_type": "sphere",
+                "light_bounds": {"radius_min": 0.05, "radius_max": 0.2},
+                "sampling": "segments",
+                "pool": {"size": 4, "replace_every": 5, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 10,
+                "batch_pixels": 64,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "spatial_encoding": "world3d",
+                    "encoding": {
+                        "levels": 2,
+                        "table_size_log2": 6,
+                        "base_resolution": 2,
+                        "finest_resolution": 8,
+                    },
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+                "device": "cpu",
+            }
+            report = train(cfg)
+            model = TorchNRP.load(str(Path(tmp) / "out" / "model.pt"))
+            cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
+            image = relight(model, cache, [light])
+        self.assertEqual(report["parameter_count"], model.parameter_count)
+        self.assertEqual(image.shape, (8, 8, 3))
+        self.assertTrue(np.isfinite(image).all())
 
     def test_textured_quad_save_load_roundtrip(self):
         model = TorchNRP(

@@ -1,0 +1,46 @@
+{
+  "_comment": "Representation track R1: toy world-position hashgrid, matched to the standard 62,923-param pixel2d model (63,155 params, +0.37%) at the same 3,000 iterations.",
+  "cache": "../out/toy/path_cache.npz",
+  "out_dir": "../out/r1-worldgrid/toy/cpu/world3d",
+  "trace": {
+    "width": 48,
+    "height": 48,
+    "spp": 24,
+    "bounces": 3,
+    "seed": 1
+  },
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.05,
+    "radius_max": 0.25
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "method": "bilateral",
+    "radius": 2
+  },
+  "iters": 3000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "spatial_encoding": "world3d",
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 10,
+      "base_resolution": 2,
+      "finest_resolution": 48
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}

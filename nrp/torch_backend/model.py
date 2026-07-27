@@ -6,6 +6,8 @@ normal 3 = 7D), exactly the nine extra inputs the paper lists. Output is the
 pre-emission contribution N_type(px, Fpx, v) of Eq. 2; the final pixel value is the
 emission-weighted sum over lights (Eq. 3). A softplus head keeps contributions
 positive (the paper does not specify its head; this is the one deviation here).
+Representation-track R1 adds an opt-in 3D hashgrid over first-hit world position;
+the paper-faithful 2D path remains the default.
 
 Light shape parameters (emission E(v) is factored out, Eq. 1):
   sphere:        center (3) + radius (1) = 4
@@ -14,8 +16,8 @@ Light shape parameters (emission E(v) is factored out, Eq. 1):
 
 Ablation switches (roadmap item 10, paper Table 2): `use_aux=False` drops the 7D
 G-buffer features and `use_encoding=False` feeds the raw 2D pixel coordinates instead
-of the hashgrid encoding. `forward` keeps its (xy, aux, params) signature either way
-so training/relighting/inverse code is variant-agnostic; disabled inputs are ignored.
+of the hashgrid encoding. `forward` keeps its (spatial, aux, params) signature either
+way so training/relighting/inverse code is variant-agnostic; disabled inputs are ignored.
 """
 
 from __future__ import annotations
@@ -26,10 +28,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
-from .encoding import HashEncoding2D
+from .encoding import HashEncoding2D, HashEncoding3D, HashEncodingTriPlane
 
 LIGHT_PARAM_DIMS = {"sphere": 4, "quad": 8}
 SUPPORTED_LIGHT_TYPES = {"sphere", "quad", "textured_quad"}
+SUPPORTED_SPATIAL_ENCODINGS = {"pixel2d", "world3d", "world_triplane"}
 
 
 def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.01) -> torch.Tensor:
@@ -51,6 +54,8 @@ class TorchNRP(nn.Module):
         hidden_width: int = 128,
         hidden_layers: int = 4,
         encoding: dict | None = None,
+        spatial_encoding: str = "pixel2d",
+        world_bounds: dict | None = None,
         use_encoding: bool = True,
         use_aux: bool = True,
         light_param_dim: int | None = None,
@@ -59,6 +64,12 @@ class TorchNRP(nn.Module):
         super().__init__()
         if light_type not in SUPPORTED_LIGHT_TYPES:
             raise ValueError(f"light_type must be one of {sorted(SUPPORTED_LIGHT_TYPES)}")
+        if spatial_encoding not in SUPPORTED_SPATIAL_ENCODINGS:
+            raise ValueError(
+                f"spatial_encoding must be one of {sorted(SUPPORTED_SPATIAL_ENCODINGS)}"
+            )
+        if spatial_encoding != "pixel2d" and not use_encoding:
+            raise ValueError(f"spatial_encoding {spatial_encoding!r} requires use_encoding=true")
         if light_param_dim is None:
             if light_type not in LIGHT_PARAM_DIMS:
                 raise ValueError(f"light_param_dim is required for light_type {light_type!r}")
@@ -81,23 +92,53 @@ class TorchNRP(nn.Module):
         self.light_type = light_type
         self.light_param_dim = int(light_param_dim)
         self.texture_kernel = bool(texture_kernel)
+        self.spatial_encoding = spatial_encoding
         self.use_encoding = use_encoding
         self.use_aux = use_aux
+        if spatial_encoding != "pixel2d":
+            if world_bounds is None or set(world_bounds) != {"min", "max"}:
+                raise ValueError(
+                    f"{spatial_encoding} requires world_bounds with exactly 'min' and 'max'"
+                )
+            world_min = torch.as_tensor(world_bounds["min"], dtype=torch.float32)
+            world_max = torch.as_tensor(world_bounds["max"], dtype=torch.float32)
+            if world_min.shape != (3,) or world_max.shape != (3,):
+                raise ValueError("world_bounds min and max must each contain three values")
+            if not bool(torch.isfinite(world_min).all() and torch.isfinite(world_max).all()):
+                raise ValueError("world_bounds must be finite")
+            if not bool((world_max > world_min).all()):
+                raise ValueError("world_bounds max must be greater than min on every axis")
+            self.register_buffer("world_min", world_min)
+            self.register_buffer("world_extent", world_max - world_min)
+            normalized_bounds = {"min": world_min.tolist(), "max": world_max.tolist()}
+        else:
+            self.world_min = None
+            self.world_extent = None
+            normalized_bounds = None
         self.config = {
             "light_type": light_type,
             "light_param_dim": self.light_param_dim,
             "hidden_width": hidden_width,
             "hidden_layers": hidden_layers,
             "encoding": encoding or {},
+            "spatial_encoding": spatial_encoding,
+            "world_bounds": normalized_bounds,
             "use_encoding": use_encoding,
             "use_aux": use_aux,
             "texture_kernel": self.texture_kernel,
         }
-        self.encoding = HashEncoding2D(**(encoding or {})) if use_encoding else None
-        px_dim = self.encoding.output_dim if use_encoding else 2
+        if not use_encoding:
+            self.encoding = None
+        elif spatial_encoding == "world3d":
+            self.encoding = HashEncoding3D(**(encoding or {}))
+        elif spatial_encoding == "world_triplane":
+            self.encoding = HashEncodingTriPlane(**(encoding or {}))
+        else:
+            self.encoding = HashEncoding2D(**(encoding or {}))
+        spatial_dim = self.encoding.output_dim if use_encoding else 2
         light_in_dim = 8 if self.texture_kernel else self.light_param_dim
         out_dim = self.light_param_dim - 8 if self.texture_kernel else 3
-        in_dim = px_dim + (7 if use_aux else 0) + light_in_dim
+        in_dim = spatial_dim + (7 if use_aux else 0) + light_in_dim
         layers: list[nn.Module] = []
         for i in range(hidden_layers):
             layers.append(nn.Linear(in_dim if i == 0 else hidden_width, hidden_width))
@@ -137,16 +178,30 @@ class TorchNRP(nn.Module):
             last.bias.fill_(inverse_softplus(target_scale))
 
     def forward(
-        self, pixel_xy: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
+        self, spatial_coords: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
     ) -> torch.Tensor:
-        """pixel_xy (N,2) in [0,1]^2, aux (N,7), light_params (N, light_param_dim) -> (N,3)."""
-        px = self.encoding(pixel_xy) if self.encoding is not None else pixel_xy
+        """Evaluate pixels from 2D coordinates or first-hit world positions.
+
+        ``spatial_coords`` is ``(N, 2)`` normalized pixel xy for ``pixel2d`` and
+        ``(N, 3)`` raw first-hit world position for ``world3d``. ``aux`` retains
+        the paper's seven albedo/depth/normal columns in both modes.
+        """
+        if self.spatial_encoding != "pixel2d":
+            if spatial_coords.ndim != 2 or spatial_coords.shape[1] != 3:
+                raise ValueError(
+                    f"{self.spatial_encoding} spatial_coords must have shape (N, 3), "
+                    f"got {tuple(spatial_coords.shape)}"
+                )
+            normalized = ((spatial_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)
+            spatial = self.encoding(normalized)
+        else:
+            spatial = self.encoding(spatial_coords) if self.encoding is not None else spatial_coords
         if self.texture_kernel:
             geometry, texture = light_params[:, :8], light_params[:, 8:]
-            parts = [px, aux, geometry] if self.use_aux else [px, geometry]
+            parts = [spatial, aux, geometry] if self.use_aux else [spatial, geometry]
             kernel = F.softplus(self.mlp(torch.cat(parts, dim=1)))
             return (kernel * texture).view(texture.shape[0], -1, 3).sum(dim=1)
-        parts = [px, aux, light_params] if self.use_aux else [px, light_params]
+        parts = [spatial, aux, light_params] if self.use_aux else [spatial, light_params]
         return F.softplus(self.mlp(torch.cat(parts, dim=1)))
 
     def save(self, path: str) -> None:

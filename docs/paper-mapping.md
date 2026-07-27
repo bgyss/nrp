@@ -107,6 +107,22 @@ normal (3). Pixel coordinates go through a 2D multiresolution hashgrid [MESK22]
 (dense-when-fits, hashed otherwise, bilinear interpolation, geometric level growth);
 other inputs are raw, as the paper found encodings for them unhelpful.
 
+*Extension beyond the paper (representation track R1; honest negative):*
+`model.spatial_encoding: "world3d"` replaces the encoded 2D pixel coordinate with
+the cache's first-hit 3D world position, normalized by checkpointed scene bounds and
+encoded by dense/hashed multiresolution tables with trilinear interpolation. The
+paper-faithful `"pixel2d"` path remains the default and old checkpoints load
+unchanged. At matched parameters and 3,000 iterations, world3d passes the toy parity
+gate but misses its same-run Country Kitchen CPU control by 0.544 dB. The previously
+reported −3.62 dB comparison against a historical 2D artifact was invalid as a gate:
+that artifact used a different validation-light stream and initialization regime.
+A three-seed controlled follow-up confirms the negative (world3d passes only 1/3
+seeds). A world-anchored tri-plane extension reduces observed hash collisions and
+has a near-zero mean delta, but passes only 2/3 seeds and is not promoted. Neither
+result is claimed as paper fidelity or as a multi-camera result; the binding failure
+halts representation rungs R2–R6. Evidence: `out/r1-worldgrid/report.json`,
+`out/r1-followup/report.json`, and `docs/representation-track.md`.
+
 *Deviation (opt-in):* texture-kernel head for `textured_quad` proxies
 (`model.texture_conditioning: "kernel"`, hardening track rung H3). Instead of
 appending the flattened texture to the input (which plateaus 4-6 dB below the

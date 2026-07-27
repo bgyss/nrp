@@ -1,0 +1,38 @@
+{
+  "_comment": "Representation track R1: Country Kitchen 128x128 world-position hashgrid, matched to the standard 106,085-param pixel2d model (106,345 params, +0.25%) at the same 3,000 iterations.",
+  "cache": "../out/kitchen/path_cache.npz",
+  "out_dir": "../out/r1-worldgrid/kitchen/cpu/world3d",
+  "light_type": "sphere",
+  "light_bounds": {
+    "radius_min": 0.1,
+    "radius_max": 0.6
+  },
+  "sampling": "segments",
+  "pool": {
+    "size": 64,
+    "replace_every": 5,
+    "replace_count": 2
+  },
+  "denoise": {
+    "enabled": true,
+    "method": "oidn"
+  },
+  "iters": 3000,
+  "batch_pixels": 4096,
+  "lr": 0.005,
+  "model": {
+    "hidden_width": 128,
+    "hidden_layers": 4,
+    "spatial_encoding": "world3d",
+    "encoding": {
+      "levels": 8,
+      "features_per_level": 2,
+      "table_size_log2": 12,
+      "base_resolution": 7,
+      "finest_resolution": 128
+    }
+  },
+  "n_val_lights": 12,
+  "seed": 0,
+  "device": "cpu"
+}
