@@ -2745,30 +2745,76 @@ The 3D budgets stay within 0.5% of the committed 2D models: toy 63,155 versus
 width, iteration count, training-light stream, and held-out-light stream are
 unchanged. Only the spatial encoding and its table budget differ.
 
-| scene | device | pixel2d it/s | world3d it/s | world3d PSNR | Δ vs same-run 2D | Δ vs committed 2D | binding gate |
+| scene | device | pixel2d it/s | world3d it/s | pixel2d PSNR | world3d PSNR | paired Δ | binding gate |
 |---|---|---:|---:|---:|---:|---:|---|
-| toy 48² | CPU | 67.67 | 46.78 | 20.84 dB | +0.86 dB | +1.67 dB | **pass** |
-| toy 48² | MPS | 51.18 | 27.90 | 22.41 dB | +0.36 dB | +3.24 dB | pass (diagnostic device) |
-| kitchen 128² | CPU | 24.07 | 20.80 | 21.62 dB | **−0.544 dB** | **−3.62 dB** | **fail** |
-| kitchen 128² | MPS | 21.80 | 19.70 | 21.79 dB | +0.72 dB | **−3.45 dB** | fail vs committed baseline |
+| toy 48² | CPU | 67.67 | 46.78 | 19.98 dB | 20.84 dB | +0.86 dB | **pass** |
+| toy 48² | MPS | 51.18 | 27.90 | 22.05 dB | 22.41 dB | +0.36 dB | diagnostic |
+| kitchen 128² | CPU | 24.07 | 20.80 | 22.16 dB | 21.62 dB | **−0.544 dB** | **fail** |
+| kitchen 128² | MPS | 21.80 | 19.70 | 21.07 dB | 21.79 dB | +0.72 dB | diagnostic |
 
-**Binding verdict: R1 fails.** The approved gate is per scene and requires world3d
-within 0.5 dB of the committed pixel2d baseline. Toy passes. Kitchen fails by
-3.62 dB on the gate device (CPU), so the representation track stops before R2.
-This remains a negative even under the more favorable same-run comparison: the
-kitchen world grid is 0.544 dB below its current CPU control, 0.044 dB outside the
-allowed loss.
+**Binding verdict: R1 fails.** The gate is the same-run CPU comparison, with
+representation as the only intended variable. Toy passes. Country Kitchen misses by
+0.544 dB, 0.044 dB outside the allowed loss, so the representation track stops
+before R2.
 
-The current kitchen pixel2d control (22.16 dB) also sits 3.08 dB below its committed
-25.24 dB artifact despite the same config. That drift is reported rather than used
-to redefine the gate. MPS shows a different ordering, with world3d above its
-same-run control, so the data does not support pinning the entire committed-baseline
-gap on one mechanism. The design's named 3D collision/locality risk remains
-plausible—equal total parameters force earlier hashing in 3D—but is not isolated
-causally here.
+The earlier R1 report treated the historical 25.24 dB Kitchen artifact as the
+binding baseline and described a −3.62 dB regression. The failure analysis found
+that comparison was not controlled: the historical artifact's validation lights
+were drawn from the training RNG after pool sampling/replacement, while current
+training uses a dedicated validation RNG; it also predates output-scale
+initialization. None of the 12 historical validation lights matches the current set.
+Re-evaluated on the current fixed set, the historical model scores 23.27 dB rather
+than 25.24 dB. `out/r1-worldgrid/report.json` now retains the historical field as
+non-gating context with `comparable_for_gate: false`.
 
 Trilinear lookup also costs throughput: world3d is 31% slower than pixel2d on toy
 CPU and 45% slower on toy MPS; the kitchen penalties are 14% CPU and 10% MPS.
 Inference shows the same expected direction because each level interpolates eight
 vertices rather than four. R1 nevertheless remains selectable for follow-up
 diagnostics; it is not the default and does not authorize the blocked R2–R6 claims.
+
+### R1 failure analysis: three seeds, initialization, capacity, and tri-plane
+
+`UV_CACHE_DIR=.uv-cache uv run python examples/r1_failure_analysis.py --reuse`
+extends the controlled Country Kitchen comparison to three paired seeds. Each seed
+uses one fixed held-out-light set shared by its arms. Evidence is in
+`out/r1-followup/report.json`.
+
+| representation | params | seed 0 Δ | seed 1 Δ | seed 2 Δ | mean ± std | seeds passing −0.5 dB | promote |
+|---|---:|---:|---:|---:|---:|---:|---|
+| world3d | 106,345 | −0.544 | −0.771 | +0.247 | −0.356 ± 0.436 dB | 1/3 | **no** |
+| world tri-plane | 106,239 | +1.359 | −0.935 | −0.356 | +0.023 ± 0.974 dB | 2/3 | **no** |
+
+The original negative is therefore real but much narrower and more variable than
+the historical comparison implied. World3d beats 2D on seed 2, but the binding gate
+is per seed and cannot be averaged into a pass. The tri-plane candidate has a
+near-zero mean delta and is within +0.15% of the 2D parameter count, but its seed-1
+miss rejects promotion.
+
+Observed hash occupancy supports collision pressure as one factor, while the
+capacity control shows it is not a sufficient explanation:
+
+| arm | params | weighted collision fraction | seed-0 PSNR |
+|---|---:|---:|---:|
+| pixel2d | 106,085 | 22.8% | 22.16 dB |
+| world3d | 106,345 | 86.7% | 21.62 dB |
+| world tri-plane | 106,239 | 35.3% | 23.52 dB |
+| world3d expanded (diagnostic, unmatched) | 199,841 | 66.6% | 21.75 dB |
+
+The expanded 3D grid uses 88% more parameters than 2D yet gains only 0.13 dB over
+matched world3d on seed 0. Simply making the hash larger does not restore parity.
+Tri-plane allocation is more efficient and faster (roughly 24.7 it/s versus 21.6
+it/s for direct 3D in new CPU runs), but its variance still blocks the camera track.
+
+Output initialization is also consequential. With framework-default output
+initialization on seed 0, pixel2d rises from 22.16 to 24.51 dB and world3d from
+21.62 to 23.87 dB. Both move by more than 2 dB, while the paired world3d delta
+remains a failure at −0.64 dB. The next campaign must therefore cross
+representation with initialization across multiple seeds instead of treating either
+policy as universally superior.
+
+The bounded next ladder is
+`docs/plans/2026-07-27-r1-next-experiments.md`: five-seed variance decomposition,
+matched allocation/fusion sweeps, coordinate-rotation robustness, localized error
+analysis, then a second real scene. R2 remains blocked unless one world-anchored arm
+passes the unchanged −0.5 dB floor on every seed and both real scenes.

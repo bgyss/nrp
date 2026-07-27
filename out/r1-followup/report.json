@@ -1,0 +1,791 @@
+{
+  "experiment": "R1 failure analysis and world-anchored follow-up",
+  "hardware": {
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "torch_version": "2.12.1",
+    "device": "cpu"
+  },
+  "scene": {
+    "name": "Country Kitchen",
+    "resolution": [
+      128,
+      128
+    ],
+    "segments": 3266937,
+    "denoiser": "oidn"
+  },
+  "gate_threshold_db": -0.5,
+  "promotion_rule": "every paired-seed candidate delta must be at least -0.5 dB; mean-only parity cannot promote an arm",
+  "validation_provenance_audit": {
+    "legacy_light_count": 12,
+    "fixed_light_count": 12,
+    "exact_light_match_count": 0,
+    "legacy_training_rng_samples_before_validation": 1264,
+    "fixed_validation_rng": "numpy SeedSequence([training seed, 0x5EED])",
+    "historical_output_scale_initialization": false,
+    "current_output_scale_initialization": true
+  },
+  "cross_generation_validation_provenance": [
+    {
+      "model": "historical_pixel2d",
+      "legacy_validation": {
+        "psnr_db_mean": 25.23644271401069,
+        "psnr_db_median": 24.893276010844513,
+        "psnr_db_min": 13.719445005898372,
+        "psnr_db_max": 33.153839397127165
+      },
+      "fixed_validation": {
+        "psnr_db_mean": 23.270078368088786,
+        "psnr_db_median": 24.29797999374046,
+        "psnr_db_min": 11.291169531539065,
+        "psnr_db_max": 30.345163196799763
+      }
+    },
+    {
+      "model": "current_pixel2d",
+      "legacy_validation": {
+        "psnr_db_mean": 23.958460698549572,
+        "psnr_db_median": 23.514656835153307,
+        "psnr_db_min": 13.117387694386164,
+        "psnr_db_max": 31.359529179441694
+      },
+      "fixed_validation": {
+        "psnr_db_mean": 22.16387410795051,
+        "psnr_db_median": 22.762256374443428,
+        "psnr_db_min": 13.84724335689848,
+        "psnr_db_max": 28.56054909080691
+      }
+    },
+    {
+      "model": "current_world3d",
+      "legacy_validation": {
+        "psnr_db_mean": 21.7095983029521,
+        "psnr_db_median": 22.115869282948154,
+        "psnr_db_min": -0.5533501035661175,
+        "psnr_db_max": 29.844116454261204
+      },
+      "fixed_validation": {
+        "psnr_db_mean": 21.6198460978591,
+        "psnr_db_median": 21.45646300232929,
+        "psnr_db_min": 14.879327600691585,
+        "psnr_db_max": 28.820630224886994
+      }
+    }
+  ],
+  "training_arms": [
+    {
+      "arm": "pixel2d",
+      "seed": 0,
+      "parameter_count": 106085,
+      "iters_per_second": 24.071800958678566,
+      "report": "out/r1-worldgrid/kitchen/cpu/pixel2d/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 22.16387410795051,
+        "psnr_db_median": 22.762256374443428,
+        "psnr_db_min": 13.84724335689848,
+        "psnr_db_max": 28.56054909080691
+      }
+    },
+    {
+      "arm": "world3d",
+      "seed": 0,
+      "parameter_count": 106345,
+      "iters_per_second": 20.79878815306495,
+      "report": "out/r1-worldgrid/kitchen/cpu/world3d/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 21.6198460978591,
+        "psnr_db_median": 21.45646300232929,
+        "psnr_db_min": 14.879327600691585,
+        "psnr_db_max": 28.820630224886994
+      }
+    },
+    {
+      "arm": "world_triplane",
+      "seed": 0,
+      "parameter_count": 106239,
+      "iters_per_second": 24.673850032572993,
+      "report": "out/r1-followup/train/world_triplane-seed0/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 23.52252539957438,
+        "psnr_db_median": 22.143515323875857,
+        "psnr_db_min": 17.15669085932918,
+        "psnr_db_max": 33.38153419032684
+      }
+    },
+    {
+      "arm": "pixel2d_legacy_init",
+      "seed": 0,
+      "parameter_count": 106085,
+      "iters_per_second": 25.270051848544338,
+      "report": "out/r1-followup/train/pixel2d_legacy_init-seed0/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 24.513695128208088,
+        "psnr_db_median": 25.496254880978654,
+        "psnr_db_min": 16.256907506676512,
+        "psnr_db_max": 32.062196867379306
+      }
+    },
+    {
+      "arm": "world3d_legacy_init",
+      "seed": 0,
+      "parameter_count": 106345,
+      "iters_per_second": 21.660710272738466,
+      "report": "out/r1-followup/train/world3d_legacy_init-seed0/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 23.87358528974514,
+        "psnr_db_median": 22.75055685645033,
+        "psnr_db_min": 17.33353144396724,
+        "psnr_db_max": 31.65719998225292
+      }
+    },
+    {
+      "arm": "world3d_expanded",
+      "seed": 0,
+      "parameter_count": 199841,
+      "iters_per_second": 21.59798350426807,
+      "report": "out/r1-followup/train/world3d_expanded-seed0/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 21.749677798558622,
+        "psnr_db_median": 22.032532330625457,
+        "psnr_db_min": 13.174091358129091,
+        "psnr_db_max": 29.821911350568342
+      }
+    },
+    {
+      "arm": "pixel2d",
+      "seed": 1,
+      "parameter_count": 106085,
+      "iters_per_second": 25.211052884838985,
+      "report": "out/r1-followup/train/pixel2d-seed1/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 24.678176821680776,
+        "psnr_db_median": 25.356284768312314,
+        "psnr_db_min": 8.766559164748973,
+        "psnr_db_max": 32.54656422763584
+      }
+    },
+    {
+      "arm": "world3d",
+      "seed": 1,
+      "parameter_count": 106345,
+      "iters_per_second": 21.609739224220608,
+      "report": "out/r1-followup/train/world3d-seed1/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 23.907361243915492,
+        "psnr_db_median": 25.168696228765892,
+        "psnr_db_min": 8.371425159666076,
+        "psnr_db_max": 32.088616101784744
+      }
+    },
+    {
+      "arm": "world_triplane",
+      "seed": 1,
+      "parameter_count": 106239,
+      "iters_per_second": 24.712900071537923,
+      "report": "out/r1-followup/train/world_triplane-seed1/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 23.743388970011193,
+        "psnr_db_median": 24.32957692194747,
+        "psnr_db_min": 10.048245925526452,
+        "psnr_db_max": 30.46731619112696
+      }
+    },
+    {
+      "arm": "pixel2d",
+      "seed": 2,
+      "parameter_count": 106085,
+      "iters_per_second": 25.525132621487522,
+      "report": "out/r1-followup/train/pixel2d-seed2/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 22.001648906042977,
+        "psnr_db_median": 21.346687400205145,
+        "psnr_db_min": 16.688841559790852,
+        "psnr_db_max": 29.843972781393425
+      }
+    },
+    {
+      "arm": "world3d",
+      "seed": 2,
+      "parameter_count": 106345,
+      "iters_per_second": 22.286089228889043,
+      "report": "out/r1-followup/train/world3d-seed2/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 22.248476801726554,
+        "psnr_db_median": 21.964717573464817,
+        "psnr_db_min": 17.200337878268463,
+        "psnr_db_max": 29.758199322609812
+      }
+    },
+    {
+      "arm": "world_triplane",
+      "seed": 2,
+      "parameter_count": 106239,
+      "iters_per_second": 25.346705304553605,
+      "report": "out/r1-followup/train/world_triplane-seed2/torch_train_report.json",
+      "fixed_validation": {
+        "psnr_db_mean": 21.64586310343887,
+        "psnr_db_median": 20.266984577587216,
+        "psnr_db_min": 15.48469521901116,
+        "psnr_db_max": 29.73421005507264
+      }
+    }
+  ],
+  "seed_stability": {
+    "world3d": {
+      "candidate": "world3d",
+      "per_seed": [
+        {
+          "seed": 0,
+          "delta_db": -0.5440280100914094,
+          "gate_pass": false
+        },
+        {
+          "seed": 1,
+          "delta_db": -0.7708155777652834,
+          "gate_pass": false
+        },
+        {
+          "seed": 2,
+          "delta_db": 0.24682789568357677,
+          "gate_pass": true
+        }
+      ],
+      "delta_db_mean": -0.356005230724372,
+      "delta_db_std": 0.4362063608996278,
+      "gate_pass_count": 1,
+      "gate_total": 3,
+      "promotion_pass": false
+    },
+    "world_triplane": {
+      "candidate": "world_triplane",
+      "per_seed": [
+        {
+          "seed": 0,
+          "delta_db": 1.3586512916238718,
+          "gate_pass": true
+        },
+        {
+          "seed": 1,
+          "delta_db": -0.9347878516695829,
+          "gate_pass": false
+        },
+        {
+          "seed": 2,
+          "delta_db": -0.35578580260410675,
+          "gate_pass": true
+        }
+      ],
+      "delta_db_mean": 0.022692545783394042,
+      "delta_db_std": 0.9737899058647957,
+      "gate_pass_count": 2,
+      "gate_total": 3,
+      "promotion_pass": false
+    }
+  },
+  "output_initialization_effects": {
+    "pixel2d": {
+      "default_scale_init_psnr_db": 22.16387410795051,
+      "legacy_default_init_psnr_db": 24.513695128208088,
+      "delta_db_default_scale_minus_legacy": -2.349821020257579
+    },
+    "world3d": {
+      "default_scale_init_psnr_db": 21.6198460978591,
+      "legacy_default_init_psnr_db": 23.87358528974514,
+      "delta_db_default_scale_minus_legacy": -2.2537391918860408
+    }
+  },
+  "hash_occupancy": {
+    "pixel2d": {
+      "spatial_encoding": "pixel2d",
+      "parameter_count": 106085,
+      "unique_world_positions": 16384,
+      "pixel_count": 16384,
+      "weighted_collision_fraction": 0.22839599186318094,
+      "grids": {
+        "pixel_xy": {
+          "weighted_collision_fraction": 0.22839599186318094,
+          "levels": [
+            {
+              "level": 0,
+              "resolution": 4,
+              "dense": true,
+              "queried_vertices": 25,
+              "occupied_slots": 25,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 1,
+              "resolution": 6,
+              "dense": true,
+              "queried_vertices": 49,
+              "occupied_slots": 49,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 2,
+              "resolution": 10,
+              "dense": true,
+              "queried_vertices": 121,
+              "occupied_slots": 121,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 3,
+              "resolution": 17,
+              "dense": true,
+              "queried_vertices": 324,
+              "occupied_slots": 324,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 4,
+              "resolution": 28,
+              "dense": true,
+              "queried_vertices": 841,
+              "occupied_slots": 841,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 5,
+              "resolution": 47,
+              "dense": true,
+              "queried_vertices": 2304,
+              "occupied_slots": 2304,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 6,
+              "resolution": 78,
+              "dense": true,
+              "queried_vertices": 6241,
+              "occupied_slots": 6241,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 7,
+              "resolution": 128,
+              "dense": false,
+              "queried_vertices": 16641,
+              "occupied_slots": 10578,
+              "collision_fraction": 0.3643410852713178,
+              "max_unique_vertices_per_slot": 3
+            }
+          ]
+        }
+      }
+    },
+    "world3d": {
+      "spatial_encoding": "world3d",
+      "parameter_count": 106345,
+      "unique_world_positions": 16384,
+      "pixel_count": 16384,
+      "weighted_collision_fraction": 0.8667692551950709,
+      "grids": {
+        "world_xyz": {
+          "weighted_collision_fraction": 0.8667692551950709,
+          "levels": [
+            {
+              "level": 0,
+              "resolution": 7,
+              "dense": true,
+              "queried_vertices": 407,
+              "occupied_slots": 407,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 1,
+              "resolution": 10,
+              "dense": true,
+              "queried_vertices": 870,
+              "occupied_slots": 870,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 2,
+              "resolution": 16,
+              "dense": false,
+              "queried_vertices": 2153,
+              "occupied_slots": 1713,
+              "collision_fraction": 0.20436600092893642,
+              "max_unique_vertices_per_slot": 5
+            },
+            {
+              "level": 3,
+              "resolution": 24,
+              "dense": false,
+              "queried_vertices": 4795,
+              "occupied_slots": 2800,
+              "collision_fraction": 0.416058394160584,
+              "max_unique_vertices_per_slot": 6
+            },
+            {
+              "level": 4,
+              "resolution": 36,
+              "dense": false,
+              "queried_vertices": 10428,
+              "occupied_slots": 3749,
+              "collision_fraction": 0.6404871499808209,
+              "max_unique_vertices_per_slot": 10
+            },
+            {
+              "level": 5,
+              "resolution": 55,
+              "dense": false,
+              "queried_vertices": 22687,
+              "occupied_slots": 4087,
+              "collision_fraction": 0.8198527791246089,
+              "max_unique_vertices_per_slot": 16
+            },
+            {
+              "level": 6,
+              "resolution": 84,
+              "dense": false,
+              "queried_vertices": 44386,
+              "occupied_slots": 4096,
+              "collision_fraction": 0.9077186500247826,
+              "max_unique_vertices_per_slot": 23
+            },
+            {
+              "level": 7,
+              "resolution": 128,
+              "dense": false,
+              "queried_vertices": 78035,
+              "occupied_slots": 4096,
+              "collision_fraction": 0.947510732363683,
+              "max_unique_vertices_per_slot": 34
+            }
+          ]
+        }
+      }
+    },
+    "world_triplane": {
+      "spatial_encoding": "world_triplane",
+      "parameter_count": 106239,
+      "unique_world_positions": 16384,
+      "pixel_count": 16384,
+      "weighted_collision_fraction": 0.352555489869404,
+      "grids": {
+        "xy": {
+          "weighted_collision_fraction": 0.3932576088539391,
+          "levels": [
+            {
+              "level": 0,
+              "resolution": 4,
+              "dense": true,
+              "queried_vertices": 25,
+              "occupied_slots": 25,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 1,
+              "resolution": 22,
+              "dense": true,
+              "queried_vertices": 507,
+              "occupied_slots": 507,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 2,
+              "resolution": 128,
+              "dense": false,
+              "queried_vertices": 13202,
+              "occupied_slots": 7801,
+              "collision_fraction": 0.40910468110892284,
+              "max_unique_vertices_per_slot": 3
+            }
+          ]
+        },
+        "xz": {
+          "weighted_collision_fraction": 0.3081232492997199,
+          "levels": [
+            {
+              "level": 0,
+              "resolution": 4,
+              "dense": true,
+              "queried_vertices": 25,
+              "occupied_slots": 25,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 1,
+              "resolution": 22,
+              "dense": true,
+              "queried_vertices": 455,
+              "occupied_slots": 455,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 2,
+              "resolution": 128,
+              "dense": false,
+              "queried_vertices": 10944,
+              "occupied_slots": 7424,
+              "collision_fraction": 0.32163742690058483,
+              "max_unique_vertices_per_slot": 3
+            }
+          ]
+        },
+        "yz": {
+          "weighted_collision_fraction": 0.3482913072329131,
+          "levels": [
+            {
+              "level": 0,
+              "resolution": 4,
+              "dense": true,
+              "queried_vertices": 25,
+              "occupied_slots": 25,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 1,
+              "resolution": 22,
+              "dense": true,
+              "queried_vertices": 491,
+              "occupied_slots": 491,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 2,
+              "resolution": 128,
+              "dense": false,
+              "queried_vertices": 11540,
+              "occupied_slots": 7341,
+              "collision_fraction": 0.3638648180242634,
+              "max_unique_vertices_per_slot": 4
+            }
+          ]
+        }
+      }
+    },
+    "world3d_expanded": {
+      "spatial_encoding": "world3d",
+      "parameter_count": 199841,
+      "unique_world_positions": 16384,
+      "pixel_count": 16384,
+      "weighted_collision_fraction": 0.6663999061738957,
+      "grids": {
+        "world_xyz": {
+          "weighted_collision_fraction": 0.6663999061738957,
+          "levels": [
+            {
+              "level": 0,
+              "resolution": 4,
+              "dense": true,
+              "queried_vertices": 123,
+              "occupied_slots": 123,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 1,
+              "resolution": 6,
+              "dense": true,
+              "queried_vertices": 297,
+              "occupied_slots": 297,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 2,
+              "resolution": 10,
+              "dense": true,
+              "queried_vertices": 870,
+              "occupied_slots": 870,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 3,
+              "resolution": 17,
+              "dense": true,
+              "queried_vertices": 2361,
+              "occupied_slots": 2361,
+              "collision_fraction": 0.0,
+              "max_unique_vertices_per_slot": 1
+            },
+            {
+              "level": 4,
+              "resolution": 28,
+              "dense": false,
+              "queried_vertices": 6554,
+              "occupied_slots": 5107,
+              "collision_fraction": 0.2207812023191944,
+              "max_unique_vertices_per_slot": 5
+            },
+            {
+              "level": 5,
+              "resolution": 47,
+              "dense": false,
+              "queried_vertices": 17163,
+              "occupied_slots": 9703,
+              "collision_fraction": 0.43465594593019863,
+              "max_unique_vertices_per_slot": 8
+            },
+            {
+              "level": 6,
+              "resolution": 78,
+              "dense": false,
+              "queried_vertices": 39546,
+              "occupied_slots": 13922,
+              "collision_fraction": 0.6479542810903758,
+              "max_unique_vertices_per_slot": 11
+            },
+            {
+              "level": 7,
+              "resolution": 128,
+              "dense": false,
+              "queried_vertices": 78035,
+              "occupied_slots": 15972,
+              "collision_fraction": 0.7953226116486192,
+              "max_unique_vertices_per_slot": 18
+            }
+          ]
+        }
+      }
+    }
+  },
+  "depth_region_metrics": {
+    "pixel2d": [
+      {
+        "depth_quartile": 1,
+        "depth_min": 2.7663969099521637,
+        "depth_max": 3.8053481867536902,
+        "pixels": 4096,
+        "psnr_db_mean": 19.257093492194173
+      },
+      {
+        "depth_quartile": 2,
+        "depth_min": 3.8053481867536902,
+        "depth_max": 4.638543374836445,
+        "pixels": 4096,
+        "psnr_db_mean": 19.061957631334266
+      },
+      {
+        "depth_quartile": 3,
+        "depth_min": 4.638543374836445,
+        "depth_max": 6.1245627123862505,
+        "pixels": 4096,
+        "psnr_db_mean": 21.918213699821166
+      },
+      {
+        "depth_quartile": 4,
+        "depth_min": 6.1245627123862505,
+        "depth_max": 7.42415975779295,
+        "pixels": 4096,
+        "psnr_db_mean": 18.751800354756668
+      }
+    ],
+    "world3d": [
+      {
+        "depth_quartile": 1,
+        "depth_min": 2.7663969099521637,
+        "depth_max": 3.8053481867536902,
+        "pixels": 4096,
+        "psnr_db_mean": 20.361331304533792
+      },
+      {
+        "depth_quartile": 2,
+        "depth_min": 3.8053481867536902,
+        "depth_max": 4.638543374836445,
+        "pixels": 4096,
+        "psnr_db_mean": 18.948323408804246
+      },
+      {
+        "depth_quartile": 3,
+        "depth_min": 4.638543374836445,
+        "depth_max": 6.1245627123862505,
+        "pixels": 4096,
+        "psnr_db_mean": 21.21257170908908
+      },
+      {
+        "depth_quartile": 4,
+        "depth_min": 6.1245627123862505,
+        "depth_max": 7.42415975779295,
+        "pixels": 4096,
+        "psnr_db_mean": 18.73539956519514
+      }
+    ],
+    "world_triplane": [
+      {
+        "depth_quartile": 1,
+        "depth_min": 2.7663969099521637,
+        "depth_max": 3.8053481867536902,
+        "pixels": 4096,
+        "psnr_db_mean": 20.13482053932102
+      },
+      {
+        "depth_quartile": 2,
+        "depth_min": 3.8053481867536902,
+        "depth_max": 4.638543374836445,
+        "pixels": 4096,
+        "psnr_db_mean": 19.608067620839424
+      },
+      {
+        "depth_quartile": 3,
+        "depth_min": 4.638543374836445,
+        "depth_max": 6.1245627123862505,
+        "pixels": 4096,
+        "psnr_db_mean": 23.016228043837216
+      },
+      {
+        "depth_quartile": 4,
+        "depth_min": 6.1245627123862505,
+        "depth_max": 7.42415975779295,
+        "pixels": 4096,
+        "psnr_db_mean": 20.27248409694506
+      }
+    ],
+    "world3d_expanded": [
+      {
+        "depth_quartile": 1,
+        "depth_min": 2.7663969099521637,
+        "depth_max": 3.8053481867536902,
+        "pixels": 4096,
+        "psnr_db_mean": 18.566262218630918
+      },
+      {
+        "depth_quartile": 2,
+        "depth_min": 3.8053481867536902,
+        "depth_max": 4.638543374836445,
+        "pixels": 4096,
+        "psnr_db_mean": 18.88363525115416
+      },
+      {
+        "depth_quartile": 3,
+        "depth_min": 4.638543374836445,
+        "depth_max": 6.1245627123862505,
+        "pixels": 4096,
+        "psnr_db_mean": 21.430941934665587
+      },
+      {
+        "depth_quartile": 4,
+        "depth_min": 6.1245627123862505,
+        "depth_max": 7.42415975779295,
+        "pixels": 4096,
+        "psnr_db_mean": 18.42871200226431
+      }
+    ]
+  },
+  "conclusions": {
+    "historical_25db_comparison_valid": false,
+    "reason": "the historical and R1 reports used different validation-light streams and different output initialization; controlled same-run deltas are binding",
+    "original_world3d_promotion_pass": false,
+    "world_triplane_promotion_pass": false
+  }
+}

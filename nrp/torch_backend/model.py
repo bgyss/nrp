@@ -28,11 +28,11 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
-from .encoding import HashEncoding2D, HashEncoding3D
+from .encoding import HashEncoding2D, HashEncoding3D, HashEncodingTriPlane
 
 LIGHT_PARAM_DIMS = {"sphere": 4, "quad": 8}
 SUPPORTED_LIGHT_TYPES = {"sphere", "quad", "textured_quad"}
-SUPPORTED_SPATIAL_ENCODINGS = {"pixel2d", "world3d"}
+SUPPORTED_SPATIAL_ENCODINGS = {"pixel2d", "world3d", "world_triplane"}
 
 
 def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.01) -> torch.Tensor:
@@ -68,8 +68,8 @@ class TorchNRP(nn.Module):
             raise ValueError(
                 f"spatial_encoding must be one of {sorted(SUPPORTED_SPATIAL_ENCODINGS)}"
             )
-        if spatial_encoding == "world3d" and not use_encoding:
-            raise ValueError("spatial_encoding 'world3d' requires use_encoding=true")
+        if spatial_encoding != "pixel2d" and not use_encoding:
+            raise ValueError(f"spatial_encoding {spatial_encoding!r} requires use_encoding=true")
         if light_param_dim is None:
             if light_type not in LIGHT_PARAM_DIMS:
                 raise ValueError(f"light_param_dim is required for light_type {light_type!r}")
@@ -95,9 +95,11 @@ class TorchNRP(nn.Module):
         self.spatial_encoding = spatial_encoding
         self.use_encoding = use_encoding
         self.use_aux = use_aux
-        if spatial_encoding == "world3d":
+        if spatial_encoding != "pixel2d":
             if world_bounds is None or set(world_bounds) != {"min", "max"}:
-                raise ValueError("world3d requires world_bounds with exactly 'min' and 'max'")
+                raise ValueError(
+                    f"{spatial_encoding} requires world_bounds with exactly 'min' and 'max'"
+                )
             world_min = torch.as_tensor(world_bounds["min"], dtype=torch.float32)
             world_max = torch.as_tensor(world_bounds["max"], dtype=torch.float32)
             if world_min.shape != (3,) or world_max.shape != (3,):
@@ -129,6 +131,8 @@ class TorchNRP(nn.Module):
             self.encoding = None
         elif spatial_encoding == "world3d":
             self.encoding = HashEncoding3D(**(encoding or {}))
+        elif spatial_encoding == "world_triplane":
+            self.encoding = HashEncodingTriPlane(**(encoding or {}))
         else:
             self.encoding = HashEncoding2D(**(encoding or {}))
         spatial_dim = self.encoding.output_dim if use_encoding else 2
@@ -182,10 +186,10 @@ class TorchNRP(nn.Module):
         ``(N, 3)`` raw first-hit world position for ``world3d``. ``aux`` retains
         the paper's seven albedo/depth/normal columns in both modes.
         """
-        if self.spatial_encoding == "world3d":
+        if self.spatial_encoding != "pixel2d":
             if spatial_coords.ndim != 2 or spatial_coords.shape[1] != 3:
                 raise ValueError(
-                    "world3d spatial_coords must have shape (N, 3), "
+                    f"{self.spatial_encoding} spatial_coords must have shape (N, 3), "
                     f"got {tuple(spatial_coords.shape)}"
                 )
             normalized = ((spatial_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)

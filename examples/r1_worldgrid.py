@@ -128,10 +128,15 @@ def summarize_pair(
             "parameter_count": int(committed_baseline["parameter_count"]),
             "iterations": int(committed_baseline["config"]["iters"]),
             "held_out_psnr_db": committed_psnr,
+            "comparable_for_gate": False,
+            "note": (
+                "historical context only: this artifact predates the dedicated "
+                "validation RNG and output-scale initialization"
+            ),
         },
         "psnr_delta_db_world3d_minus_committed_pixel2d": committed_delta,
         "gate_threshold_db": -0.5,
-        "gate_pass": committed_delta >= -0.5,
+        "gate_pass": delta >= -0.5,
     }
 
 
@@ -215,8 +220,9 @@ def main() -> None:
         "title": "World-space encoding at parity",
         "gate": {
             "definition": (
-                "world3d held-out PSNR must be within 0.5 dB of the committed "
-                "pixel2d baseline at matched parameters and iterations, per scene"
+                "world3d held-out PSNR must be within 0.5 dB of the same-run "
+                "pixel2d control at matched parameters, iterations, seed, denoiser, "
+                "and held-out lights, per scene"
             ),
             "device": "cpu",
             "complete": gate_complete,

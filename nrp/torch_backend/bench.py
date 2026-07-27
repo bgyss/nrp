@@ -51,7 +51,7 @@ def bench_model(
     model = model.to(device).eval()
     n = resolution * resolution
     gen = torch.Generator(device="cpu").manual_seed(0)
-    if model.spatial_encoding == "world3d":
+    if model.spatial_encoding != "pixel2d":
         unit = torch.rand((n, 3), generator=gen).to(device)
         spatial = model.world_min + unit * model.world_extent
     else:

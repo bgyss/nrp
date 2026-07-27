@@ -92,7 +92,7 @@ def spatial_tensors(
     xy, aux = pixel_tensors(cache, device)
     if spatial_encoding == "pixel2d":
         return xy, aux
-    if spatial_encoding == "world3d":
+    if spatial_encoding in {"world3d", "world_triplane"}:
         return torch.as_tensor(
             cache.position.reshape(-1, 3), dtype=torch.float32, device=device
         ), aux
@@ -133,11 +133,13 @@ def validate_torch_config(cfg: dict) -> str:
             "model.spatial_encoding must be one of "
             f"{sorted(SUPPORTED_SPATIAL_ENCODINGS)}, got {selected!r}"
         )
-    if selected == "world3d" and model_cfg.get("use_encoding", True) is False:
-        raise ValueError("model.spatial_encoding 'world3d' requires use_encoding=true")
+    if selected != "pixel2d" and model_cfg.get("use_encoding", True) is False:
+        raise ValueError(f"model.spatial_encoding {selected!r} requires use_encoding=true")
     encoding_cfg = model_cfg.get("encoding", {})
     if not isinstance(encoding_cfg, dict):
         raise ValueError("config.model.encoding must be an object")
+    if not isinstance(model_cfg.get("init_output_scale", True), bool):
+        raise ValueError("config.model.init_output_scale must be a boolean")
     return selected
 
 
@@ -310,7 +312,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
         hidden_layers=cfg["model"].get("hidden_layers", 4),
         encoding=cfg["model"].get("encoding"),
         spatial_encoding=spatial_encoding,
-        world_bounds=world_bounds(cache) if spatial_encoding == "world3d" else None,
+        world_bounds=world_bounds(cache) if spatial_encoding != "pixel2d" else None,
         use_encoding=cfg["model"].get("use_encoding", True),
         use_aux=cfg["model"].get("use_aux", True),
         texture_kernel=cfg["model"].get("texture_conditioning") == "kernel",
@@ -361,12 +363,13 @@ def train(cfg: dict, resume: bool = False) -> dict:
         # actual target scale instead of nn.Linear's default ~0.69, which is far
         # brighter than typical QuadLight targets on some caches and otherwise
         # drives a zero-collapse (see TorchNRP.init_output_scale docstring).
-        model.init_output_scale(
-            float(pool.targets.mean(dim=-1).median().item()),
-            mean_texture_value=(
-                float(pool.params[:, 8:].mean().item()) if model.texture_kernel else None
-            ),
-        )
+        if cfg["model"].get("init_output_scale", True):
+            model.init_output_scale(
+                float(pool.targets.mean(dim=-1).median().item()),
+                mean_texture_value=(
+                    float(pool.params[:, 8:].mean().item()) if model.texture_kernel else None
+                ),
+            )
 
     batch = cfg.get("batch_pixels", 4096)
     replace_every = cfg["pool"]["replace_every"]

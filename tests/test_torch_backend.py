@@ -13,7 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 from nrp.gather_light import gather_light, gather_lights  # noqa: E402
 from nrp.lights import SphereLight, TexturedQuadLight  # noqa: E402
 from nrp.torch_backend.denoise import joint_bilateral_denoise  # noqa: E402
-from nrp.torch_backend.encoding import HashEncoding2D, HashEncoding3D  # noqa: E402
+from nrp.torch_backend.encoding import (  # noqa: E402
+    HashEncoding2D,
+    HashEncoding3D,
+    HashEncodingTriPlane,
+)
 from nrp.torch_backend.model import (  # noqa: E402
     TorchNRP,
     inverse_softplus,
@@ -121,6 +125,31 @@ class HashEncodingTests(unittest.TestCase):
             any(t.grad is not None and float(t.grad.abs().sum()) > 0 for t in enc.tables)
         )
 
+    def test_triplane_shape_determinism_and_gradients(self):
+        enc = HashEncodingTriPlane(
+            levels=2,
+            features_per_level=2,
+            table_size_log2=6,
+            base_resolution=2,
+            finest_resolution=8,
+        )
+        xyz = torch.rand(5, 3, requires_grad=True)
+        first = enc(xyz)
+        second = enc(xyz)
+        self.assertEqual(first.shape, (5, 12))
+        torch.testing.assert_close(first, second)
+        first.sum().backward()
+        self.assertGreater(float(xyz.grad.abs().sum()), 0.0)
+        self.assertTrue(
+            all(
+                any(
+                    p.grad is not None and float(p.grad.abs().sum()) > 0
+                    for p in plane.parameters()
+                )
+                for plane in enc.planes
+            )
+        )
+
 
 class RelativeMSELossTests(unittest.TestCase):
     def test_matches_eq4_value(self):
@@ -182,10 +211,35 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.spatial_encoding, "world3d")
         torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
 
+    def test_world_triplane_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=16,
+            hidden_layers=2,
+            encoding={
+                "levels": 2,
+                "features_per_level": 2,
+                "table_size_log2": 8,
+                "finest_resolution": 8,
+            },
+            spatial_encoding="world_triplane",
+            world_bounds={"min": [-2.0, 0.0, 1.0], "max": [2.0, 4.0, 5.0]},
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.spatial_encoding, "world_triplane")
+        torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
+
     def test_spatial_encoding_config_validation(self):
         self.assertEqual(validate_torch_config({"model": {}}), "pixel2d")
         self.assertEqual(
             validate_torch_config({"model": {"spatial_encoding": "world3d"}}), "world3d"
+        )
+        self.assertEqual(
+            validate_torch_config({"model": {"spatial_encoding": "world_triplane"}}),
+            "world_triplane",
         )
         with self.assertRaisesRegex(ValueError, "model.spatial_encoding"):
             validate_torch_config({"model": {"spatial_encoding": "ray5d"}})
@@ -193,6 +247,8 @@ class ModelTests(unittest.TestCase):
             validate_torch_config(
                 {"model": {"spatial_encoding": "world3d", "use_encoding": False}}
             )
+        with self.assertRaisesRegex(ValueError, "init_output_scale"):
+            validate_torch_config({"model": {"init_output_scale": "yes"}})
 
     def test_world3d_training_and_relight_smoke(self):
         with tempfile.TemporaryDirectory() as tmp:

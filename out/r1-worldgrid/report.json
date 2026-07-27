@@ -2,7 +2,7 @@
   "rung": "R1",
   "title": "World-space encoding at parity",
   "gate": {
-    "definition": "world3d held-out PSNR must be within 0.5 dB of the committed pixel2d baseline at matched parameters and iterations, per scene",
+    "definition": "world3d held-out PSNR must be within 0.5 dB of the same-run pixel2d control at matched parameters, iterations, seed, denoiser, and held-out lights, per scene",
     "device": "cpu",
     "complete": true,
     "pass": false
@@ -11,10 +11,10 @@
     "platform": "macOS-27.0-arm64-arm-64bit",
     "machine": "arm64",
     "processor": "arm",
-    "cpu_brand": "Apple M1 Max",
+    "cpu_brand": null,
     "torch_version": "2.12.1",
     "mps_built": true,
-    "mps_available": true,
+    "mps_available": false,
     "cuda_available": false
   },
   "denoise_override": null,
@@ -46,7 +46,9 @@
         "report": "out/kitchen-torch/torch_train_report.json",
         "parameter_count": 106085,
         "iterations": 3000,
-        "held_out_psnr_db": 25.23644271401069
+        "held_out_psnr_db": 25.23644271401069,
+        "comparable_for_gate": false,
+        "note": "historical context only: this artifact predates the dedicated validation RNG and output-scale initialization"
       },
       "psnr_delta_db_world3d_minus_committed_pixel2d": -3.6165966161515897,
       "gate_threshold_db": -0.5,
@@ -79,11 +81,13 @@
         "report": "out/kitchen-torch/torch_train_report.json",
         "parameter_count": 106085,
         "iterations": 3000,
-        "held_out_psnr_db": 25.23644271401069
+        "held_out_psnr_db": 25.23644271401069,
+        "comparable_for_gate": false,
+        "note": "historical context only: this artifact predates the dedicated validation RNG and output-scale initialization"
       },
       "psnr_delta_db_world3d_minus_committed_pixel2d": -3.445824589405131,
       "gate_threshold_db": -0.5,
-      "gate_pass": false
+      "gate_pass": true
     },
     {
       "scene": "toy",
@@ -112,7 +116,9 @@
         "report": "out/toy-torch/torch_train_report.json",
         "parameter_count": 62923,
         "iterations": 3000,
-        "held_out_psnr_db": 19.17074132333809
+        "held_out_psnr_db": 19.17074132333809,
+        "comparable_for_gate": false,
+        "note": "historical context only: this artifact predates the dedicated validation RNG and output-scale initialization"
       },
       "psnr_delta_db_world3d_minus_committed_pixel2d": 1.6658750085837255,
       "gate_threshold_db": -0.5,
@@ -145,7 +151,9 @@
         "report": "out/toy-torch/torch_train_report.json",
         "parameter_count": 62923,
         "iterations": 3000,
-        "held_out_psnr_db": 19.17074132333809
+        "held_out_psnr_db": 19.17074132333809,
+        "comparable_for_gate": false,
+        "note": "historical context only: this artifact predates the dedicated validation RNG and output-scale initialization"
       },
       "psnr_delta_db_world3d_minus_committed_pixel2d": 3.2377207029647685,
       "gate_threshold_db": -0.5,

@@ -173,3 +173,47 @@ class HashEncoding3D(nn.Module):
                         out = out + table[index] * xw * yw * zw
             outputs.append(out)
         return torch.cat(outputs, dim=1)
+
+
+class HashEncodingTriPlane(nn.Module):
+    """World-anchored tri-plane encoding built from three 2D hashgrids.
+
+    The XY, XZ, and YZ projections share architecture but not parameters. This keeps
+    world anchoring while testing whether a surface-dominated scene benefits from the
+    lower collision pressure of 2D tables.
+    """
+
+    def __init__(
+        self,
+        levels: int = 3,
+        features_per_level: int = 2,
+        table_size_log2: int = 13,
+        base_resolution: int = 4,
+        finest_resolution: int = 256,
+    ):
+        super().__init__()
+        config = {
+            "levels": levels,
+            "features_per_level": features_per_level,
+            "table_size_log2": table_size_log2,
+            "base_resolution": base_resolution,
+            "finest_resolution": finest_resolution,
+        }
+        self.planes = nn.ModuleList([HashEncoding2D(**config) for _ in range(3)])
+        self.levels = levels
+        self.features_per_level = features_per_level
+        self.table_size = 1 << table_size_log2
+        self.resolutions = self.planes[0].resolutions
+
+    @property
+    def output_dim(self) -> int:
+        return 3 * self.planes[0].output_dim
+
+    def forward(self, xyz: torch.Tensor) -> torch.Tensor:
+        if xyz.ndim != 2 or xyz.shape[1] != 3:
+            raise ValueError(f"xyz must have shape (N, 3), got {tuple(xyz.shape)}")
+        projections = (xyz[:, (0, 1)], xyz[:, (0, 2)], xyz[:, (1, 2)])
+        return torch.cat(
+            [plane(projected) for plane, projected in zip(self.planes, projections, strict=True)],
+            dim=1,
+        )

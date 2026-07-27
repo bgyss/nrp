@@ -113,10 +113,15 @@ the cache's first-hit 3D world position, normalized by checkpointed scene bounds
 encoded by dense/hashed multiresolution tables with trilinear interpolation. The
 paper-faithful `"pixel2d"` path remains the default and old checkpoints load
 unchanged. At matched parameters and 3,000 iterations, world3d passes the toy parity
-gate but misses the committed Country Kitchen baseline by 3.62 dB (and misses its
-same-run CPU control by 0.544 dB). This is not claimed as paper fidelity or as a
-multi-camera result; the binding failure halts representation rungs R2–R6. Evidence:
-`out/r1-worldgrid/report.json` and `docs/representation-track.md`.
+gate but misses its same-run Country Kitchen CPU control by 0.544 dB. The previously
+reported −3.62 dB comparison against a historical 2D artifact was invalid as a gate:
+that artifact used a different validation-light stream and initialization regime.
+A three-seed controlled follow-up confirms the negative (world3d passes only 1/3
+seeds). A world-anchored tri-plane extension reduces observed hash collisions and
+has a near-zero mean delta, but passes only 2/3 seeds and is not promoted. Neither
+result is claimed as paper fidelity or as a multi-camera result; the binding failure
+halts representation rungs R2–R6. Evidence: `out/r1-worldgrid/report.json`,
+`out/r1-followup/report.json`, and `docs/representation-track.md`.
 
 *Deviation (opt-in):* texture-kernel head for `textured_quad` proxies
 (`model.texture_conditioning: "kernel"`, hardening track rung H3). Instead of

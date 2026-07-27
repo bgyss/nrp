@@ -12,7 +12,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
 | 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
 | 6 | Scale & speed track | [scale-track.md](scale-track.md) | ✅ Complete locally — S1–S6 measured; CUDA stretch S7/S8 parked |
-| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ Halted at R1 — toy parity passes, Country Kitchen misses the binding 0.5 dB gate; R2–R6 not attempted |
+| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ Halted at R1 — controlled three-seed follow-up confirms unstable 3D parity; tri-plane candidate also not promoted; R2–R6 not attempted |
 
 ## How the phases connect
 
@@ -52,9 +52,10 @@ prompts (or, for phase 3, a decision document); each links its evidence into
    estimates in `plans/2026-07-16-scale-track-research.md`.
 7. **Representation track** (`representation-track.md`) tests whether replacing the
    per-view 2D pixel hashgrid with a 3D first-hit world-position hashgrid is a viable
-   foundation for multi-camera proxies. R1 passes on the toy box but fails the
-   binding Country Kitchen parity gate, so the approved contract halts R2–R6 and
-   records the characterized negative.
+   foundation for multi-camera proxies. R1 passes on the toy box but the direct 3D
+   grid passes only 1/3 controlled Country Kitchen seeds; a matched tri-plane
+   follow-up passes 2/3 but remains too unstable to promote. The approved contract
+   therefore still halts R2–R6 and records the characterized negative.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware

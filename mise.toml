@@ -193,6 +193,10 @@ run = [
 description = "R1 matched-budget pixel2d vs world3d matrix (writes evidence before failing the negative gate)"
 run = "uv run python examples/r1_worldgrid.py --devices cpu mps"
 
+[tasks.r1-followup]
+description = "R1 failure analysis: provenance, seed stability, collision diagnostics, and matched tri-plane"
+run = "uv run python examples/r1_failure_analysis.py --reuse"
+
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"
 run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"
