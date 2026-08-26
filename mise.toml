@@ -205,6 +205,10 @@ run = "uv run python examples/r1a_variance.py"
 description = "R1 promotion audit: coordinate robustness plus independent 128² real-scene confirmation"
 run = "uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --gather-backend numpy --workers 2"
 
+[tasks.r1-encoding-redesign]
+description = "R1 redesign: three encoding arms against the held-out-camera gate"
+run = "uv run python examples/r1_encoding_redesign.py --out out/r1-encoding-redesign/report.json"
+
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"
 run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"
