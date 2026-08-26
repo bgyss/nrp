@@ -81,3 +81,7 @@ DECISION (2026-08-26): G1 gains an absolute 15 dB PSNR floor alongside the 1.0 d
   Rationale + provenance in the spec (commit 7a58e98). 15 dB is INVENTED for this
   campaign; the 1.0 dB margin is inherited from the approved R2 ladder. Task 11 must
   pass absolute_floor_db=15.0 to g1_generalization.
+G1 absolute floor: complete (commit 5e9a242, review clean, no fix round)
+  - reviewer explicitly hunted a 4th unearned-pass instance and found none, by own
+    adversarial execution. Conditions conjunctive; both reasons recorded when both fail;
+    absolute_floor_db=None byte-identical to pre-change.
