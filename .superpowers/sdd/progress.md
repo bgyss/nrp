@@ -62,3 +62,9 @@ Task 8: complete (commits 0bcc818..f5564b5, review clean after THREE fix rounds)
   - final review built its own empty-collection audit table from source; no 4th instance
   - MINOR (deferred): stop_reason raises AttributeError on a non-dict arm value (fail-loud,
     not an unearned pass) -- one-line isinstance guard suggested
+Task 9: complete (commits f5564b5..d458ee0, review clean after 1 fix round)
+  - all three hard-coded "world3d" sites generalized; occupancy spans UNION of all views
+  - FOUND: occupancy builder's default finest_resolution=128 vs HashEncoding3D's 256 meant
+    arm A could not train with a default config. Root cause: nothing exercised
+    train_conditioned end-to-end with an occupancy arm. Fixed via encoder_schedule_params
+    (reads class __init__ defaults); literal fallbacks removed; e2e regression added.
