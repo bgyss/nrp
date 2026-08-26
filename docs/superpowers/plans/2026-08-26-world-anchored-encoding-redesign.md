@@ -20,7 +20,10 @@ against a held-out-camera generalization gate.
 
 - Base branch is `representation-encoding-redesign`, which sits on `codex/goal-implement-r2`. Do not rebase onto `main`.
 - Run tests with `uv run python -m unittest discover -s tests` (or `mise run test`). Never invoke pytest.
-- Lint with `uv run ruff check .` and format with `uv run ruff format .` before every commit.
+- Lint with `uv run ruff check .`; format ONLY the paths you touched
+  (`uv run ruff format <your files>`). Do NOT run `uv run ruff format .` — several
+  files inherited from `main` and `codex/goal-implement-r2` are already non-conformant,
+  and a repo-wide format drags unrelated churn into every commit.
 - The repo is not an installed package (`[tool.uv] package = false`); tests import modules through the existing `sys.path` shim.
 - The committed `pixel2d` path must stay behaviourally unchanged, and existing 2D checkpoints must load unchanged.
 - Statistical assertions compare windowed means, never single minibatch losses.

@@ -23,3 +23,6 @@ Task 3: complete (commit 967e1f7, review clean)
   - SUPPORTED_SPATIAL_ENCODINGS fully migrated (model.py + train.py), no stale set
   - MINOR (plan-mandated): test_occupancy_encoder_without_occupancy_raises passes vacuously
     until an encoder sets needs_occupancy=True. MUST be shown red-then-green in Task 4.
+NOTE: `ruff format .` reformats ~10 files inherited non-conformant from main/codex branch.
+  Dispatches now instruct formatting ONLY touched paths. stash@{0} holds one such drift
+  capture from the Task 4 fix round (pre-existing churn, safe to drop; left for the user).
