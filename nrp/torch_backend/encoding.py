@@ -16,6 +16,18 @@ from torch import nn
 _PRIMES = (1, 2654435761, 805459861)
 
 
+def _floor_cell(pos: torch.Tensor, res: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Lower cell corner and interpolation fraction for scaled coordinates.
+
+    Clamping to res-1 (not res) keeps the cell [x0, x0+1] non-degenerate and
+    frac within [0, 1]. Output is identical either way for in-range inputs; the
+    invariant matters to the sparse-index encoder, which indexes corners directly.
+    """
+    pos0 = torch.floor(pos).long().clamp_(0, res - 1)
+    frac = pos - pos0
+    return pos0, frac
+
+
 class HashEncoding2D(nn.Module):
     def __init__(
         self,
@@ -64,10 +76,7 @@ class HashEncoding2D(nn.Module):
         outputs = []
         for level, res in enumerate(self.resolutions):
             pos = xy * res
-            # Clamp to res-1 so the cell [x0, x0+1] is always non-degenerate; x0 == res
-            # would make all corners identical and the level output constant.
-            pos0 = torch.floor(pos).long().clamp_(0, res - 1)
-            frac = pos - pos0
+            pos0, frac = _floor_cell(pos, res)
             x0, y0 = pos0[:, 0], pos0[:, 1]
             x1 = (x0 + 1).clamp(max=res)
             y1 = (y0 + 1).clamp(max=res)
@@ -157,10 +166,7 @@ class HashEncoding3D(nn.Module):
         outputs = []
         for level, res in enumerate(self.resolutions):
             pos = xyz * res
-            # Clamp to res-1 so the cell [x0, x0+1] is always non-degenerate; x0 == res
-            # would make all corners identical and the level output constant.
-            pos0 = torch.floor(pos).long().clamp_(0, res - 1)
-            frac = pos - pos0
+            pos0, frac = _floor_cell(pos, res)
             x0, y0, z0 = pos0[:, 0], pos0[:, 1], pos0[:, 2]
             x1 = (x0 + 1).clamp(max=res)
             y1 = (y0 + 1).clamp(max=res)

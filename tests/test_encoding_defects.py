@@ -17,7 +17,6 @@ an invariant a later sparse-index encoder relies on. `TestBoundaryClamp`
 pins that invariant directly rather than comparing values across the change.
 """
 
-import math
 import sys
 import unittest
 from pathlib import Path
@@ -26,7 +25,12 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nrp.torch_backend.encoding import _PRIMES, HashEncoding2D, HashEncoding3D  # noqa: E402
+from nrp.torch_backend.encoding import (  # noqa: E402
+    _PRIMES,
+    HashEncoding2D,
+    HashEncoding3D,
+    _floor_cell,
+)
 
 
 class TestHashPrecedence(unittest.TestCase):
@@ -80,13 +84,19 @@ class TestBoundaryClamp(unittest.TestCase):
     # exactly the upper boundary on every axis.
     _COORDS_1D = [0.0, 0.37, 1.0]
 
-    def _pos0_frac(self, coord: float, res: int) -> tuple[int, float]:
-        """Recompute pos0/frac exactly as the encoders do, from `resolutions`,
-        without touching any production code or hook."""
-        pos = coord * res
-        pos0 = min(max(int(math.floor(pos)), 0), res - 1)
-        frac = pos - pos0
-        return pos0, frac
+    def test_floor_cell_invariant(self):
+        """Directly exercise the production `_floor_cell` helper across a range of
+        resolutions and coordinates, including the exact boundaries 0.0 and 1.0."""
+        for res in (1, 4, 16, 256):
+            coords = torch.tensor(self._COORDS_1D, dtype=torch.float32)
+            pos = coords * res
+            pos0, frac = _floor_cell(pos, res)
+            x1 = (pos0 + 1).clamp(max=res)
+            self.assertTrue(bool((frac >= 0.0).all()), f"frac < 0 at res={res}")
+            self.assertTrue(bool((frac <= 1.0).all()), f"frac > 1 at res={res}")
+            self.assertTrue(
+                bool((x1 > pos0).all()), f"degenerate cell at res={res}: pos0={pos0}, x1={x1}"
+            )
 
     def test_2d_clamp_invariant_and_finite_output(self):
         enc = HashEncoding2D(
@@ -100,17 +110,15 @@ class TestBoundaryClamp(unittest.TestCase):
             enc.tables[0].uniform_(-1.0, 1.0)
             enc.tables[1].uniform_(-1.0, 1.0)
         coords = [(x, y) for x in self._COORDS_1D for y in self._COORDS_1D]
+        xy = torch.tensor(coords, dtype=torch.float32)
         for level, res in enumerate(enc.resolutions):
-            for x, y in coords:
-                x0, xfrac = self._pos0_frac(x, res)
-                y0, yfrac = self._pos0_frac(y, res)
-                x1 = min(x0 + 1, res)
-                y1 = min(y0 + 1, res)
-                for frac in (xfrac, yfrac):
-                    self.assertGreaterEqual(frac, 0.0)
-                    self.assertLessEqual(frac, 1.0)
-                self.assertGreater(x1, x0, f"degenerate x cell at level {level}, x={x}")
-                self.assertGreater(y1, y0, f"degenerate y cell at level {level}, y={y}")
+            pos0, frac = _floor_cell(xy * res, res)
+            x1 = (pos0[:, 0] + 1).clamp(max=res)
+            y1 = (pos0[:, 1] + 1).clamp(max=res)
+            self.assertTrue(bool((frac >= 0.0).all()), f"frac < 0 at level {level}")
+            self.assertTrue(bool((frac <= 1.0).all()), f"frac > 1 at level {level}")
+            self.assertTrue(bool((x1 > pos0[:, 0]).all()), f"degenerate x cell at level {level}")
+            self.assertTrue(bool((y1 > pos0[:, 1]).all()), f"degenerate y cell at level {level}")
 
         inputs = torch.tensor(coords, dtype=torch.float32)
         out = enc(inputs)
@@ -131,20 +139,17 @@ class TestBoundaryClamp(unittest.TestCase):
         coords = [
             (x, y, z) for x in self._COORDS_1D for y in self._COORDS_1D for z in self._COORDS_1D
         ]
+        xyz = torch.tensor(coords, dtype=torch.float32)
         for level, res in enumerate(enc.resolutions):
-            for x, y, z in coords:
-                x0, xfrac = self._pos0_frac(x, res)
-                y0, yfrac = self._pos0_frac(y, res)
-                z0, zfrac = self._pos0_frac(z, res)
-                x1 = min(x0 + 1, res)
-                y1 = min(y0 + 1, res)
-                z1 = min(z0 + 1, res)
-                for frac in (xfrac, yfrac, zfrac):
-                    self.assertGreaterEqual(frac, 0.0)
-                    self.assertLessEqual(frac, 1.0)
-                self.assertGreater(x1, x0, f"degenerate x cell at level {level}, x={x}")
-                self.assertGreater(y1, y0, f"degenerate y cell at level {level}, y={y}")
-                self.assertGreater(z1, z0, f"degenerate z cell at level {level}, z={z}")
+            pos0, frac = _floor_cell(xyz * res, res)
+            x1 = (pos0[:, 0] + 1).clamp(max=res)
+            y1 = (pos0[:, 1] + 1).clamp(max=res)
+            z1 = (pos0[:, 2] + 1).clamp(max=res)
+            self.assertTrue(bool((frac >= 0.0).all()), f"frac < 0 at level {level}")
+            self.assertTrue(bool((frac <= 1.0).all()), f"frac > 1 at level {level}")
+            self.assertTrue(bool((x1 > pos0[:, 0]).all()), f"degenerate x cell at level {level}")
+            self.assertTrue(bool((y1 > pos0[:, 1]).all()), f"degenerate y cell at level {level}")
+            self.assertTrue(bool((z1 > pos0[:, 2]).all()), f"degenerate z cell at level {level}")
 
         inputs = torch.tensor(coords, dtype=torch.float32)
         out = enc(inputs)
