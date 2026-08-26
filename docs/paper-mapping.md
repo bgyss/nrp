@@ -119,17 +119,16 @@ that artifact used a different validation-light stream and initialization regime
 A three-seed controlled follow-up confirms the negative (world3d passes only 1/3
 seeds). A world-anchored tri-plane extension reduces observed hash collisions and
 has a near-zero mean delta, but passes only 2/3 seeds and is not promoted. Neither
-result is claimed as paper fidelity or as a promoted multi-camera result. The R1
-binding failure still halts promotion of representation rungs R2–R6. R1A found a
-target-scale tri-plane candidate that passes five Kitchen seeds, but R1C rejects it
-at a 90° coordinate rotation on seed 2 (−1.045 dB); R1E passes all five Bedroom
-seeds and does not erase that failure. R2's separate camera-conditioned
-implementation pilot is also an honest negative: its three-view conditioned PSNR
-deltas are −1.067, −1.513, and −2.916 dB against same-light-set per-view controls,
-outside R2's ≤1 dB gate. Evidence: `out/r1-worldgrid/report.json`,
-`out/r1-followup/report.json`, `out/r1a/report.json`,
-`out/r1-promotion/report.json`, `out/r2-conditioned/report.json`, and
-`docs/representation-track.md`.
+result is claimed as paper fidelity or as a promoted multi-camera result. R1A found
+a target-scale tri-plane candidate that passes five Kitchen seeds, but the corrected
+R1C matrix fails multiple coordinate-frame cells and R1E fails Bedroom seed 4 by
+3.083 dB. The binding R1 failure still halts promotion of representation rungs
+R2–R6. R2's separate camera-conditioned implementation pilot is also an honest
+negative: its three-view conditioned PSNR deltas are −1.067, −1.513, and −2.916 dB
+against same-light-set per-view controls, outside R2's ≤1 dB gate. Evidence:
+`out/r1-worldgrid/report.json`, `out/r1-followup/report.json`,
+`out/r1a/report.json`, `out/r1-promotion/report.json`,
+`out/r2-conditioned/report.json`, and `docs/representation-track.md`.
 
 *Deviation (opt-in):* texture-kernel head for `textured_quad` proxies
 (`model.texture_conditioning: "kernel"`, hardening track rung H3). Instead of

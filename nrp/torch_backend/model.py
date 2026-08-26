@@ -59,6 +59,7 @@ class TorchNRP(nn.Module):
         encoding: dict | None = None,
         spatial_encoding: str = "pixel2d",
         world_bounds: dict | None = None,
+        world_transform: dict | None = None,
         camera_conditioned: bool = False,
         use_encoding: bool = True,
         use_aux: bool = True,
@@ -120,6 +121,34 @@ class TorchNRP(nn.Module):
             self.world_min = None
             self.world_extent = None
             normalized_bounds = None
+        if world_transform is not None and spatial_encoding == "pixel2d":
+            raise ValueError("world_transform requires a world spatial encoding")
+        if world_transform is None:
+            self.world_origin = None
+            self.world_basis = None
+            normalized_transform = None
+        else:
+            if not isinstance(world_transform, dict) or set(world_transform) != {
+                "origin",
+                "basis",
+            }:
+                raise ValueError("world_transform must contain exactly 'origin' and 'basis'")
+            origin = torch.as_tensor(world_transform["origin"], dtype=torch.float32)
+            basis = torch.as_tensor(world_transform["basis"], dtype=torch.float32)
+            if origin.shape != (3,):
+                raise ValueError("world_transform origin must contain three values")
+            if basis.shape != (3, 3):
+                raise ValueError("world_transform basis must have shape (3, 3)")
+            if not bool(torch.isfinite(origin).all() and torch.isfinite(basis).all()):
+                raise ValueError("world_transform must be finite")
+            if not bool(torch.allclose(basis.T @ basis, torch.eye(3), atol=1e-5)):
+                raise ValueError("world_transform basis must be orthonormal")
+            self.register_buffer("world_origin", origin)
+            self.register_buffer("world_basis", basis)
+            normalized_transform = {
+                "origin": origin.tolist(),
+                "basis": basis.tolist(),
+            }
         self.config = {
             "light_type": light_type,
             "light_param_dim": self.light_param_dim,
@@ -128,6 +157,7 @@ class TorchNRP(nn.Module):
             "encoding": encoding or {},
             "spatial_encoding": spatial_encoding,
             "world_bounds": normalized_bounds,
+            "world_transform": normalized_transform,
             "camera_conditioned": self.camera_conditioned,
             "use_encoding": use_encoding,
             "use_aux": use_aux,
@@ -188,6 +218,20 @@ class TorchNRP(nn.Module):
             last.weight.zero_()
             last.bias.fill_(inverse_softplus(target_scale))
 
+    def _transform_light_params(self, light_params: torch.Tensor) -> torch.Tensor:
+        """Map world-space light geometry into the optional canonical world frame."""
+        if self.world_origin is None:
+            return light_params
+        center = (light_params[:, :3] - self.world_origin) @ self.world_basis
+        if self.light_type == "sphere":
+            geometry = torch.cat([center, light_params[:, 3:]], dim=1)
+        else:
+            normal = light_params[:, 3:6] @ self.world_basis
+            geometry = torch.cat([center, normal, light_params[:, 6:]], dim=1)
+        if self.texture_kernel:
+            return torch.cat([geometry, light_params[:, 8:]], dim=1)
+        return geometry
+
     def forward(
         self,
         spatial_coords: torch.Tensor,
@@ -209,10 +253,14 @@ class TorchNRP(nn.Module):
                     f"{self.spatial_encoding} spatial_coords must have shape (N, 3), "
                     f"got {tuple(spatial_coords.shape)}"
                 )
-            normalized = ((spatial_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)
+            world_coords = spatial_coords
+            if self.world_origin is not None:
+                world_coords = (world_coords - self.world_origin) @ self.world_basis
+            normalized = ((world_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)
             spatial = self.encoding(normalized)
         else:
             spatial = self.encoding(spatial_coords) if self.encoding is not None else spatial_coords
+        light_params = self._transform_light_params(light_params)
         camera = None
         if self.camera_conditioned:
             if view_dir is None:

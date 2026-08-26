@@ -2898,26 +2898,34 @@ paper hardware results.
 The remaining bounded ladder is
 `docs/plans/2026-07-27-r1-next-experiments.md`: matched allocation/fusion sweeps,
 coordinate-rotation robustness, localized error analysis, then a second real scene.
-R2 remains blocked unless one world-anchored arm passes the unchanged −0.5 dB floor
-on every seed and both real scenes; this R1A result did not start R2.
+R1A did not start R2; the later R2 implementation pilot is recorded separately as
+an honest negative. R2 remains blocked because the R1 promotion gate was not cleared.
 
 ### R1 promotion audit: R1C coordinate robustness and R1E independent scene
 
 The target-scale `world_triplane` candidate from R1A was tested against the unchanged
 −0.5 dB per-seed rule. The canonical machine-readable result is
-`out/r1-promotion/report.json`; the run used CPU, the `torch` gather backend, OIDN
-targets, 3,000 iterations, batch 4,096, and the matched 106,239-parameter
-world-triplane / 106,085-parameter pixel2d pair.
+`out/r1-promotion/report.json`; the corrected run used CPU, the NumPy gather backend,
+OIDN targets with one thread pinned for TBB/OIDN/OpenMP/MKL, 3,000 iterations, batch
+4,096, and the matched 106,239-parameter world-triplane / 106,085-parameter pixel2d
+pair.
 
-R1C stopped at the first decisive coordinate-robustness slice: a 90° rotation about
-the scene Y/up axis with AABB normalization. The five paired deltas were +0.317,
-+0.734, **−1.045**, −0.453, and +0.946 dB for seeds 0–4. Seed 2 fails the gate,
-so 4/5 is not promotion evidence. The remaining 180° and percentile-bound variants
-were intentionally not run after this binding failure.
+The complete R1C matrix is:
+
+| normalization | 0° pass count | 90° pass count | 180° pass count | worst delta (dB) |
+|---|---:|---:|---:|---:|
+| AABB | 5/5 | 3/5 | 3/5 | −3.651 |
+| 1st–99th percentile | 2/5 | 2/5 | 3/5 | −3.612 |
+
+The initial 90° AABB seed-2 measurement (−1.045 dB) was not valid promotion evidence
+because it mixed a Torch gather backend with process-variable OIDN output. With the
+execution contract fixed, that row is replaced by a reproducible −3.651 dB failure,
+and the full matrix still has binding per-seed failures. Percentile normalization
+also clamps 5.35% of first-hit positions outside its bounds.
 
 R1E independently re-traced the Mitsuba Bedroom gallery scene at 128² / 64 spp /
-4 bounces. Its five paired deltas were +0.806, −0.134, +0.140, +1.772, and +0.442
-dB; all five pass. This confirms the candidate on a second real scene but cannot
-erase the R1C failure. The final promotion field is `false`, and R1 remains
-unpromoted. The evidence is a measured robustness negative, not a claim that the
-world-triplane idea is uniformly invalid.
+4 bounces under the same corrected protocol. Its five paired deltas are +1.526,
++0.811, +0.142, +2.060, and **−3.083** dB for seeds 0–4; seed 4 fails. The final
+promotion field is `false`, and R1 remains unpromoted. The evidence is a measured
+robustness/generalization negative, not a claim that the world-triplane idea is
+uniformly invalid.

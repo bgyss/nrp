@@ -14,10 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from examples.r1_promotion import (  # noqa: E402
     aggregate_reports,
+    canonical_world_transform,
     out_of_bounds_fraction,
     percentile_bounds,
     promotion_gate,
     r1a_seed_rows,
+    r1c_coverage_complete,
+    r1c_runs_coverage_complete,
+    r1e_seed_coverage_complete,
     rotation_matrix_y,
     transform_cache,
 )
@@ -49,6 +53,26 @@ class R1PromotionHelperTests(unittest.TestCase):
         self.assertAlmostEqual(float(np.linalg.det(rotation)), 1.0, places=12)
         np.testing.assert_allclose(
             rotation @ np.array([1.0, 0.0, 0.0]), [0.0, 0.0, -1.0], atol=1e-12
+        )
+
+    def test_pca_world_frame_is_invariant_to_rigid_rotation(self):
+        positions = np.array(
+            [
+                [-2.0, -0.3, 1.0],
+                [-0.4, 1.2, 0.1],
+                [0.7, -0.8, 2.4],
+                [1.3, 0.6, -0.5],
+                [2.1, 1.5, 0.9],
+            ]
+        )
+        transform, canonical = canonical_world_transform(positions)
+        rotated = positions @ rotation_matrix_y(90.0).T
+        rotated_transform, rotated_canonical = canonical_world_transform(rotated)
+        np.testing.assert_allclose(canonical, rotated_canonical, atol=1e-10)
+        np.testing.assert_allclose(
+            np.asarray(rotated_transform["basis"]),
+            rotation_matrix_y(90.0) @ np.asarray(transform["basis"]),
+            atol=1e-10,
         )
 
     def test_transform_cache_rotates_world_geometry_and_preserves_shapes(self):
@@ -104,6 +128,26 @@ class R1PromotionHelperTests(unittest.TestCase):
         self.assertEqual([row["seed"] for row in rows], [0, 1])
         self.assertEqual([row["delta_db"] for row in rows], [-0.1, -0.6])
         self.assertEqual([row["gate_pass"] for row in rows], [True, False])
+
+    def test_r1c_coverage_requires_all_planned_rotations_and_bounds(self):
+        self.assertTrue(r1c_coverage_complete([0.0, 90.0, 180.0], ["aabb", "percentile"]))
+        self.assertFalse(r1c_coverage_complete([0.0, 90.0], ["aabb", "percentile"]))
+        self.assertFalse(r1c_coverage_complete([0.0, 90.0, 180.0], ["aabb"]))
+
+    def test_r1c_coverage_requires_five_seeds_in_each_cell(self):
+        complete = [
+            {"seed": seed, "rotation_degrees": rotation, "bounds_mode": bounds}
+            for rotation in (0.0, 90.0, 180.0)
+            for bounds in ("aabb", "percentile")
+            for seed in range(5)
+        ]
+        self.assertTrue(r1c_runs_coverage_complete(complete))
+        self.assertFalse(r1c_runs_coverage_complete(complete[:-1]))
+
+    def test_r1e_coverage_requires_the_fixed_five_seeds(self):
+        complete = [{"seed": seed} for seed in range(5)]
+        self.assertTrue(r1e_seed_coverage_complete(complete))
+        self.assertFalse(r1e_seed_coverage_complete(complete[:4]))
 
     def test_aggregate_report_does_not_promote_partial_r1c_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:

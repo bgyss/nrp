@@ -277,6 +277,47 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.spatial_encoding, "world_triplane")
         torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
 
+    def test_world_transform_maps_inputs_before_normalization(self):
+        common = {
+            "hidden_width": 8,
+            "hidden_layers": 1,
+            "encoding": {"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            "spatial_encoding": "world3d",
+            "world_bounds": {"min": [0, 0, 0], "max": [1, 1, 1]},
+        }
+        transformed = TorchNRP(
+            **common,
+            world_transform={"origin": [1, 0, 0], "basis": np.eye(3).tolist()},
+        )
+        raw = TorchNRP(**common)
+        for source, destination in zip(transformed.parameters(), raw.parameters(), strict=True):
+            destination.data.copy_(source.data)
+        xyz_raw = torch.tensor([[1.2, 0.3, 0.4], [1.7, 0.8, 0.1]])
+        xyz_transformed = xyz_raw - torch.tensor([1.0, 0.0, 0.0])
+        aux, lp = torch.rand(2, 7), torch.rand(2, 4)
+        lp_transformed = lp.clone()
+        lp_transformed[:, :3] -= torch.tensor([1.0, 0.0, 0.0])
+        torch.testing.assert_close(
+            transformed(xyz_raw, aux, lp), raw(xyz_transformed, aux, lp_transformed)
+        )
+
+    def test_world_transform_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world_triplane",
+            world_bounds={"min": [0, 0, 0], "max": [1, 1, 1]},
+            world_transform={"origin": [1, 2, 3], "basis": np.eye(3).tolist()},
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.config["world_transform"]["origin"], [1.0, 2.0, 3.0])
+        torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
+
     def test_spatial_encoding_config_validation(self):
         self.assertEqual(validate_torch_config({"model": {}}), "pixel2d")
         self.assertEqual(

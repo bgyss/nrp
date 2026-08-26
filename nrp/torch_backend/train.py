@@ -345,6 +345,7 @@ def train(cfg: dict, resume: bool = False) -> dict:
         world_bounds=(
             configured_world_bounds(cache, cfg) if spatial_encoding != "pixel2d" else None
         ),
+        world_transform=cfg["model"].get("world_transform"),
         use_encoding=cfg["model"].get("use_encoding", True),
         use_aux=cfg["model"].get("use_aux", True),
         texture_kernel=cfg["model"].get("texture_conditioning") == "kernel",

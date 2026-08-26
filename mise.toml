@@ -203,7 +203,7 @@ run = "uv run python examples/r1a_variance.py"
 
 [tasks.r1-promotion]
 description = "R1 promotion audit: coordinate robustness plus independent 128² real-scene confirmation"
-run = "uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom"
+run = "uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --gather-backend numpy --workers 2"
 
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"

@@ -8,10 +8,10 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| R1 | World-space encoding at parity | **done — honest negative**: toy passes; Country Kitchen passes on only 1/3 controlled seeds | `out/r1-worldgrid/report.json`, `out/r1-followup/report.json`, `docs/performance.md#world-space-encoding-at-parity-representation-track-rung-r1` |
+| R1 | World-space encoding at parity | **not promoted — direct world3d negative; tri-plane candidate fails corrected R1C/R1E gates** | `out/r1-worldgrid/report.json`, `out/r1-followup/report.json`, `out/r1-promotion/report.json`, `docs/performance.md#world-space-encoding-at-parity-representation-track-rung-r1` |
 | R1 follow-up | Provenance, collision, and tri-plane diagnosis | **done — candidate not promoted**: tri-plane passes on 2/3 seeds, but fails the unchanged per-seed gate | `out/r1-followup/report.json`, `docs/plans/2026-07-27-r1-next-experiments.md` |
-| R1A | Five-seed variance decomposition | **done — candidate identified**: target-scale world tri-plane passes all 5 Kitchen seeds | `out/r1a/report.json`, `examples/r1a_variance.py` |
-| R1 promotion audit | R1C coordinate robustness + R1E independent scene | **not promoted — R1C fails seed 2 at 90° AABB; R1E Bedroom passes 5/5** | `out/r1-promotion/report.json`, `examples/r1_promotion.py` |
+| R1A | Five-seed variance decomposition | **candidate only**: target-scale world tri-plane passes all 5 original Kitchen seeds | `out/r1a/report.json`, `examples/r1a_variance.py` |
+| R1 promotion audit | R1C coordinate robustness + R1E independent scene | **not promoted — corrected R1C and R1E both contain binding failures** | `out/r1-promotion/report.json`, `examples/r1_promotion.py` |
 | R2 | One network, N cameras | **implemented pilot — honest negative; promotion blocked by R1 gate** | `out/r2-conditioned/report.json`, `docs/performance.md#r2-one-network-n-cameras` |
 | R3 | Novel-view interpolation | blocked by R1/R2; not attempted | — |
 | R4 | Real scene, real scale | blocked by R2; not attempted | — |
@@ -99,8 +99,8 @@ The target-scale world tri-plane is the only crossed world-policy arm whose ever
 seed clears the unchanged gate. The framework-default policy does not reproduce that
 result: its tri-plane arm fails two seeds, including seed 0. This is evidence of an
 initialization/representation interaction, not permission to average away the failed
-seeds. R2 remains unattempted and unauthorized; no camera-conditioned experiment was
-started from this result.
+seeds. R2 was not started from this result; its later camera-conditioned pilot is
+recorded below as an honest negative and does not change the R1 prerequisite.
 
 All arms use 106,085 parameters for pixel2d, 106,345 for world3d, and 106,239 for
 world tri-plane, with 3,000 iterations, batch size 4,096, the 64-image pool, CPU
@@ -110,39 +110,39 @@ the same architecture and comparable throughput.
 
 ## R1 promotion audit
 
-The target-scale world-triplane candidate passes the five paired Kitchen seeds in
-R1A, but the unchanged promotion rule also requires coordinate robustness and an
-independent real scene. The audit uses the same −0.5 dB per-seed threshold and
-stops the R1C matrix after its first decisive failure rather than averaging it away.
+R1A's target-scale world-triplane candidate passes the five paired Kitchen seeds,
+but the corrected promotion audit uses the authoritative NumPy gather backend,
+OIDN with pinned one-thread execution, and the unchanged −0.5 dB per-seed gate.
+The canonical result is `out/r1-promotion/report.json`; `promoted` is false.
 
-R1C's 90° Y-axis rotation with AABB normalization produced these paired deltas on
-the Country Kitchen cache:
+The complete R1C matrix shows that no tested normalization is robust across the
+three coordinate frames:
 
-| seed | pixel2d control (dB) | world tri-plane (dB) | delta (dB) | gate |
-|---:|---:|---:|---:|---|
-| 0 | 18.11 | 18.43 | +0.317 | pass |
-| 1 | 19.75 | 20.48 | +0.734 | pass |
-| 2 | 15.80 | 14.75 | **−1.045** | **fail** |
-| 3 | 21.09 | 20.63 | −0.453 | pass |
-| 4 | 24.50 | 25.45 | +0.946 | pass |
+| normalization | 0° pass count | 90° pass count | 180° pass count | worst delta (dB) |
+|---|---:|---:|---:|---:|
+| AABB | 5/5 | 3/5 | 3/5 | −3.651 |
+| 1st–99th percentile | 2/5 | 2/5 | 3/5 | −3.612 |
 
-Only 4/5 seeds pass. The R1C stop condition therefore fired; the remaining 180°
-and percentile-bound variants were not used to manufacture a promotion decision.
+The initial 90° AABB seed-2 measurement (−1.045 dB) is replaced by a reproducible
+−3.651 dB failure when the gather backend is made consistent; the corrected run
+also fails 90° AABB seed 3 and 180° AABB seeds 2/3. Percentile normalization adds
+out-of-bounds clamping (5.35% of first-hit positions) and fails at least two seeds
+in every orientation. These are per-seed failures, not mean-only effects.
 
 R1E independently re-traced the Mitsuba Bedroom gallery scene at 128² / 64 spp /
-4 bounces and ran the same five-seed target-scale tri-plane versus pixel2d control:
+4 bounces under the same corrected protocol:
 
 | seed | delta (dB) | gate |
 |---:|---:|---|
-| 0 | +0.806 | pass |
-| 1 | −0.134 | pass |
-| 2 | +0.140 | pass |
-| 3 | +1.772 | pass |
-| 4 | +0.442 | pass |
+| 0 | +1.526 | pass |
+| 1 | +0.811 | pass |
+| 2 | +0.142 | pass |
+| 3 | +2.060 | pass |
+| 4 | **−3.083** | **fail** |
 
-R1E passes 5/5, but it cannot compensate for the R1C seed-2 failure. The canonical
-audit is `out/r1-promotion/report.json`; its `promoted` field is false and its stop
-reason names the failing R1C row. R1 remains unpromoted, so R2's measured quality
+The exact execution correction resolved the earlier backend/process confound, but
+it did not rescue the candidate: R1C remains coordinate-sensitive and R1E fails
+one independent-scene seed. R1 is therefore not promoted. R2's measured quality
 negative and the R3–R6 promotion gates remain unchanged.
 
 ## R2 implementation and pilot
@@ -174,7 +174,7 @@ the per-view baseline path measured 4.66 / 9.18 / 13.67 ms. Validation light
 sets were disjoint for all three views, and the report records those checks directly.
 
 This is an R2 implementation/pilot result, not evidence for novel-view
-interpolation or R3–R6 promotion. The R1 candidate promotion gates remain open.
+interpolation or R3–R6 promotion. The R1 candidate promotion gates remain closed.
 
 ## Reproduce and verify
 
@@ -185,10 +185,18 @@ The standard configs are the 2D controls; the matched world-grid configs are
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_worldgrid.py --devices cpu mps
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_failure_analysis.py --reuse
 UV_CACHE_DIR=.uv-cache uv run python examples/r1a_variance.py --seeds 0 1 2 3 4 --denoise-method oidn
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --gather-backend numpy --denoise-method oidn --workers 2
 mise run test
 mise run lint
 mise run pipeline-audit
+```
+
+The Bedroom cache is generated locally rather than vendored. Recreate it with the
+existing downloader/exporter before the promotion command:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/scenes/download_scene.py bedroom
+UV_CACHE_DIR=.uv-cache uv run python -m nrp.mitsuba_exporter --scene examples/scenes/bedroom/scene.xml --width 128 --height 128 --spp 64 --bounces 4 --mode scalar --out out/r1-promotion/bedroom_cache.npz
 ```
 
 The experiment command exits nonzero after writing all JSON evidence when the
