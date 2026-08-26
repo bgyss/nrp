@@ -76,8 +76,15 @@ Reported honestly, with measured impact:
   masking commutes with the XOR. It did not cause the negative. It is latent and
   breaks as soon as `res >= table_size`.
 - `nrp/torch_backend/encoding.py:67` and `:158` — `floor(pos).clamp(0, res)`
-  should clamp to `res - 1`; `x0 == res` yields a degenerate cell with constant
-  output. Affects 6 of 16384 kitchen points.
+  should clamp to `res - 1`; `x0 == res` yields a degenerate cell.
+  **Correction (2026-08-26, during implementation):** this was overstated. The
+  change is a verified **no-op for every in-range input**, not a defect. At
+  `xy = 1.0` the old code gives `pos0 = res, frac = 0`, selecting the corner
+  entry; the new code gives `pos0 = res - 1, frac = 1.0`, whose interpolation
+  weights collapse onto that same entry. Measured max absolute difference over
+  in-range points: 0.0. The clamp is retained as an invariant guarantee
+  (`frac ∈ [0, 1]`, non-degenerate cell) that arm B's sparse lookup relies on,
+  and its tests assert that invariant rather than a behavioural change.
 - `nrp/torch_backend/streamed_train.py:373` — `_pixel_tensors` is called
   unconditionally, so the S1 streamed path has no world-position support at all.
   Rung R4 is structurally blocked on this.
