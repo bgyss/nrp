@@ -197,6 +197,10 @@ run = "uv run python examples/r1_worldgrid.py --devices cpu mps"
 description = "R1 failure analysis: provenance, seed stability, collision diagnostics, and matched tri-plane"
 run = "uv run python examples/r1_failure_analysis.py --reuse"
 
+[tasks.r1a]
+description = "R1A five-seed paired representation and output-bias matrix (writes evidence before the no-candidate gate)"
+run = "uv run python examples/r1a_variance.py"
+
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"
 run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"
