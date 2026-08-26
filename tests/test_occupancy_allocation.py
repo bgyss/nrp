@@ -79,17 +79,48 @@ class TestOccupancyAllocation(unittest.TestCase):
         self.assertEqual(len(enc._dense), enc.levels)
 
     def test_rejects_occupancy_whose_resolutions_mismatch_full_schedule(self):
-        """Validate against the FULL schedule before truncation, not after.
+        """A large, non-truncating budget still rejects a mismatched schedule.
 
-        Occupancy computed for the wrong base/finest resolution has the wrong
-        per-level resolutions; that must be caught even though the budget below
-        would otherwise truncate the encoder down to levels where, by coincidence
-        of construction, the mismatch might not be scrutinized.
+        This only proves mismatch is rejected at all; it does not pin down *when*
+        the comparison happens, since the budget here is large enough that no
+        truncation occurs. See
+        test_rejects_occupancy_mismatch_even_when_budget_would_truncate_it_away
+        below for the case that actually discriminates before-truncation
+        validation from after-truncation validation.
         """
         wrong_res = level_resolutions(BASE["levels"], base_resolution=5, finest_resolution=32)
         rng = np.random.default_rng(0)
         occ = grid_occupancy(rng.random((400, 3)), wrong_res)
         budget = sum(o.count for o in occ) * 2
+        with self.assertRaises(ValueError):
+            HashEncoding3D(
+                allocation="occupancy",
+                occupancy=occ,
+                slot_budget=budget,
+                table_size_log2=8,
+                **BASE,
+            )
+
+    def test_rejects_occupancy_mismatch_even_when_budget_would_truncate_it_away(self):
+        """Validate against the FULL schedule before truncation, not after.
+
+        The occupancy here is built from a resolution schedule whose *coarsest*
+        level happens to coincide with the encoder's real schedule (both are 4),
+        while every finer level diverges. Combined with a budget tight enough to
+        truncate the encoder down to just that one surviving coarsest level, a
+        validator that compared post-truncation resolutions would only ever see
+        the matching level and would wrongly accept the mismatched occupancy.
+        Validating against the full, untruncated schedule catches it regardless.
+        """
+        wrong_res = level_resolutions(BASE["levels"], base_resolution=4, finest_resolution=64)
+        self.assertEqual(wrong_res[0], 4)  # coarsest level coincides with the real schedule
+        self.assertNotEqual(
+            wrong_res, level_resolutions(BASE["levels"], BASE["base_resolution"], 32)
+        )
+        rng = np.random.default_rng(0)
+        occ = grid_occupancy(rng.random((400, 3)), wrong_res)
+        # Budget only large enough for the coarsest (matching) level to survive.
+        budget = occ[0].count
         with self.assertRaises(ValueError):
             HashEncoding3D(
                 allocation="occupancy",

@@ -8,8 +8,6 @@ corners. Both are plain-PyTorch instant-ngp-style implementations.
 
 from __future__ import annotations
 
-import math
-
 import torch
 from torch import nn
 
@@ -63,14 +61,7 @@ class HashEncoding2D(nn.Module):
         self.levels = levels
         self.features_per_level = features_per_level
         self.table_size = 1 << table_size_log2
-        growth = (
-            math.exp(math.log(finest_resolution / base_resolution) / max(levels - 1, 1))
-            if levels > 1
-            else 1.0
-        )
-        self.resolutions = [
-            max(int(math.floor(base_resolution * growth**level)), 1) for level in range(levels)
-        ]
+        self.resolutions = level_resolutions(levels, base_resolution, finest_resolution)
         # One table per level. Dense when the grid fits (no collisions), hashed otherwise.
         self.tables = nn.ParameterList()
         self._dense = []
@@ -163,14 +154,7 @@ class HashEncoding3D(nn.Module):
         self.levels = levels
         self.features_per_level = features_per_level
         self.table_size = 1 << table_size_log2
-        growth = (
-            math.exp(math.log(finest_resolution / base_resolution) / max(levels - 1, 1))
-            if levels > 1
-            else 1.0
-        )
-        self.resolutions = [
-            max(int(math.floor(base_resolution * growth**level)), 1) for level in range(levels)
-        ]
+        self.resolutions = level_resolutions(levels, base_resolution, finest_resolution)
         self.tables = nn.ParameterList()
         self._dense = []
         if allocation == "uniform":
@@ -229,13 +213,12 @@ class HashEncoding3D(nn.Module):
         self, ix: torch.Tensor, iy: torch.Tensor, iz: torch.Tensor, level: int
     ) -> torch.Tensor:
         res = self.resolutions[level]
-        if self.allocation == "occupancy" and not self._dense[level]:
-            hashed = (ix * _PRIMES[0]) ^ (iy * _PRIMES[1]) ^ (iz * _PRIMES[2])
-            return hashed % self.tables[level].shape[0]
         if self._dense[level]:
             side = res + 1
             return (iz * side + iy) * side + ix
         hashed = (ix * _PRIMES[0]) ^ (iy * _PRIMES[1]) ^ (iz * _PRIMES[2])
+        if self.allocation == "occupancy":
+            return hashed % self.tables[level].shape[0]
         return hashed & (self.table_size - 1)
 
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
