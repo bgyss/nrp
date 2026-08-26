@@ -122,6 +122,61 @@ class TestG1(unittest.TestCase):
         self.assertTrue(gate["passed"])
         self.assertEqual(gate["coverage_status"], "not_requested")
 
+    def test_row_above_floor_and_above_delta_passes(self):
+        rows = [_row(delta_db=2.0, psnr_db=25.0)]
+        gate = g1_generalization(rows, absolute_floor_db=20.0)
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["failures"], [])
+        self.assertEqual(gate["absolute_floor_db"], 20.0)
+
+    def test_row_above_delta_but_below_floor_fails_naming_the_floor(self):
+        rows = [_row(delta_db=2.0, psnr_db=15.0)]
+        gate = g1_generalization(rows, threshold_db=1.0, absolute_floor_db=20.0)
+        self.assertFalse(gate["passed"])
+        self.assertEqual(len(gate["failures"]), 1)
+        self.assertIn("below_absolute_floor", gate["failures"][0]["reasons"])
+        self.assertNotIn("below_delta_threshold", gate["failures"][0]["reasons"])
+
+    def test_row_above_floor_but_below_delta_fails_naming_the_delta(self):
+        rows = [_row(delta_db=0.2, psnr_db=25.0)]
+        gate = g1_generalization(rows, threshold_db=1.0, absolute_floor_db=20.0)
+        self.assertFalse(gate["passed"])
+        self.assertEqual(len(gate["failures"]), 1)
+        self.assertIn("below_delta_threshold", gate["failures"][0]["reasons"])
+        self.assertNotIn("below_absolute_floor", gate["failures"][0]["reasons"])
+
+    def test_absolute_floor_omitted_matches_pre_change_result(self):
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(5) for c in range(4)]
+        rows[7]["delta_db"] = 0.4
+        gate = g1_generalization(rows)
+        # Pre-change shape: failures entries have no "reasons" key, and passed/
+        # failures/coverage fields match exactly what the prior implementation
+        # produced for this input.
+        self.assertFalse(gate["passed"])
+        self.assertEqual(len(gate["failures"]), 1)
+        self.assertNotIn("reasons", gate["failures"][0])
+        self.assertEqual(
+            gate["failures"][0],
+            {
+                "arm": rows[7]["arm"],
+                "seed": rows[7]["seed"],
+                "camera": rows[7]["camera"],
+                "delta_db": 0.4,
+            },
+        )
+        self.assertIsNone(gate["absolute_floor_db"])
+
+    def test_row_exactly_at_floor_passes_inclusive(self):
+        rows = [_row(delta_db=2.0, psnr_db=20.0)]
+        gate = g1_generalization(rows, absolute_floor_db=20.0)
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["failures"], [])
+
+    def test_empty_rows_with_floor_supplied_is_not_a_vacuous_pass(self):
+        gate = g1_generalization([], absolute_floor_db=20.0)
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["absolute_floor_db"], 20.0)
+
 
 class TestG3(unittest.TestCase):
     def test_reports_per_seed_pass_and_spread(self):

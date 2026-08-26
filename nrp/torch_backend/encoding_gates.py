@@ -21,11 +21,28 @@ def g1_generalization(
     threshold_db: float = 1.0,
     expected_seeds: set | None = None,
     expected_cameras: set | None = None,
+    absolute_floor_db: float | None = None,
 ) -> dict:
     """Held-out-camera promotion gate: every seed at every camera must clear the bar.
 
     The baseline is the nearest trained view's pixel2d proxy reused at the held-out
-    camera -- the only thing a screen-space proxy can do at a novel camera.
+    camera -- the only thing a screen-space proxy can do at a novel camera. Beating
+    that baseline by ``threshold_db`` alone is a comparative pass; the baseline is a
+    weak opponent (a screen-space proxy indexed by the wrong view's geometry), so a
+    comparative pass alone could mean "beat a strawman" rather than "usable at a
+    novel camera".
+
+    ``absolute_floor_db``, when supplied, adds an absolute requirement alongside the
+    comparative one: every row's ``psnr_db`` must also be at least ``absolute_floor_db``
+    (inclusive, matching ``threshold_db``'s inclusivity). A row failing either
+    condition fails the gate, and its entry in ``failures`` records a ``"reasons"``
+    list (``"below_delta_threshold"`` and/or ``"below_absolute_floor"``) so a reader
+    can tell "beat the baseline but too dim in absolute terms" from "did not beat the
+    baseline". When ``absolute_floor_db`` is omitted (the default), the floor is not
+    checked and failure entries are unchanged from before this parameter existed --
+    behaviour is byte-identical to prior callers. ``absolute_floor_db`` is always
+    echoed back in the result (mirroring ``coverage_status``) so a reader can never
+    mistake "no floor was checked" for "floor was cleared".
 
     ``expected_seeds``/``expected_cameras`` are optional coverage requirements: when
     both are supplied and both are non-empty, every expected seed must appear, and
@@ -63,17 +80,29 @@ def g1_generalization(
             "threshold_db": threshold_db,
             "coverage_complete": coverage_complete,
             "coverage_status": coverage_status,
+            "absolute_floor_db": absolute_floor_db,
         }
-    failures = [
-        {
+    failures = []
+    for row in rows:
+        delta = float(row["delta_db"])
+        delta_fails = delta < threshold_db
+        floor_fails = absolute_floor_db is not None and float(row["psnr_db"]) < absolute_floor_db
+        if not delta_fails and not floor_fails:
+            continue
+        entry = {
             "arm": row["arm"],
             "seed": row["seed"],
             "camera": row["camera"],
-            "delta_db": float(row["delta_db"]),
+            "delta_db": delta,
         }
-        for row in rows
-        if float(row["delta_db"]) < threshold_db
-    ]
+        if absolute_floor_db is not None:
+            reasons = []
+            if delta_fails:
+                reasons.append("below_delta_threshold")
+            if floor_fails:
+                reasons.append("below_absolute_floor")
+            entry["reasons"] = reasons
+        failures.append(entry)
     deltas = _deltas(rows)
 
     coverage_complete: bool | None
@@ -102,6 +131,7 @@ def g1_generalization(
         "worst_delta_db": min(deltas),
         "coverage_complete": coverage_complete,
         "coverage_status": coverage_status,
+        "absolute_floor_db": absolute_floor_db,
     }
 
 
