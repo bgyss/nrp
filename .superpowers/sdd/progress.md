@@ -49,3 +49,9 @@ Task 7: complete (commit 0bcc818, review clean, no fix round)
   - fixed pre-existing layer_ownership_mask bug (never accepted camera args)
   - MINOR (deferred): test_default_is_bit_identical_... name promises more than its own
     assertions; real guarantee is in the adjacent reproduces-default test
+
+CARRY-FORWARD REQUIREMENT FOR TASK 11 (runner), raised by the Task 8 reviewer:
+  The runner must NOT treat g3["passed"] or g5["complete"] as standalone gating signals.
+  It must also surface g3["collision_assertions_checked"], g4["coverage_complete"],
+  g1["coverage_complete"], and the row counts, and must pass expected_seeds/expected_cameras
+  to g1 so coverage is actually verified rather than assumed.
