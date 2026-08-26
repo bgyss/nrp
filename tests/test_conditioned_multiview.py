@@ -13,6 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
+from examples.r2_conditioned import camera_pairs_present, quality_gate  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.conditioned_multiview import (  # noqa: E402
@@ -321,6 +322,29 @@ class InferenceTests(unittest.TestCase):
             latency = conditioned_edit_latency_ms(model, views[:2], lights, frames=2, warmup=1)
             self.assertTrue(np.isfinite(latency))
             self.assertGreater(latency, 0.0)
+
+
+class ReportTests(unittest.TestCase):
+    def test_camera_pair_check_requires_origin_and_target(self):
+        self.assertTrue(camera_pairs_present([{"origin": [0, 0, 1], "target": [0, 0, 0]}]))
+        self.assertFalse(camera_pairs_present([{"origin": [0, 0, 1]}]))
+
+    def test_quality_gate_reports_per_view_deltas(self):
+        rows = [
+            {"view": "front", "baseline_psnr_db": 20.0, "conditioned_psnr_db": 19.4},
+            {"view": "side", "baseline_psnr_db": 21.0, "conditioned_psnr_db": 20.5},
+        ]
+        result = quality_gate(rows, tolerance_db=1.0)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["per_view"][0]["delta_db"], -0.6)
+
+    def test_quality_gate_fails_when_one_view_exceeds_tolerance(self):
+        result = quality_gate(
+            [{"view": "front", "baseline_psnr_db": 20.0, "conditioned_psnr_db": 18.99}],
+            tolerance_db=1.0,
+        )
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["per_view"][0]["within_tolerance"], False)
 
 
 if __name__ == "__main__":
