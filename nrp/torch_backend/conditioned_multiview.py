@@ -22,7 +22,7 @@ from ..gather_light import gather_light
 from ..path_cache import PathCache
 from .denoise import denoise_image
 from .device import autocast, resolve_device, resolve_precision
-from .encoder_registry import SPATIAL_ENCODERS
+from .encoder_registry import SPATIAL_ENCODERS, encoder_schedule_params
 from .gather import TorchPathCache
 from .model import TorchNRP, relative_mse_loss
 from .occupancy import grid_occupancy, level_resolutions, normalize_positions
@@ -330,13 +330,12 @@ def train_conditioned(cfg: dict, resume: bool = False) -> dict:
         # Occupancy spans the union of every training view, so a held-out camera
         # looking at the same surfaces lands inside the occupied set.
         stacked = np.concatenate([cache.position.reshape(-1, 3) for cache in caches], axis=0)
+        levels, base_resolution, finest_resolution = encoder_schedule_params(
+            encoding_name, encoding_cfg
+        )
         occupancy = grid_occupancy(
             normalize_positions(stacked, bounds),
-            level_resolutions(
-                int(encoding_cfg.get("levels", 8)),
-                int(encoding_cfg.get("base_resolution", 4)),
-                int(encoding_cfg.get("finest_resolution", 128)),
-            ),
+            level_resolutions(levels, base_resolution, finest_resolution),
         )
 
     model = TorchNRP(

@@ -8,7 +8,11 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nrp.torch_backend.encoder_registry import SPATIAL_ENCODERS, build_encoder  # noqa: E402
+from nrp.torch_backend.encoder_registry import (  # noqa: E402
+    SPATIAL_ENCODERS,
+    build_encoder,
+    encoder_schedule_params,
+)
 from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
 
 CONFIG = {
@@ -37,6 +41,29 @@ class TestRegistry(unittest.TestCase):
             if getattr(cls, "needs_occupancy", False):
                 with self.assertRaises(ValueError, msg=name):
                     build_encoder(name, CONFIG, occupancy=None)
+
+
+class TestEncoderScheduleParams(unittest.TestCase):
+    def test_world3d_defaults_match_the_class_constructor(self):
+        self.assertEqual(encoder_schedule_params("world3d", {}), (8, 4, 256))
+
+    def test_world_sparse_defaults_match_the_class_constructor(self):
+        self.assertEqual(encoder_schedule_params("world_sparse", {}), (8, 4, 128))
+
+    def test_explicit_config_values_override_class_defaults(self):
+        self.assertEqual(
+            encoder_schedule_params(
+                "world3d", {"levels": 3, "base_resolution": 2, "finest_resolution": 32}
+            ),
+            (3, 2, 32),
+        )
+
+    def test_none_config_falls_back_to_class_defaults(self):
+        self.assertEqual(encoder_schedule_params("world3d", None), (8, 4, 256))
+
+    def test_unknown_encoder_raises(self):
+        with self.assertRaises(ValueError):
+            encoder_schedule_params("does_not_exist", {})
 
 
 class TestUniformInterface(unittest.TestCase):

@@ -102,9 +102,7 @@ class ManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "origin"):
             camera_direction({"target": [0.0, 0.0, 0.0]})
         with self.assertRaisesRegex(ValueError, "non-zero"):
-            camera_direction(
-                {"origin": [1.0, 1.0, 1.0], "target": [1.0, 1.0, 1.0]}
-            )
+            camera_direction({"origin": [1.0, 1.0, 1.0], "target": [1.0, 1.0, 1.0]})
 
     def test_manifest_rejects_mixed_resolutions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,9 +171,7 @@ class PoolTests(unittest.TestCase):
     def test_validation_sets_are_per_view_and_disjoint(self):
         caches = [tiny_cache(offset=0.0), tiny_cache(offset=0.2)]
         config = self._config()
-        pool = MultiViewImagePool(
-            caches, config, np.random.default_rng(11), torch.device("cpu")
-        )
+        pool = MultiViewImagePool(caches, config, np.random.default_rng(11), torch.device("cpu"))
         validation = build_validation_sets(caches, config, seed=11)
         self.assertEqual(len(validation), 2)
         self.assertTrue(all(len(entries) == 3 for entries in validation))
@@ -255,13 +251,92 @@ class TrainingTests(unittest.TestCase):
             self.assertTrue(np.isfinite(report["loss_first"]))
             self.assertTrue(np.isfinite(report["loss_last"]))
             self.assertTrue(
-                all(
-                    np.isfinite(row["val_psnr_db_vs_raw_mean"])
-                    for row in report["views"]
-                )
+                all(np.isfinite(row["val_psnr_db_vs_raw_mean"]) for row in report["views"])
             )
             self.assertTrue((out_dir / "model.pt").exists())
             self.assertTrue((out_dir / "conditioned_train_report.json").exists())
+
+
+class OccupancyScheduleRegressionTests(unittest.TestCase):
+    """Guard the schedule-mismatch bug found in review of 25f41aa.
+
+    `train_conditioned` used to build the occupancy resolution schedule with its
+    own hard-coded fallback defaults instead of the encoder class's actual
+    defaults. `world3d` with `allocation: "occupancy"` and no explicit
+    `finest_resolution` diverged (occupancy built at 128, `HashEncoding3D`
+    defaults to 256) and construction raised `ValueError`. Both arms below must
+    train with an otherwise-empty `encoding` config.
+    """
+
+    def _manifest(self, root: Path) -> Path:
+        tiny_cache(width=2, offset=0.0).save(root / "front.npz")
+        tiny_cache(width=2, offset=0.2).save(root / "side.npz")
+        manifest = root / "views.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "views": [
+                        {
+                            "name": "front",
+                            "cache": "front.npz",
+                            "camera": {
+                                "origin": [0.0, 0.0, 2.0],
+                                "target": [0.0, 0.0, 0.0],
+                            },
+                        },
+                        {
+                            "name": "side",
+                            "cache": "side.npz",
+                            "camera": {
+                                "origin": [2.0, 0.0, 0.0],
+                                "target": [0.0, 0.0, 0.0],
+                            },
+                        },
+                    ]
+                }
+            )
+        )
+        return manifest
+
+    def _base_config(self, root: Path, spatial_encoding: str, encoding_cfg: dict) -> dict:
+        return {
+            "manifest": str(self._manifest(root)),
+            "out_dir": str(root / "conditioned"),
+            "light_type": "sphere",
+            "light_bounds": {"radius_min": 0.1, "radius_max": 0.2},
+            "sampling": "segments",
+            "pool": {"size": 2, "replace_every": 2, "replace_count": 1},
+            "denoise": {"enabled": False},
+            "iters": 1,
+            "batch_pixels": 8,
+            "lr": 0.005,
+            "model": {
+                "camera_conditioned": True,
+                "spatial_encoding": spatial_encoding,
+                "hidden_width": 4,
+                "hidden_layers": 1,
+                "encoding": encoding_cfg,
+            },
+            "n_val_lights": 1,
+            "seed": 3,
+            "device": "cpu",
+        }
+
+    def test_world3d_occupancy_allocation_trains_with_empty_encoding_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = train_conditioned(
+                self._base_config(root, "world3d", {"allocation": "occupancy"})
+            )
+            self.assertEqual(report["view_count"], 2)
+            self.assertTrue(np.isfinite(report["loss_last"]))
+
+    def test_world_sparse_trains_with_empty_encoding_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = train_conditioned(self._base_config(root, "world_sparse", {}))
+            self.assertEqual(report["view_count"], 2)
+            self.assertTrue(np.isfinite(report["loss_last"]))
 
 
 class InferenceTests(unittest.TestCase):

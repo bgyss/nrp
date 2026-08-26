@@ -6,6 +6,8 @@ without importing the module that imports it back.
 
 from __future__ import annotations
 
+import inspect
+
 import torch
 
 #: name -> encoder class. `build_encoder` is the only construction path the model uses,
@@ -56,3 +58,31 @@ def build_encoder(name: str, config: dict | None = None, occupancy=None):
             raise ValueError(f"spatial encoding {name!r} requires occupancy")
         kwargs["occupancy"] = occupancy
     return cls(**kwargs)
+
+
+def encoder_schedule_params(name: str, config: dict | None = None) -> tuple[int, int, int]:
+    """Return (levels, base_resolution, finest_resolution) for an encoder.
+
+    Explicit config values win; anything omitted falls back to the ENCODER CLASS's
+    own constructor default, so an occupancy schedule built for a config can never
+    diverge from the schedule the encoder will construct for that same config.
+    """
+    if name not in SPATIAL_ENCODERS:
+        raise ValueError(
+            f"unknown spatial encoding {name!r}; expected one of {sorted(SPATIAL_ENCODERS)}"
+        )
+    cls = SPATIAL_ENCODERS[name]
+    params = inspect.signature(cls.__init__).parameters
+    config = config or {}
+    result = []
+    for key in ("levels", "base_resolution", "finest_resolution"):
+        if key in config:
+            result.append(int(config[key]))
+            continue
+        default = params[key].default if key in params else inspect.Parameter.empty
+        if default is inspect.Parameter.empty:
+            raise ValueError(
+                f"spatial encoding {name!r} has no config value or class default for {key!r}"
+            )
+        result.append(int(default))
+    return tuple(result)
