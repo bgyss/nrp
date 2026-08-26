@@ -43,6 +43,9 @@ SPHERE_ALBEDO = np.array([0.55, 0.55, 0.70])
 CAM_POS = np.array([0.5, 0.5, 0.08])
 CAM_FOV_DEG = 68.0  # horizontal
 
+#: World up axis for the look-at basis. The toy box is y-up.
+CAM_UP = np.array([0.0, 1.0, 0.0])
+
 #: Compositing layers (§6.1, Fig. 11): the scene decomposes into the foreground
 #: sphere and the background box by *first-hit* ownership. A layer's paths still
 #: bounce off the full scene geometry; the layer only owns the paths (and pixels)
@@ -55,8 +58,12 @@ def _camera_rays(
     height: int,
     jitter: np.ndarray | None,
     camera_pos: np.ndarray | None = None,
+    camera_target: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Pinhole rays looking down +z. jitter is (N,2) in [0,1) or None for pixel centers."""
+    """Pinhole rays. Default looks down +z; camera_target orients the camera instead.
+
+    jitter is (N,2) in [0,1) or None for pixel centers.
+    """
     ys, xs = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
     px = xs.reshape(-1).astype(np.float64)
     py = ys.reshape(-1).astype(np.float64)
@@ -67,9 +74,23 @@ def _camera_rays(
     half = np.tan(np.radians(CAM_FOV_DEG) / 2.0)
     u = ((px + jx) / width * 2.0 - 1.0) * half
     v = -((py + jy) / height * 2.0 - 1.0) * half * (height / width)
-    dirs = np.stack([u, v, np.ones_like(u)], axis=1)
-    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
     cam_pos = CAM_POS if camera_pos is None else np.asarray(camera_pos, dtype=np.float64)
+    if camera_target is None:
+        dirs = np.stack([u, v, np.ones_like(u)], axis=1)
+    else:
+        target = np.asarray(camera_target, dtype=np.float64)
+        forward = target - cam_pos
+        norm = np.linalg.norm(forward)
+        if norm < EPS:
+            raise ValueError("camera_target must differ from the camera position")
+        forward = forward / norm
+        if abs(float(forward @ CAM_UP)) > 1.0 - 1e-6:
+            raise ValueError("camera_target must not be parallel to the up axis")
+        right = np.cross(CAM_UP, forward)
+        right /= np.linalg.norm(right)
+        up = np.cross(forward, right)
+        dirs = u[:, None] * right + v[:, None] * up + forward
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
     origins = np.broadcast_to(cam_pos, dirs.shape).copy()
     return origins, dirs
 
@@ -284,6 +305,7 @@ def trace_path_cache(
     light_region: dict | None = None,
     guide_probability: float = 0.0,
     camera_pos: np.ndarray | None = None,
+    camera_target: np.ndarray | None = None,
     occluder: dict | None = None,
 ) -> PathCache:
     """Trace `spp` light-agnostic paths per pixel and return the full PathCache.
@@ -315,7 +337,7 @@ def trace_path_cache(
 
     for _ in range(spp):
         jitter = rng.random((n_pixels, 2))
-        origins, dirs = _camera_rays(width, height, jitter, camera_pos)
+        origins, dirs = _camera_rays(width, height, jitter, camera_pos, camera_target)
         throughput = np.ones((n_pixels, 3))
         pixel_ids = np.arange(n_pixels, dtype=np.int64)
         keep = np.ones(n_pixels, dtype=bool)
@@ -352,7 +374,7 @@ def trace_path_cache(
     # Auxiliary buffers from deterministic pixel-center primary rays. These stay
     # surface-only even with a medium: albedo/depth/normal are G-buffer features of
     # the first *surface* hit (a scatter vertex has no meaningful normal or albedo).
-    origins0, dirs0 = _camera_rays(width, height, None, camera_pos)
+    origins0, dirs0 = _camera_rays(width, height, None, camera_pos, camera_target)
     t0, normal0, albedo0, _ = _intersect_scene(origins0, dirs0, sphere_center, occluder)
     position0 = origins0 + dirs0 * t0[:, None]
 
@@ -375,14 +397,25 @@ def trace_path_cache(
     return cache
 
 
-def layer_ownership_mask(width: int, height: int, layer: str) -> np.ndarray:
+def layer_ownership_mask(
+    width: int,
+    height: int,
+    layer: str,
+    camera_pos: np.ndarray | None = None,
+    camera_target: np.ndarray | None = None,
+) -> np.ndarray:
     """(H, W) bool mask of the pixels a layer owns: where the deterministic
     pixel-center primary ray's first hit lands on the layer's geometry — the same
     convention as the aux G-buffer. The two layers' masks are disjoint and cover
-    every pixel (the box is closed, so every primary ray hits something)."""
+    every pixel (the box is closed, so every primary ray hits something).
+
+    `camera_pos`/`camera_target` must match whatever camera produced the trace
+    being masked — otherwise the mask describes a different camera than the
+    segments it is meant to select.
+    """
     if layer not in LAYERS:
         raise ValueError(f"layer must be one of {LAYERS}, got {layer!r}")
-    origins0, dirs0 = _camera_rays(width, height, None)
+    origins0, dirs0 = _camera_rays(width, height, None, camera_pos, camera_target)
     _, _, _, is_sphere = _intersect_scene(origins0, dirs0)
     mask = is_sphere if layer == "sphere" else ~is_sphere
     return mask.reshape(height, width)
@@ -399,6 +432,7 @@ def render_reference(
     light_region: dict | None = None,
     guide_probability: float = 0.0,
     camera_pos: np.ndarray | None = None,
+    camera_target: np.ndarray | None = None,
     occluder: dict | None = None,
 ) -> np.ndarray:
     """Independent rendered reference: trace fresh paths and evaluate the emissive
@@ -413,6 +447,7 @@ def render_reference(
         light_region=light_region,
         guide_probability=guide_probability,
         camera_pos=camera_pos,
+        camera_target=camera_target,
         occluder=occluder,
     )
     return gather_light(cache, light)
@@ -464,6 +499,13 @@ def main() -> None:
         metavar=("X", "Y", "Z"),
         help="override the toy pinhole camera origin inside the unit box",
     )
+    parser.add_argument(
+        "--camera-target",
+        type=float,
+        nargs=3,
+        default=None,
+        help="aim the toy camera at this world point instead of looking down +z",
+    )
     args = parser.parse_args()
 
     medium = None
@@ -484,6 +526,9 @@ def main() -> None:
         light_region=light_region,
         guide_probability=args.guide_probability,
         camera_pos=np.asarray(args.camera_pos, dtype=np.float64) if args.camera_pos else None,
+        camera_target=np.asarray(args.camera_target, dtype=np.float64)
+        if args.camera_target
+        else None,
     )
     cache.save(args.out)
     layer_note = f" (layer: {args.layer})" if args.layer else ""
