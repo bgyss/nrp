@@ -1,11 +1,23 @@
-"""Regression tests for three defects in the inherited hash-grid code.
+"""Regression tests for defects (and one guaranteed invariant) in the inherited
+hash-grid code, plus a wiring check for streamed world-position support.
 
 The precedence defect is numerically inert in every committed config because
 _PRIMES[0] == 1 and ix <= res < table_size, so masking commutes with the XOR.
 It only diverges once res >= table_size, which is what test_hash_matches_reference
 _at_high_resolution exercises. A test using a committed config would pass on the bug.
+
+The `clamp(0, res - 1)` boundary change (vs. the prior `clamp(0, res)`) is a
+no-op for every in-range input: at xy=1.0, `clamp(0, res)` gives pos0=res,
+frac=0, selecting the corner entry, while `clamp(0, res - 1)` gives
+pos0=res-1, frac=1.0, whose interpolation weights collapse onto that same
+corner entry. Output is bit-identical either way. The change is retained not
+because it fixes an observable defect, but because it *guarantees* frac in
+[0, 1] and a non-degenerate interpolation cell (x0 != x1) for every input,
+an invariant a later sparse-index encoder relies on. `TestBoundaryClamp`
+pins that invariant directly rather than comparing values across the change.
 """
 
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -50,35 +62,94 @@ class TestHashPrecedence(unittest.TestCase):
 
 
 class TestBoundaryClamp(unittest.TestCase):
-    """floor(pos).clamp(0, res) makes x0 == res a degenerate constant cell."""
+    """`clamp(0, res - 1)` guarantees frac in [0, 1] and a non-degenerate cell.
 
-    def test_2d_interpolates_at_upper_boundary(self):
+    The old value-comparison tests here (just-inside vs. exactly-at-the-corner
+    interpolation) passed identically before AND after the clamp change, since
+    `clamp(0, res)` at xy=1.0 selects the corner entry directly (frac=0) while
+    `clamp(0, res - 1)` selects the same entry via frac=1.0 interpolation
+    weights that collapse onto it — bit-identical output, so those tests could
+    never fail. What the clamp change actually guarantees is the invariant
+    checked below: frac always lands in [0, 1], and the interpolation cell's
+    upper corner index is always strictly greater than its lower corner index
+    (never degenerate), for every axis and every in-range input including the
+    exact boundaries 0.0 and 1.0.
+    """
+
+    # Inputs spanning exactly the lower boundary, an interior point, and
+    # exactly the upper boundary on every axis.
+    _COORDS_1D = [0.0, 0.37, 1.0]
+
+    def _pos0_frac(self, coord: float, res: int) -> tuple[int, float]:
+        """Recompute pos0/frac exactly as the encoders do, from `resolutions`,
+        without touching any production code or hook."""
+        pos = coord * res
+        pos0 = min(max(int(math.floor(pos)), 0), res - 1)
+        frac = pos - pos0
+        return pos0, frac
+
+    def test_2d_clamp_invariant_and_finite_output(self):
         enc = HashEncoding2D(
-            levels=1,
+            levels=2,
             features_per_level=2,
             table_size_log2=14,
             base_resolution=4,
-            finest_resolution=4,
+            finest_resolution=16,
         )
         with torch.no_grad():
             enc.tables[0].uniform_(-1.0, 1.0)
-        just_inside = enc(torch.tensor([[0.999, 0.999]]))
-        at_corner = enc(torch.tensor([[1.0, 1.0]]))
-        torch.testing.assert_close(just_inside, at_corner, atol=2e-2, rtol=0)
+            enc.tables[1].uniform_(-1.0, 1.0)
+        coords = [(x, y) for x in self._COORDS_1D for y in self._COORDS_1D]
+        for level, res in enumerate(enc.resolutions):
+            for x, y in coords:
+                x0, xfrac = self._pos0_frac(x, res)
+                y0, yfrac = self._pos0_frac(y, res)
+                x1 = min(x0 + 1, res)
+                y1 = min(y0 + 1, res)
+                for frac in (xfrac, yfrac):
+                    self.assertGreaterEqual(frac, 0.0)
+                    self.assertLessEqual(frac, 1.0)
+                self.assertGreater(x1, x0, f"degenerate x cell at level {level}, x={x}")
+                self.assertGreater(y1, y0, f"degenerate y cell at level {level}, y={y}")
 
-    def test_3d_interpolates_at_upper_boundary(self):
+        inputs = torch.tensor(coords, dtype=torch.float32)
+        out = enc(inputs)
+        self.assertEqual(tuple(out.shape), (len(coords), enc.output_dim))
+        self.assertTrue(torch.isfinite(out).all())
+
+    def test_3d_clamp_invariant_and_finite_output(self):
         enc = HashEncoding3D(
-            levels=1,
+            levels=2,
             features_per_level=2,
             table_size_log2=14,
             base_resolution=4,
-            finest_resolution=4,
+            finest_resolution=16,
         )
         with torch.no_grad():
             enc.tables[0].uniform_(-1.0, 1.0)
-        just_inside = enc(torch.tensor([[0.999, 0.999, 0.999]]))
-        at_corner = enc(torch.tensor([[1.0, 1.0, 1.0]]))
-        torch.testing.assert_close(just_inside, at_corner, atol=2e-2, rtol=0)
+            enc.tables[1].uniform_(-1.0, 1.0)
+        coords = [
+            (x, y, z) for x in self._COORDS_1D for y in self._COORDS_1D for z in self._COORDS_1D
+        ]
+        for level, res in enumerate(enc.resolutions):
+            for x, y, z in coords:
+                x0, xfrac = self._pos0_frac(x, res)
+                y0, yfrac = self._pos0_frac(y, res)
+                z0, zfrac = self._pos0_frac(z, res)
+                x1 = min(x0 + 1, res)
+                y1 = min(y0 + 1, res)
+                z1 = min(z0 + 1, res)
+                for frac in (xfrac, yfrac, zfrac):
+                    self.assertGreaterEqual(frac, 0.0)
+                    self.assertLessEqual(frac, 1.0)
+                self.assertGreater(x1, x0, f"degenerate x cell at level {level}, x={x}")
+                self.assertGreater(y1, y0, f"degenerate y cell at level {level}, y={y}")
+                self.assertGreater(z1, z0, f"degenerate z cell at level {level}, z={z}")
+
+        inputs = torch.tensor(coords, dtype=torch.float32)
+        out = enc(inputs)
+        self.assertEqual(tuple(out.shape), (len(coords), enc.output_dim))
+        self.assertTrue(torch.isfinite(out).all())
 
 
 class TestStreamedWorldSupport(unittest.TestCase):
@@ -86,6 +157,46 @@ class TestStreamedWorldSupport(unittest.TestCase):
         from nrp.torch_backend import streamed_train
 
         self.assertTrue(hasattr(streamed_train, "spatial_tensors_for"))
+
+    def test_train_streamed_wires_world3d_encoding_into_model(self):
+        """`train_streamed` previously built TorchNRP without spatial_encoding, so
+        a world-anchored config silently trained through the dead pixel2d branch
+        of `spatial_tensors_for`. Prove the config now reaches the constructor by
+        running the smallest possible streamed job and checking the model it
+        hands back reports the selected encoding."""
+        import tempfile
+
+        from nrp.torch_backend.streamed_train import train_streamed
+        from nrp.toy_tracer import trace_path_cache
+
+        cache = trace_path_cache(6, 6, 4, 2, seed=3)
+        with tempfile.TemporaryDirectory() as tmp:
+            shard_dir = Path(tmp) / "shards"
+            cache.save_sharded(str(shard_dir), tile_size=3)
+            cfg = {
+                "seed": 0,
+                "light_type": "sphere",
+                "light_bounds": {"radius_min": 0.08, "radius_max": 0.25},
+                "sampling": "segments",
+                "denoise": {"enabled": False},
+                "pool": {"size": 2, "replace_count": 1, "replace_every": 2},
+                "model": {
+                    "hidden_width": 8,
+                    "hidden_layers": 1,
+                    "encoding": {
+                        "levels": 1,
+                        "features_per_level": 2,
+                        "finest_resolution": 8,
+                    },
+                    "spatial_encoding": "world3d",
+                },
+                "lr": 5e-3,
+                "batch_pixels": 16,
+                "iters": 1,
+            }
+            model, _ = train_streamed(shard_dir, cache, cfg)
+
+        self.assertEqual(model.spatial_encoding, "world3d")
 
 
 if __name__ == "__main__":

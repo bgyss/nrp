@@ -36,7 +36,7 @@ from .device import resolve_device
 from .gather import TorchPathCache
 from .model import TorchNRP, relative_mse_loss
 from .sampling import sample_light
-from .train import light_param_vector
+from .train import configured_world_bounds, light_param_vector, validate_torch_config
 
 
 def load_sharded_gbuffer(shard_dir: Path) -> PathCache:
@@ -400,6 +400,7 @@ def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tupl
     `nrp.torch_backend.train.train`'s core loop closely enough that, given the same
     seed and an in-memory cache built from the same segments, loss curves are directly
     comparable iteration-for-iteration."""
+    spatial_encoding = validate_torch_config(cfg)
     rng = np.random.default_rng(cfg.get("seed", 0))
     torch.manual_seed(cfg.get("seed", 0))
     device = resolve_device(cfg.get("device"))
@@ -413,6 +414,10 @@ def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tupl
         hidden_layers=cfg["model"]["hidden_layers"],
         encoding=cfg["model"]["encoding"],
         light_type="sphere",
+        spatial_encoding=spatial_encoding,
+        world_bounds=(
+            configured_world_bounds(gbuffer_cache, cfg) if spatial_encoding != "pixel2d" else None
+        ),
     ).to(device)
     xy, aux = spatial_tensors_for(gbuffer_cache, model, device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.get("lr", 1e-3))
