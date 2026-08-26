@@ -19,6 +19,7 @@ import torch
 from torch import nn
 
 from .encoder_registry import _floor_cell, register_encoder
+from .occupancy import level_resolutions
 
 
 def _vertex_codes(vertices: torch.Tensor, resolution: int) -> torch.Tensor:
@@ -46,6 +47,16 @@ class SparseVoxelEncoding(nn.Module):
             raise ValueError(f"occupancy has {len(occupancy)} levels, expected {levels}")
         if features_per_level <= 0:
             raise ValueError("features_per_level must be positive")
+        expected_resolutions = level_resolutions(levels, base_resolution, finest_resolution)
+        actual_resolutions = [occ.resolution for occ in occupancy]
+        if actual_resolutions != expected_resolutions:
+            raise ValueError(
+                f"occupancy resolutions {actual_resolutions} do not match the schedule "
+                f"implied by base_resolution={base_resolution}, "
+                f"finest_resolution={finest_resolution}, levels={levels} "
+                f"(expected {expected_resolutions}); occupancy was built with a "
+                "different resolution schedule than this encoder was configured for"
+            )
         self.levels = levels
         self.features_per_level = features_per_level
         self.occupancy = list(occupancy)
@@ -113,6 +124,16 @@ class SparseVoxelEncoding(nn.Module):
     def capacity_report(self) -> dict:
         levels = []
         for level, occ in enumerate(self.occupancy):
+            keys = getattr(self, f"keys_{level}")
+            n_slots = int(self.tables[level].shape[0])
+            # Measure collisions from the actual key buffer rather than assuming the
+            # zero-collision guarantee holds: a duplicate key means two distinct
+            # vertices were assigned the same table row by searchsorted.
+            unique_keys, counts = torch.unique(keys, return_counts=True)
+            used_slots = int(unique_keys.numel())
+            max_slot_load = int(counts.max().item()) if counts.numel() else 0
+            collision_fraction = float(1.0 - used_slots / n_slots) if n_slots else 0.0
+            slots_per_distinct_vertex = float(n_slots / used_slots) if used_slots else 0.0
             levels.append(
                 {
                     "level": level,
@@ -120,12 +141,12 @@ class SparseVoxelEncoding(nn.Module):
                     "dense": False,
                     "sparse": True,
                     "distinct_vertices": occ.count,
-                    "slots": int(self.tables[level].shape[0]),
-                    "used_slots": occ.count,
-                    "collision_fraction": 0.0,
-                    "max_slot_load": 1,
-                    "slots_per_distinct_vertex": 1.0,
-                    "key_bytes": int(getattr(self, f"keys_{level}").numel() * 8),
+                    "slots": n_slots,
+                    "used_slots": used_slots,
+                    "collision_fraction": collision_fraction,
+                    "max_slot_load": max_slot_load,
+                    "slots_per_distinct_vertex": slots_per_distinct_vertex,
+                    "key_bytes": int(keys.numel() * 8),
                 }
             )
         return {

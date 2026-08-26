@@ -48,6 +48,22 @@ class TestZeroCollisions(unittest.TestCase):
             self.assertEqual(level["collision_fraction"], 0.0)
             self.assertEqual(level["max_slot_load"], 1)
 
+    def test_capacity_report_measures_collisions_from_the_key_buffer(self):
+        # capacity_report must derive its fields from keys_{level}, not report
+        # hard-coded literals: corrupting the buffer to duplicate one key must
+        # be visible in the report.
+        rng = np.random.default_rng(2)
+        enc = _encoder(rng.random((100, 3)))
+        with torch.no_grad():
+            keys0 = enc.keys_0.clone()
+            keys0[1] = keys0[0]
+            enc.keys_0.copy_(keys0)
+        report = enc.capacity_report()
+        level0 = report["levels"][0]
+        self.assertGreater(level0["collision_fraction"], 0.0)
+        self.assertGreater(level0["max_slot_load"], 1)
+        self.assertEqual(level0["used_slots"], level0["slots"] - 1)
+
 
 class TestLookup(unittest.TestCase):
     def test_corner_query_returns_that_table_entry(self):
@@ -107,13 +123,59 @@ class TestFallback(unittest.TestCase):
 
 class TestCheckpointRoundTrip(unittest.TestCase):
     def test_keys_survive_state_dict_round_trip(self):
+        # `enc` and `clone` must be built from DIFFERENT occupancy so each
+        # natively computes different keys_{level} buffers. Mirroring the point
+        # cloud (1 - points) keeps the per-level distinct-vertex counts equal
+        # (a reflection is a bijection of the discretized grid) so the table
+        # shapes match and load_state_dict can transfer strictly, while the
+        # actual vertex sets -- and therefore the keys -- differ. If keys were
+        # a plain attribute instead of a registered buffer, load_state_dict
+        # would silently leave clone's natively-computed (different) keys in
+        # place and this test would fail.
         rng = np.random.default_rng(6)
         points = rng.random((60, 3))
+        mirrored = 1.0 - points
         enc = _encoder(points)
-        clone = _encoder(points)
+        clone = _encoder(mirrored)
+        for level in range(CONFIG["levels"]):
+            self.assertFalse(
+                torch.equal(getattr(enc, f"keys_{level}"), getattr(clone, f"keys_{level}")),
+                f"level {level} keys already match before the round trip; "
+                "the two occupancies are not actually distinguishing",
+            )
+
         clone.load_state_dict(enc.state_dict())
+
+        for level in range(CONFIG["levels"]):
+            torch.testing.assert_close(
+                getattr(enc, f"keys_{level}"), getattr(clone, f"keys_{level}")
+            )
         query = torch.rand(12, 3)
         torch.testing.assert_close(enc(query), clone(query))
+
+
+class TestResolutionScheduleValidation(unittest.TestCase):
+    def test_occupancy_built_with_a_different_schedule_raises(self):
+        # Occupancy resolutions [4, 8] built for CONFIG's schedule, but the
+        # encoder is asked to believe a different (finest_resolution=16)
+        # schedule named it. base_resolution/finest_resolution must be
+        # load-bearing: this must not silently construct.
+        rng = np.random.default_rng(7)
+        points = rng.random((60, 3))
+        from nrp.torch_backend.occupancy import level_resolutions
+
+        res = level_resolutions(
+            CONFIG["levels"], CONFIG["base_resolution"], CONFIG["finest_resolution"]
+        )
+        occ = grid_occupancy(points, res)
+        with self.assertRaises(ValueError):
+            SparseVoxelEncoding(
+                occupancy=occ,
+                levels=CONFIG["levels"],
+                features_per_level=CONFIG["features_per_level"],
+                base_resolution=CONFIG["base_resolution"],
+                finest_resolution=16,
+            )
 
 
 if __name__ == "__main__":
