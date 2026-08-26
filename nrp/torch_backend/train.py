@@ -118,6 +118,24 @@ def world_bounds(cache: PathCache) -> dict:
     return {"min": lo.tolist(), "max": hi.tolist()}
 
 
+def configured_world_bounds(cache: PathCache, cfg: dict) -> dict:
+    """Use an explicit world normalization bound when an experiment supplies one."""
+    configured = cfg.get("model", {}).get("world_bounds")
+    if configured is None:
+        return world_bounds(cache)
+    if not isinstance(configured, dict) or set(configured) != {"min", "max"}:
+        raise ValueError("model.world_bounds must contain exactly 'min' and 'max'")
+    lower = np.asarray(configured["min"], dtype=np.float64)
+    upper = np.asarray(configured["max"], dtype=np.float64)
+    if lower.shape != (3,) or upper.shape != (3,):
+        raise ValueError("model.world_bounds min and max must each contain three values")
+    if not np.isfinite(lower).all() or not np.isfinite(upper).all():
+        raise ValueError("model.world_bounds must be finite")
+    if np.any(upper <= lower):
+        raise ValueError("model.world_bounds max must exceed min on every axis")
+    return {"min": lower.tolist(), "max": upper.tolist()}
+
+
 def validate_torch_config(cfg: dict) -> str:
     """Validate and return the selected spatial encoding.
 
@@ -324,7 +342,9 @@ def train(cfg: dict, resume: bool = False) -> dict:
         hidden_layers=cfg["model"].get("hidden_layers", 4),
         encoding=cfg["model"].get("encoding"),
         spatial_encoding=spatial_encoding,
-        world_bounds=world_bounds(cache) if spatial_encoding != "pixel2d" else None,
+        world_bounds=(
+            configured_world_bounds(cache, cfg) if spatial_encoding != "pixel2d" else None
+        ),
         use_encoding=cfg["model"].get("use_encoding", True),
         use_aux=cfg["model"].get("use_aux", True),
         texture_kernel=cfg["model"].get("texture_conditioning") == "kernel",

@@ -1,0 +1,241 @@
+{
+  "experiment": "R1 promotion audit",
+  "rung": "R1",
+  "status": "candidate_not_promoted",
+  "candidate": {
+    "representation": "world_triplane",
+    "output_bias_policy": "target_scale",
+    "gate_threshold_db": -0.5,
+    "training_denoiser": {
+      "enabled": true,
+      "method": "oidn"
+    },
+    "gather_backend": "torch"
+  },
+  "r1a": {
+    "report": "out/r1a/report.json",
+    "candidate_pass": true,
+    "source_report": "out/r1a/report.json"
+  },
+  "r1c": {
+    "source_command": "UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --out out/r1-promotion/smoke3/report.json --seeds 0 1 2 3 4 --rotations 90 --bounds-modes aabb --skip-r1e --denoise-method oidn --workers 2 --reuse",
+    "scene": "Country Kitchen",
+    "observed_rotations_degrees": [
+      0.0,
+      90.0
+    ],
+    "observed_bounds_modes": [
+      "aabb"
+    ],
+    "expected_rotations_degrees": [
+      0.0,
+      90.0,
+      180.0
+    ],
+    "expected_bounds_modes": [
+      "aabb",
+      "percentile"
+    ],
+    "coverage_complete": false,
+    "runs": [
+      {
+        "seed": 0,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": -0.007760138539669503,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 1.0162116518186015,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 1.1184508896159866,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 0.06886294144645122,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 1.9609186703692878,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 18.108558648715995,
+        "candidate_psnr_db": 18.425533611635984,
+        "delta_db": 0.31697496291998917,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/smoke3/r1c/rotation_90/aabb/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 19.747999563674536,
+        "candidate_psnr_db": 20.481709698774317,
+        "delta_db": 0.7337101350997806,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/smoke3/r1c/rotation_90/aabb/seed1"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 15.795982512584294,
+        "candidate_psnr_db": 14.750973871896392,
+        "delta_db": -1.045008640687902,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/smoke3/r1c/rotation_90/aabb/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 21.087066258651472,
+        "candidate_psnr_db": 20.634468491389867,
+        "delta_db": -0.4525977672616044,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/smoke3/r1c/rotation_90/aabb/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 24.50099997735786,
+        "candidate_psnr_db": 25.446519519359743,
+        "delta_db": 0.9455195420018825,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/smoke3/r1c/rotation_90/aabb/seed4"
+      }
+    ]
+  },
+  "r1e": {
+    "source_command": "UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --out out/r1-promotion/r1e-oidn/report.json --seeds 0 1 2 3 4 --skip-r1c --denoise-method oidn --workers 2 --reuse",
+    "scene": "Bedroom",
+    "runs": [
+      {
+        "seed": 0,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 18.22269665033333,
+        "candidate_psnr_db": 19.02906375542055,
+        "delta_db": 0.8063671050872223,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-oidn/r1e/seed0",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 24.471368181847826,
+        "candidate_psnr_db": 24.336919131955714,
+        "delta_db": -0.13444904989211182,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-oidn/r1e/seed1",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 24.660158797844456,
+        "candidate_psnr_db": 24.79970708494169,
+        "delta_db": 0.13954828709723444,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-oidn/r1e/seed2",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 18.306403598439942,
+        "candidate_psnr_db": 20.07875824004089,
+        "delta_db": 1.7723546416009484,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-oidn/r1e/seed3",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 21.650172928603997,
+        "candidate_psnr_db": 22.092654326576568,
+        "delta_db": 0.44248139797257124,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-oidn/r1e/seed4",
+        "scene": "Bedroom"
+      }
+    ]
+  },
+  "promotion": {
+    "threshold_db": -0.5,
+    "r1a_pass": true,
+    "r1c_pass": false,
+    "r1e_pass": true,
+    "r1c_run_count": 10,
+    "r1e_run_count": 5,
+    "r1c_complete": false,
+    "r1e_complete": true,
+    "r1c_failures": [
+      {
+        "seed": 2,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 15.795982512584294,
+        "candidate_psnr_db": 14.750973871896392,
+        "delta_db": -1.045008640687902,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/smoke3/r1c/rotation_90/aabb/seed2"
+      }
+    ],
+    "r1e_failures": [],
+    "promoted": false
+  },
+  "stop_condition": "R1C 90-degree AABB seed 2 fails at -1.045 dB; remaining rotations and percentile-bound variants were not run because the per-seed gate already failed."
+}

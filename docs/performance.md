@@ -2900,3 +2900,24 @@ The remaining bounded ladder is
 coordinate-rotation robustness, localized error analysis, then a second real scene.
 R2 remains blocked unless one world-anchored arm passes the unchanged −0.5 dB floor
 on every seed and both real scenes; this R1A result did not start R2.
+
+### R1 promotion audit: R1C coordinate robustness and R1E independent scene
+
+The target-scale `world_triplane` candidate from R1A was tested against the unchanged
+−0.5 dB per-seed rule. The canonical machine-readable result is
+`out/r1-promotion/report.json`; the run used CPU, the `torch` gather backend, OIDN
+targets, 3,000 iterations, batch 4,096, and the matched 106,239-parameter
+world-triplane / 106,085-parameter pixel2d pair.
+
+R1C stopped at the first decisive coordinate-robustness slice: a 90° rotation about
+the scene Y/up axis with AABB normalization. The five paired deltas were +0.317,
++0.734, **−1.045**, −0.453, and +0.946 dB for seeds 0–4. Seed 2 fails the gate,
+so 4/5 is not promotion evidence. The remaining 180° and percentile-bound variants
+were intentionally not run after this binding failure.
+
+R1E independently re-traced the Mitsuba Bedroom gallery scene at 128² / 64 spp /
+4 bounces. Its five paired deltas were +0.806, −0.134, +0.140, +1.772, and +0.442
+dB; all five pass. This confirms the candidate on a second real scene but cannot
+erase the R1C failure. The final promotion field is `false`, and R1 remains
+unpromoted. The evidence is a measured robustness negative, not a claim that the
+world-triplane idea is uniformly invalid.
