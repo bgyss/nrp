@@ -1,0 +1,144 @@
+"""Gate logic for the encoding redesign, separated from the expensive runner."""
+
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from nrp.torch_backend.encoding_gates import (  # noqa: E402
+    g1_generalization,
+    g3_stability,
+    g4_frame_robustness,
+    g5_fallback_decomposition,
+    stop_reason,
+)
+
+
+def _row(**kw):
+    base = {
+        "arm": "world_sparse",
+        "seed": 0,
+        "camera": "held0",
+        "rotation_degrees": 0.0,
+        "delta_db": 2.0,
+        "psnr_db": 22.0,
+        "baseline_psnr_db": 20.0,
+        "out_of_occupancy_fraction": 0.0,
+        "in_occupancy_psnr_db": 22.0,
+        "out_occupancy_psnr_db": None,
+    }
+    base.update(kw)
+    return base
+
+
+class TestG1(unittest.TestCase):
+    def test_passes_when_every_row_clears_the_threshold(self):
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(5) for c in range(4)]
+        gate = g1_generalization(rows)
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["failures"], [])
+
+    def test_one_failing_camera_fails_the_whole_gate(self):
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(5) for c in range(4)]
+        rows[7]["delta_db"] = 0.4
+        gate = g1_generalization(rows)
+        self.assertFalse(gate["passed"])
+        self.assertEqual(len(gate["failures"]), 1)
+
+    def test_a_good_mean_does_not_rescue_a_failing_seed(self):
+        rows = [_row(seed=0, delta_db=-5.0), _row(seed=1, delta_db=9.0)]
+        gate = g1_generalization(rows)
+        self.assertFalse(gate["passed"])
+        self.assertGreater(gate["mean_delta_db"], 1.0)
+
+    def test_threshold_is_inclusive(self):
+        gate = g1_generalization([_row(delta_db=1.0)], threshold_db=1.0)
+        self.assertTrue(gate["passed"])
+
+
+class TestG3(unittest.TestCase):
+    def test_reports_per_seed_pass_and_spread(self):
+        rows = [_row(seed=s, delta_db=float(s)) for s in range(5)]
+        gate = g3_stability(rows)
+        self.assertEqual(gate["seeds_passing"], 4)  # seeds 1..4 clear 1.0 dB
+        self.assertEqual(gate["seeds_total"], 5)
+        self.assertIn("std_delta_db", gate)
+
+    def test_world_sparse_measured_and_zero_collision_passes(self):
+        rows = [_row(seed=0, arm="world_sparse")]
+        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.0})
+        self.assertTrue(gate["collision_assertions_checked"])
+        self.assertTrue(gate["collision_assertions_passed"])
+
+    def test_world_sparse_measured_but_missing_from_collision_fractions_is_a_failure(self):
+        # This is the case the brief's `all()`-over-filtered-dict draft got wrong:
+        # world_sparse rows were produced, but no collision fraction was ever
+        # recorded for it. A missing entry must NOT read as a pass.
+        rows = [_row(seed=0, arm="world_sparse")]
+        gate = g3_stability(rows, collision_fractions={})
+        self.assertTrue(gate["collision_assertions_checked"])
+        self.assertFalse(gate["collision_assertions_passed"])
+
+    def test_world_sparse_measured_and_nonzero_collision_is_a_failure(self):
+        rows = [_row(seed=0, arm="world_sparse")]
+        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.01})
+        self.assertTrue(gate["collision_assertions_checked"])
+        self.assertFalse(gate["collision_assertions_passed"])
+
+    def test_world_sparse_not_measured_is_reported_not_applicable(self):
+        rows = [_row(seed=0, arm="world_normal_triplane")]
+        gate = g3_stability(rows, collision_fractions={})
+        self.assertFalse(gate["collision_assertions_checked"])
+        # Not-applicable must never read as a pass either.
+        self.assertFalse(gate["collision_assertions_passed"])
+
+
+class TestG4(unittest.TestCase):
+    def test_worst_orientation_governs(self):
+        rows = [
+            _row(rotation_degrees=0.0, delta_db=3.0),
+            _row(rotation_degrees=90.0, delta_db=3.0),
+            _row(rotation_degrees=180.0, delta_db=0.2),
+        ]
+        gate = g4_frame_robustness(rows)
+        self.assertFalse(gate["passed"])
+        self.assertAlmostEqual(gate["worst_delta_db"], 0.2)
+
+    def test_incomplete_rotation_matrix_is_not_a_pass(self):
+        rows = [_row(rotation_degrees=0.0, delta_db=3.0)]
+        gate = g4_frame_robustness(rows)
+        self.assertFalse(gate["passed"])
+        self.assertFalse(gate["coverage_complete"])
+
+
+class TestG5(unittest.TestCase):
+    def test_decomposes_error_by_occupancy(self):
+        rows = [
+            _row(
+                out_of_occupancy_fraction=0.1, in_occupancy_psnr_db=24.0, out_occupancy_psnr_db=15.0
+            )
+        ]
+        gate = g5_fallback_decomposition(rows)
+        self.assertAlmostEqual(gate["mean_out_of_occupancy_fraction"], 0.1)
+        self.assertAlmostEqual(gate["mean_in_occupancy_psnr_db"], 24.0)
+        self.assertAlmostEqual(gate["mean_out_occupancy_psnr_db"], 15.0)
+
+    def test_missing_decomposition_is_flagged(self):
+        rows = [_row(out_of_occupancy_fraction=0.3, out_occupancy_psnr_db=None)]
+        gate = g5_fallback_decomposition(rows)
+        self.assertFalse(gate["complete"])
+
+
+class TestStopReason(unittest.TestCase):
+    def test_no_arm_passing_g1_stops_the_track(self):
+        gates = {"arms": {"world_sparse": {"g1": {"passed": False}, "g4": {"passed": False}}}}
+        self.assertIsNotNone(stop_reason(gates))
+
+    def test_a_passing_arm_clears_the_stop(self):
+        gates = {"arms": {"world_sparse": {"g1": {"passed": True}, "g4": {"passed": True}}}}
+        self.assertIsNone(stop_reason(gates))
+
+
+if __name__ == "__main__":
+    unittest.main()
