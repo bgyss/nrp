@@ -43,8 +43,8 @@ from .device import autocast, resolve_device, resolve_precision
 from .gather import TorchPathCache
 from .model import (
     LIGHT_PARAM_DIMS,
-    SUPPORTED_SPATIAL_ENCODINGS,
     TorchNRP,
+    _supported_spatial_encodings,
     relative_mse_loss,
 )
 from .sampling import sample_light
@@ -146,10 +146,10 @@ def validate_torch_config(cfg: dict) -> str:
     if not isinstance(model_cfg, dict):
         raise ValueError("config.model must be an object")
     selected = model_cfg.get("spatial_encoding", "pixel2d")
-    if selected not in SUPPORTED_SPATIAL_ENCODINGS:
+    if selected not in _supported_spatial_encodings():
         raise ValueError(
             "model.spatial_encoding must be one of "
-            f"{sorted(SUPPORTED_SPATIAL_ENCODINGS)}, got {selected!r}"
+            f"{sorted(_supported_spatial_encodings())}, got {selected!r}"
         )
     if selected != "pixel2d" and model_cfg.get("use_encoding", True) is False:
         raise ValueError(f"model.spatial_encoding {selected!r} requires use_encoding=true")
@@ -282,10 +282,15 @@ def evaluate(
                 light_param_vector(entry["light"]), dtype=torch.float32, device=device
             ).expand(n_px, -1)
             pred = (
-                model(xy, aux, params, view_dir=view_dir)
-                if view_dir is not None
-                else model(xy, aux, params)
-            ).cpu().numpy().astype(np.float64)
+                (
+                    model(xy, aux, params, view_dir=view_dir)
+                    if view_dir is not None
+                    else model(xy, aux, params)
+                )
+                .cpu()
+                .numpy()
+                .astype(np.float64)
+            )
             light = entry["light"]
             m = {
                 "light": light.to_dict() if hasattr(light, "to_dict") else None,

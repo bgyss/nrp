@@ -30,12 +30,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
-from .encoding import HashEncoding2D, HashEncoding3D, HashEncodingTriPlane
+from . import encoding as _encoding  # noqa: F401  # registers the built-in encoders
+from .encoder_registry import SPATIAL_ENCODERS, build_encoder
 
 LIGHT_PARAM_DIMS = {"sphere": 4, "quad": 8}
 SUPPORTED_LIGHT_TYPES = {"sphere", "quad", "textured_quad"}
-SUPPORTED_SPATIAL_ENCODINGS = {"pixel2d", "world3d", "world_triplane"}
 CAMERA_DIRECTION_DIM = 3
+
+
+def _supported_spatial_encodings() -> set[str]:
+    return set(SPATIAL_ENCODERS)
 
 
 def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.01) -> torch.Tensor:
@@ -59,6 +63,7 @@ class TorchNRP(nn.Module):
         encoding: dict | None = None,
         spatial_encoding: str = "pixel2d",
         world_bounds: dict | None = None,
+        occupancy=None,
         world_transform: dict | None = None,
         camera_conditioned: bool = False,
         use_encoding: bool = True,
@@ -69,9 +74,9 @@ class TorchNRP(nn.Module):
         super().__init__()
         if light_type not in SUPPORTED_LIGHT_TYPES:
             raise ValueError(f"light_type must be one of {sorted(SUPPORTED_LIGHT_TYPES)}")
-        if spatial_encoding not in SUPPORTED_SPATIAL_ENCODINGS:
+        if spatial_encoding not in _supported_spatial_encodings():
             raise ValueError(
-                f"spatial_encoding must be one of {sorted(SUPPORTED_SPATIAL_ENCODINGS)}"
+                f"spatial_encoding must be one of {sorted(_supported_spatial_encodings())}"
             )
         if spatial_encoding != "pixel2d" and not use_encoding:
             raise ValueError(f"spatial_encoding {spatial_encoding!r} requires use_encoding=true")
@@ -165,12 +170,8 @@ class TorchNRP(nn.Module):
         }
         if not use_encoding:
             self.encoding = None
-        elif spatial_encoding == "world3d":
-            self.encoding = HashEncoding3D(**(encoding or {}))
-        elif spatial_encoding == "world_triplane":
-            self.encoding = HashEncodingTriPlane(**(encoding or {}))
         else:
-            self.encoding = HashEncoding2D(**(encoding or {}))
+            self.encoding = build_encoder(spatial_encoding, encoding or {}, occupancy=occupancy)
         spatial_dim = self.encoding.output_dim if use_encoding else 2
         light_in_dim = 8 if self.texture_kernel else self.light_param_dim
         out_dim = self.light_param_dim - 8 if self.texture_kernel else 3
@@ -276,8 +277,7 @@ class TorchNRP(nn.Module):
                 CAMERA_DIRECTION_DIM,
             ):
                 raise ValueError(
-                    "view_dir must have shape (3,) or (N, 3), "
-                    f"got {tuple(view_dir.shape)}"
+                    f"view_dir must have shape (3,) or (N, 3), got {tuple(view_dir.shape)}"
                 )
             if not bool(torch.isfinite(view_dir).all()):
                 raise ValueError("view_dir must be finite")

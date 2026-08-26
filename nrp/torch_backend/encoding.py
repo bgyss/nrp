@@ -13,7 +13,30 @@ import math
 import torch
 from torch import nn
 
+from .encoder_registry import SPATIAL_ENCODERS, build_encoder, register_encoder  # noqa: F401
+
 _PRIMES = (1, 2654435761, 805459861)
+
+
+def _grid_capacity_report(encoder) -> dict:
+    """Static slot budget per level, shared by the 2D and 3D grids.
+
+    Occupancy-aware numbers come from `nrp.torch_backend.occupancy.capacity_report`,
+    which needs a cache; this is the cache-free view.
+    """
+    return {
+        "encoding": type(encoder).__name__,
+        "levels": [
+            {
+                "level": level,
+                "resolution": res,
+                "dense": bool(encoder._dense[level]),
+                "slots": int(encoder.tables[level].shape[0]),
+            }
+            for level, res in enumerate(encoder.resolutions)
+        ],
+        "total_slots": int(sum(t.shape[0] for t in encoder.tables)),
+    }
 
 
 def _floor_cell(pos: torch.Tensor, res: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -28,7 +51,11 @@ def _floor_cell(pos: torch.Tensor, res: int) -> tuple[torch.Tensor, torch.Tensor
     return pos0, frac
 
 
+@register_encoder("pixel2d")
 class HashEncoding2D(nn.Module):
+    needs_occupancy = False
+    needs_normals = False
+
     def __init__(
         self,
         levels: int = 8,
@@ -65,6 +92,9 @@ class HashEncoding2D(nn.Module):
     def output_dim(self) -> int:
         return self.levels * self.features_per_level
 
+    def capacity_report(self) -> dict:
+        return _grid_capacity_report(self)
+
     def _index(self, ix: torch.Tensor, iy: torch.Tensor, level: int) -> torch.Tensor:
         res = self.resolutions[level]
         if self._dense[level]:
@@ -96,6 +126,7 @@ class HashEncoding2D(nn.Module):
         return torch.cat(outputs, dim=1)
 
 
+@register_encoder("world3d")
 class HashEncoding3D(nn.Module):
     """3D multiresolution hashgrid with trilinear interpolation.
 
@@ -103,6 +134,9 @@ class HashEncoding3D(nn.Module):
     all ``(resolution + 1)^3`` vertices fit in the configured table and hashed
     otherwise.
     """
+
+    needs_occupancy = False
+    needs_normals = False
 
     def __init__(
         self,
@@ -149,6 +183,9 @@ class HashEncoding3D(nn.Module):
     def output_dim(self) -> int:
         return self.levels * self.features_per_level
 
+    def capacity_report(self) -> dict:
+        return _grid_capacity_report(self)
+
     def _index(
         self, ix: torch.Tensor, iy: torch.Tensor, iz: torch.Tensor, level: int
     ) -> torch.Tensor:
@@ -185,6 +222,7 @@ class HashEncoding3D(nn.Module):
         return torch.cat(outputs, dim=1)
 
 
+@register_encoder("world_triplane")
 class HashEncodingTriPlane(nn.Module):
     """World-anchored tri-plane encoding built from three 2D hashgrids.
 
@@ -192,6 +230,9 @@ class HashEncodingTriPlane(nn.Module):
     world anchoring while testing whether a surface-dominated scene benefits from the
     lower collision pressure of 2D tables.
     """
+
+    needs_occupancy = False
+    needs_normals = False
 
     def __init__(
         self,
@@ -218,6 +259,15 @@ class HashEncodingTriPlane(nn.Module):
     @property
     def output_dim(self) -> int:
         return 3 * self.planes[0].output_dim
+
+    def capacity_report(self) -> dict:
+        per_plane = [plane.capacity_report() for plane in self.planes]
+        return {
+            "encoding": type(self).__name__,
+            "levels": per_plane[0]["levels"],
+            "planes": per_plane,
+            "total_slots": int(sum(p["total_slots"] for p in per_plane)),
+        }
 
     def forward(self, xyz: torch.Tensor) -> torch.Tensor:
         if xyz.ndim != 2 or xyz.shape[1] != 3:
