@@ -191,11 +191,30 @@ problem, and the report states this rather than quietly benefiting from it.
 
 ## Gates
 
-**G1 — promotion gate, held-out camera.** The baseline is the only thing a
-screen-space proxy can do at a novel camera: reuse the nearest trained view's
-`pixel2d` proxy. The world-anchored net must beat it by **≥ 1.0 dB on every seed
-at every held-out camera.** The threshold is taken from R2's existing per-view
-tolerance in the approved ladder rather than newly invented.
+**G1 — promotion gate, held-out camera.** Two conditions, both binding on every
+seed at every held-out camera:
+
+1. **Comparative margin ≥ 1.0 dB** over the only thing a screen-space proxy can do
+   at a novel camera: reuse the nearest trained view's `pixel2d` proxy. The
+   threshold is taken from R2's existing per-view tolerance in the approved ladder
+   rather than newly invented.
+2. **Absolute floor of 15 dB PSNR.**
+
+**Why the floor exists (added 2026-08-26, during implementation).** The G1 baseline
+is deliberately weak: a `pixel2d` proxy indexes its hashgrid by pixel coordinate, so
+at a different camera its spatial features encode the wrong view's geometry. Beating
+it is a low bar, and a comparative-only pass would show that world anchoring beats a
+strawman, not that it is usable. The floor makes a pass mean "usable at a novel
+camera".
+
+**The 15 dB figure is invented for this campaign and is not an established track
+convention** — unlike the 1.0 dB margin. It was chosen against measured evidence:
+toy-scale quality at a *trained* view is 19.17 dB (`out/toy-torch`) and 19.98–22.16 dB
+(`out/r1-worldgrid`, 48²). The track's usual 18 dB envelope sits within 1–4 dB of
+that, so a held-out camera could fail it structurally, producing a negative that
+described the threshold rather than the representation. 15 dB leaves room for
+genuine novel-view degradation while still rejecting a broken arm. The report must
+state the figure's provenance rather than implying an established convention.
 
 **G2 — capacity honesty (reported, not gated).** Single trained-view PSNR against
 `pixel2d`, reporting effective capacity (slots per distinct queried vertex,
