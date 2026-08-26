@@ -42,3 +42,10 @@ Task 6: complete (commits 3a5e1cc..18ab347, review clean after 1 fix round)
   - arm A validates occupancy schedule BEFORE truncation; now covered by a small-budget test
   - schedule formula de-duplicated: both grid constructors call occupancy.level_resolutions;
     verified character-for-character identical to the removed inline copies
+Task 7: complete (commit 0bcc818, review clean, no fix round)
+  - BRIEF ERROR caught by implementer: my cross-product order gave right=[-1,0,0], a
+    MIRRORED basis. Would have produced a mirrored camera arc and a false negative for
+    the whole experiment. Corrected to right=cross(UP,fwd), up=cross(fwd,right).
+  - fixed pre-existing layer_ownership_mask bug (never accepted camera args)
+  - MINOR (deferred): test_default_is_bit_identical_... name promises more than its own
+    assertions; real guarantee is in the adjacent reproduces-default test
