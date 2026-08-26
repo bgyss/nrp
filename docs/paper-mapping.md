@@ -119,9 +119,13 @@ that artifact used a different validation-light stream and initialization regime
 A three-seed controlled follow-up confirms the negative (world3d passes only 1/3
 seeds). A world-anchored tri-plane extension reduces observed hash collisions and
 has a near-zero mean delta, but passes only 2/3 seeds and is not promoted. Neither
-result is claimed as paper fidelity or as a multi-camera result; the binding failure
-halts representation rungs R2–R6. Evidence: `out/r1-worldgrid/report.json`,
-`out/r1-followup/report.json`, and `docs/representation-track.md`.
+result is claimed as paper fidelity or as a promoted multi-camera result. The R1
+binding failure still halts promotion of representation rungs R2–R6. R2's separate
+camera-conditioned implementation pilot is an honest negative: its three-view
+conditioned PSNR deltas are −1.067, −1.513, and −2.916 dB against same-light-set
+per-view controls, outside R2's ≤1 dB gate. Evidence: `out/r1-worldgrid/report.json`,
+`out/r1-followup/report.json`, `out/r2-conditioned/report.json`, and
+`docs/representation-track.md`.
 
 *Deviation (opt-in):* texture-kernel head for `textured_quad` proxies
 (`model.texture_conditioning: "kernel"`, hardening track rung H3). Instead of
@@ -251,6 +255,13 @@ error < 0.05 with a 96-spp/10k-iteration proxy.
   consistency; `nrp.torch_backend.relight_multiview` applies one light edit across
   all resident view proxies with no path-cache access (latency scales linearly in N;
   numbers in `docs/performance.md`).
+- **Representation-track R2 camera-conditioned pilot — implemented, not promoted**:
+  `examples/r2_conditioned.py` loads N cache/camera pairs, trains one global-bound
+  `world3d` proxy with normalized camera direction, and compares it with per-view
+  controls on disjoint held-out lights. The pilot misses the ≤1 dB per-view gate;
+  it is evidence for the implementation and a measured negative, not evidence for
+  novel-view interpolation. See `out/r2-conditioned/report.json` and
+  `docs/performance.md`.
 - **Extension E1 animated camera — implemented**: the toy tracer accepts a
   camera-origin override; `examples/time_conditioned_camera.py` (`mise run
   time-camera`) traces K camera keyframe caches and evaluates image-space

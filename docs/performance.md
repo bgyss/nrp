@@ -449,6 +449,57 @@ inference table above).
 view proxy — **0.76 MB total for all 3 views**, vs 3 path caches of 3.3–3.7 MB
 `.npz` each (10.5 MB total) that are *not* needed at edit time.
 
+## R2: One Network, N Cameras
+
+R2's implementation pilot uses one camera-conditioned `world3d` TorchNRP over the
+same three 48×48 Cornell-box camera caches used by the per-view baseline above. The
+pilot command was:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r2_conditioned.py \
+  --out out/r2-conditioned/report.json --n-views 3 --width 48 --height 48 \
+  --spp 16 --bounces 4 --iters 3000 --devices cpu --denoise bilateral
+```
+
+Hardware context: macOS 27 arm64, Python 3.12.11, PyTorch 2.12.1, Mitsuba 3.9.0.
+LLVM and Metal initialization were unavailable in this run, so the Mitsuba export
+used the scalar CPU loop. The conditioned model receives global-bound first-hit
+world position, G-buffer aux, a normalized camera forward direction, and sphere
+light parameters. Each view's 12 validation lights are generated independently and
+are disjoint from the shared training-light vectors. The machine-readable report is
+`out/r2-conditioned/report.json`.
+
+**Per-view quality gate:** conditioned PSNR must be no more than 1 dB below the
+separate per-view baseline, evaluated on the same held-out light vectors.
+
+| view | per-view baseline (dB) | one conditioned network (dB) | delta (dB) | ≤1 dB gate |
+|---|---:|---:|---:|---|
+| view0 | 22.522 | 21.455 | −1.067 | **fail** |
+| view1 | 26.618 | 25.106 | −1.513 | **fail** |
+| view2 | 23.369 | 20.453 | −2.916 | **fail** |
+
+The local structural checks pass: all three camera pairs load, all validation sets
+are disjoint, and exactly one conditioned checkpoint serves all views. The quality
+gate is an honest negative, not averaged away across cameras; the worst view misses
+by 1.916 dB beyond the allowed loss.
+
+**Resident model memory:** one conditioned checkpoint is **0.375 MB**; the three
+per-view baseline checkpoints total **0.773 MB** (0.258 MB each). This measures
+model artifacts only, matching the existing multiview compactness convention; the
+precomputed per-view feature tensors are resident in both inference paths.
+
+**All-view edit latency:** 20 synchronized edits with 3 warmup iterations, CPU:
+
+| N views | conditioned network (ms/edit) | N per-view baselines (ms/edit) |
+|---:|---:|---:|
+| 1 | 8.05 | 4.66 |
+| 2 | 17.43 | 9.18 |
+| 3 | 25.49 | 13.67 |
+
+Both paths scale approximately linearly with N and touch no path segments during
+the timed proxy edit. This pilot implements the R2 machinery and records a measured
+negative, but it does not promote R1 or authorize the R3–R6 claims.
+
 ## Per-layer compositing NRPs (roadmap item 8, §6.1 / Fig. 11)
 
 The toy scene split into first-hit layers — foreground sphere vs background box

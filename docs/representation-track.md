@@ -10,7 +10,7 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 |---|---|---|---|
 | R1 | World-space encoding at parity | **done — honest negative**: toy passes; Country Kitchen passes on only 1/3 controlled seeds | `out/r1-worldgrid/report.json`, `out/r1-followup/report.json`, `docs/performance.md#world-space-encoding-at-parity-representation-track-rung-r1` |
 | R1 follow-up | Provenance, collision, and tri-plane diagnosis | **done — candidate not promoted**: tri-plane passes on 2/3 seeds, but fails the unchanged per-seed gate | `out/r1-followup/report.json`, `docs/plans/2026-07-27-r1-next-experiments.md` |
-| R2 | One network, N cameras | **blocked by R1 gate; not attempted** | — |
+| R2 | One network, N cameras | **implemented pilot — honest negative; promotion blocked by R1 gate** | `out/r2-conditioned/report.json`, `docs/performance.md#r2-one-network-n-cameras` |
 | R3 | Novel-view interpolation | blocked by R1/R2; not attempted | — |
 | R4 | Real scene, real scale | blocked by R2; not attempted | — |
 | R5 | Camera in the WebGPU runtime | blocked by R4; not attempted | — |
@@ -75,6 +75,37 @@ representations without closing their paired gap, so the next campaign treats
 optimizer/initialization variance as a first-class factor. The bounded follow-up
 ladder and its stop conditions are in
 `docs/plans/2026-07-27-r1-next-experiments.md`.
+
+## R2 implementation and pilot
+
+The R2 machinery is implemented and measured, but the rung is not promoted because
+the R1 prerequisite remains unmet. `TorchNRP` now has an opt-in
+`camera_conditioned` input: one normalized camera forward direction is broadcast
+over each view's pixels and concatenated with a global-bound `world3d` representation.
+The camera-aware manifest loader accepts N cache/camera pairs; one shared light pool
+renders targets through every cache, while each view gets a dedicated held-out light
+set. The shared relighter keeps one checkpoint resident and does not touch path
+segments during an edit.
+
+The full pilot used:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r2_conditioned.py \
+  --out out/r2-conditioned/report.json --n-views 3 --width 48 --height 48 \
+  --spp 16 --bounces 4 --iters 3000 --devices cpu --denoise bilateral
+```
+
+It ran on macOS 27 arm64 with Python 3.12.11, PyTorch 2.12.1, and Mitsuba 3.9.0.
+LLVM/Metal initialization was unavailable, so Mitsuba used the scalar CPU exporter.
+The three per-view conditioned deltas against same-light-set 2D baselines were
+−1.067, −1.513, and −2.916 dB; all miss R2's ≤1 dB per-view gate. One conditioned
+checkpoint is 0.375 MB versus 0.773 MB for the three baseline checkpoints. CPU
+all-view proxy edit latency was 8.05 / 17.43 / 25.49 ms for N = 1 / 2 / 3;
+the per-view baseline path measured 4.66 / 9.18 / 13.67 ms. Validation light
+sets were disjoint for all three views, and the report records those checks directly.
+
+This is an R2 implementation/pilot result, not evidence for novel-view
+interpolation or R3–R6 promotion. The R1 gate remains the binding track gate.
 
 ## Reproduce and verify
 
