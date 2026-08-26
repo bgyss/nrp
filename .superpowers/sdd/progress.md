@@ -18,3 +18,8 @@ Task 1: complete (commits ebc8b15..55ca5e5, review clean after 2 fix rounds)
 Task 2: complete (commit d7f6a82, review clean)
   - kitchen founding measurement independently reproduced: 78,084 verts / 4096 slots = 0.0525
   - MINOR (deferred to final review): zero-vertex edge case in capacity_report is handled but untested
+Task 3: complete (commit 967e1f7, review clean)
+  - side-effect import verified load-bearing in a fresh interpreter
+  - SUPPORTED_SPATIAL_ENCODINGS fully migrated (model.py + train.py), no stale set
+  - MINOR (plan-mandated): test_occupancy_encoder_without_occupancy_raises passes vacuously
+    until an encoder sets needs_occupancy=True. MUST be shown red-then-green in Task 4.
