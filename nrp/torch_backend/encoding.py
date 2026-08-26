@@ -20,6 +20,7 @@ from .encoder_registry import (  # noqa: F401
     build_encoder,
     register_encoder,
 )
+from .occupancy import level_resolutions
 
 _PRIMES = (1, 2654435761, 805459861)
 
@@ -139,6 +140,9 @@ class HashEncoding3D(nn.Module):
         table_size_log2: int = 14,
         base_resolution: int = 4,
         finest_resolution: int = 256,
+        allocation: str = "uniform",
+        occupancy=None,
+        slot_budget: int | None = None,
     ):
         super().__init__()
         if levels <= 0:
@@ -151,6 +155,11 @@ class HashEncoding3D(nn.Module):
             raise ValueError("base_resolution and finest_resolution must be positive")
         if finest_resolution < base_resolution:
             raise ValueError("finest_resolution must be >= base_resolution")
+        if allocation not in {"uniform", "occupancy"}:
+            raise ValueError("allocation must be 'uniform' or 'occupancy'")
+        if allocation == "occupancy" and occupancy is None:
+            raise ValueError("allocation='occupancy' requires occupancy")
+        self.allocation = allocation
         self.levels = levels
         self.features_per_level = features_per_level
         self.table_size = 1 << table_size_log2
@@ -164,11 +173,47 @@ class HashEncoding3D(nn.Module):
         ]
         self.tables = nn.ParameterList()
         self._dense = []
-        for res in self.resolutions:
-            n_vertices = (res + 1) ** 3
-            dense = n_vertices <= self.table_size
-            self._dense.append(dense)
-            size = n_vertices if dense else self.table_size
+        if allocation == "uniform":
+            sizes = []
+            for res in self.resolutions:
+                n_vertices = (res + 1) ** 3
+                dense = n_vertices <= self.table_size
+                self._dense.append(dense)
+                sizes.append(n_vertices if dense else self.table_size)
+        else:
+            # Validate against the FULL schedule before any truncation -- occupancy
+            # built with the wrong base/finest resolution describes a different grid
+            # than this encoder queries, and truncation must not hide that mismatch.
+            if len(occupancy) != levels:
+                raise ValueError(f"occupancy has {len(occupancy)} levels, expected {levels}")
+            expected_resolutions = level_resolutions(levels, base_resolution, finest_resolution)
+            actual_resolutions = [occ.resolution for occ in occupancy]
+            if actual_resolutions != expected_resolutions:
+                raise ValueError(
+                    f"occupancy resolutions {actual_resolutions} do not match the schedule "
+                    f"implied by base_resolution={base_resolution}, "
+                    f"finest_resolution={finest_resolution}, levels={levels} "
+                    f"(expected {expected_resolutions}); occupancy was built with a "
+                    "different resolution schedule than this encoder was configured for"
+                )
+            # Size each level from the vertices the cache actually reads, coarsest
+            # first, and drop levels the budget cannot serve rather than crushing them
+            # to a few percent of their occupancy -- the failure R1 measured.
+            budget = int(slot_budget) if slot_budget is not None else self.table_size * levels
+            sizes = []
+            remaining = budget
+            for occ in occupancy:
+                want = int(occ.count)
+                if want > remaining:
+                    break
+                sizes.append(want)
+                self._dense.append(want == (occ.resolution + 1) ** 3)
+                remaining -= want
+            if not sizes:
+                raise ValueError("slot_budget is too small to serve even the coarsest level")
+            self.levels = len(sizes)
+            self.resolutions = self.resolutions[: self.levels]
+        for size in sizes:
             self.tables.append(
                 nn.Parameter(torch.empty(size, features_per_level).uniform_(-1e-4, 1e-4))
             )
@@ -184,6 +229,9 @@ class HashEncoding3D(nn.Module):
         self, ix: torch.Tensor, iy: torch.Tensor, iz: torch.Tensor, level: int
     ) -> torch.Tensor:
         res = self.resolutions[level]
+        if self.allocation == "occupancy" and not self._dense[level]:
+            hashed = (ix * _PRIMES[0]) ^ (iy * _PRIMES[1]) ^ (iz * _PRIMES[2])
+            return hashed % self.tables[level].shape[0]
         if self._dense[level]:
             side = res + 1
             return (iz * side + iy) * side + ix
