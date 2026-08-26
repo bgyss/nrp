@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
@@ -34,6 +35,10 @@ from nrp.torch_backend.conditioned_multiview import (  # noqa: E402
     camera_direction,
     train_conditioned,
 )
+from nrp.torch_backend.encoder_registry import (  # noqa: E402
+    SPATIAL_ENCODERS,
+    encoder_schedule_params,
+)
 from nrp.torch_backend.encoding_gates import (  # noqa: E402
     g1_generalization,
     g2_capacity_context,
@@ -43,6 +48,11 @@ from nrp.torch_backend.encoding_gates import (  # noqa: E402
     stop_reason,
 )
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
+from nrp.torch_backend.occupancy import (  # noqa: E402
+    grid_occupancy,
+    level_resolutions,
+    normalize_positions,
+)
 from nrp.torch_backend.relight import relight  # noqa: E402
 from nrp.torch_backend.train import light_param_vector, model_tensors  # noqa: E402
 from nrp.torch_backend.train import train as train_single  # noqa: E402
@@ -221,10 +231,46 @@ def arm_config(arm: str, seed: int, manifest: Path, out_dir: Path, args) -> dict
     }
 
 
+def load_conditioned_model(model_path: Path, occupancy_caches: list[PathCache]) -> TorchNRP:
+    """Reload a camera-conditioned model, rebuilding occupancy if its arm needs one.
+
+    `TorchNRP.save`/`load` deliberately excludes occupancy from the persisted config
+    (it isn't JSON/tensor serializable), so an occupancy-allocated arm cannot be
+    reloaded from its checkpoint alone. `train_conditioned` built that occupancy from
+    the union of the manifest's training-view first-hit positions and the model's own
+    stored `world_bounds`; reproducing that exact recipe here (not a fresh guess at
+    bounds or a different resolution schedule) is what makes the reloaded encoder's
+    table layout identical to the one the checkpoint's weights were trained against.
+    """
+    blob = torch.load(str(model_path), map_location="cpu", weights_only=True)
+    config = dict(blob["config"])
+    encoding_name = config["spatial_encoding"]
+    encoding_cfg = config.get("encoding") or {}
+    encoder_cls = SPATIAL_ENCODERS[encoding_name]
+    needs_occupancy = (
+        getattr(encoder_cls, "needs_occupancy", False)
+        or encoding_cfg.get("allocation") == "occupancy"
+    )
+    occupancy = None
+    if needs_occupancy:
+        stacked = np.concatenate(
+            [cache.position.reshape(-1, 3) for cache in occupancy_caches], axis=0
+        )
+        levels, base_resolution, finest_resolution = encoder_schedule_params(
+            encoding_name, encoding_cfg
+        )
+        occupancy = grid_occupancy(
+            normalize_positions(stacked, config["world_bounds"]),
+            level_resolutions(levels, base_resolution, finest_resolution),
+        )
+    model = TorchNRP(**config, occupancy=occupancy)
+    model.load_state_dict(blob["state_dict"])
+    model.eval()
+    return model
+
+
 def _predict(model: TorchNRP, cache: PathCache, lights: list, view_dir=None) -> np.ndarray:
     """`relight`'s loop, but able to pass a camera-conditioned model's `view_dir`."""
-    import torch
-
     device = next(model.parameters()).device
     n_px = cache.height * cache.width
     spatial, aux = model_tensors(cache, model, device)
@@ -256,8 +302,6 @@ def evaluate_camera(
     frame `cache` itself is in (see `rotated_camera`) and is what the model's
     view-direction input is computed from.
     """
-    import torch
-
     reference = gather_lights(cache, lights)
     baseline = relight(baseline_model, cache, lights)
     view_dir = None
@@ -366,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_entries.append(
                     {
                         "name": camera["name"],
-                        "cache": str(cache_path),
+                        "cache": str(cache_path.resolve()),
                         "camera": cameras_in_frame[camera["name"]],
                     }
                 )
@@ -390,7 +434,9 @@ def main(argv: list[str] | None = None) -> int:
                 model_path = arm_dir / "model.pt"
                 if not (args.skip_export and model_path.exists()):
                     train_conditioned(arm_config(arm, seed, manifest_path, arm_dir, args))
-                model = TorchNRP.load(str(model_path)).eval()
+                model = load_conditioned_model(
+                    model_path, [caches[camera["name"]] for camera in trained]
+                )
 
                 if model.encoding is not None and hasattr(model.encoding, "capacity_report"):
                     report = model.encoding.capacity_report()
