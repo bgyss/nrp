@@ -28,20 +28,41 @@ def g1_generalization(
     camera -- the only thing a screen-space proxy can do at a novel camera.
 
     ``expected_seeds``/``expected_cameras`` are optional coverage requirements: when
-    supplied, every expected seed must appear, and every expected camera must appear
-    for every expected seed, or the gate fails regardless of the deltas. When both are
-    omitted, coverage is not checked (today's behaviour) and ``coverage_complete`` is
-    reported as ``None`` so a reader can tell coverage was never verified, rather than
-    conflating "not checked" with "checked and complete".
+    both are supplied and both are non-empty, every expected seed must appear, and
+    every expected camera must appear for every expected seed, or the gate fails
+    regardless of the deltas. When both are omitted, coverage is not checked (today's
+    behaviour) and ``coverage_complete`` is reported as ``None`` so a reader can tell
+    coverage was never verified, rather than conflating "not checked" with "checked
+    and complete". Supplying only one of the two, or supplying either as an empty
+    set, is a malformed coverage request -- it is NOT the same as a verified
+    coverage, so it fails closed (``coverage_complete: False``) rather than passing
+    vacuously. ``coverage_status`` records which of the three states applied:
+    ``"not_requested"``, ``"malformed_request"``, ``"incomplete"``, or ``"complete"``.
     """
+    coverage_requested = expected_seeds is not None or expected_cameras is not None
+    coverage_malformed = coverage_requested and (
+        expected_seeds is None
+        or expected_cameras is None
+        or not expected_seeds
+        or not expected_cameras
+    )
     if not rows:
-        coverage_requested = expected_seeds is not None or expected_cameras is not None
+        if not coverage_requested:
+            coverage_complete = None
+            coverage_status = "not_requested"
+        elif coverage_malformed:
+            coverage_complete = False
+            coverage_status = "malformed_request"
+        else:
+            coverage_complete = False
+            coverage_status = "incomplete"
         return {
             "passed": False,
             "reason": "no rows",
             "failures": [],
             "threshold_db": threshold_db,
-            "coverage_complete": False if coverage_requested else None,
+            "coverage_complete": coverage_complete,
+            "coverage_status": coverage_status,
         }
     failures = [
         {
@@ -56,17 +77,21 @@ def g1_generalization(
     deltas = _deltas(rows)
 
     coverage_complete: bool | None
-    if expected_seeds is None and expected_cameras is None:
+    if not coverage_requested:
         coverage_complete = None
+        coverage_status = "not_requested"
+    elif coverage_malformed:
+        coverage_complete = False
+        coverage_status = "malformed_request"
     else:
         by_seed_cameras: dict = {}
         for row in rows:
             by_seed_cameras.setdefault(row["seed"], set()).add(row["camera"])
-        want_seeds = expected_seeds or set()
-        want_cameras = expected_cameras or set()
         coverage_complete = all(
-            seed in by_seed_cameras and want_cameras <= by_seed_cameras[seed] for seed in want_seeds
+            seed in by_seed_cameras and expected_cameras <= by_seed_cameras[seed]
+            for seed in expected_seeds
         )
+        coverage_status = "complete" if coverage_complete else "incomplete"
 
     return {
         "passed": not failures and (coverage_complete is not False),
@@ -76,6 +101,7 @@ def g1_generalization(
         "mean_delta_db": statistics.fmean(deltas),
         "worst_delta_db": min(deltas),
         "coverage_complete": coverage_complete,
+        "coverage_status": coverage_status,
     }
 
 

@@ -80,6 +80,48 @@ class TestG1(unittest.TestCase):
         self.assertFalse(gate["coverage_complete"])
         self.assertFalse(gate["passed"])
 
+    def test_only_expected_cameras_supplied_is_malformed_not_a_pass(self):
+        # expected_seeds omitted -- `all()` over an empty want_seeds would be
+        # vacuously True. Coverage that was never actually specified for seeds
+        # must never read as complete.
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(2) for c in range(1)]
+        gate = g1_generalization(rows, expected_cameras={"held0", "held1"})
+        self.assertFalse(gate["coverage_complete"])
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["coverage_status"], "malformed_request")
+
+    def test_only_expected_seeds_supplied_is_malformed_not_a_pass(self):
+        rows = [_row(seed=s, camera="held0") for s in range(2)]
+        gate = g1_generalization(rows, expected_seeds={0, 1, 2})
+        self.assertFalse(gate["coverage_complete"])
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["coverage_status"], "malformed_request")
+
+    def test_expected_seeds_empty_set_with_real_cameras_is_malformed_not_a_pass(self):
+        # An explicit empty set is the second vacuous-True trap: `set() or set()`
+        # collapses to the same empty want_seeds as omission.
+        rows = [_row(seed=0, camera=f"held{c}") for c in range(2)]
+        gate = g1_generalization(rows, expected_seeds=set(), expected_cameras={"held0", "held1"})
+        self.assertFalse(gate["coverage_complete"])
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["coverage_status"], "malformed_request")
+
+    def test_both_supplied_nonempty_and_complete_still_passes(self):
+        # Guard against over-correcting into always-False: a genuinely complete,
+        # well-formed coverage request must still report True.
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(2) for c in range(2)]
+        gate = g1_generalization(rows, expected_seeds={0, 1}, expected_cameras={"held0", "held1"})
+        self.assertIs(gate["coverage_complete"], True)
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["coverage_status"], "complete")
+
+    def test_both_omitted_reports_none_and_matches_pre_fix_behaviour(self):
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(5) for c in range(4)]
+        gate = g1_generalization(rows)
+        self.assertIsNone(gate["coverage_complete"])
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["coverage_status"], "not_requested")
+
 
 class TestG3(unittest.TestCase):
     def test_reports_per_seed_pass_and_spread(self):
