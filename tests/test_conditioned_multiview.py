@@ -9,14 +9,18 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.conditioned_multiview import (  # noqa: E402
+    MultiViewImagePool,
+    build_validation_sets,
     camera_direction,
     global_world_bounds,
     load_camera_manifest,
+    validation_disjointness,
 )
 
 
@@ -130,6 +134,46 @@ class ManifestTests(unittest.TestCase):
         bounds = global_world_bounds([first, second])
         np.testing.assert_allclose(bounds["min"], [0.0, 0.5, 1.0])
         np.testing.assert_allclose(bounds["max"], [3.0, 0.6, 3.05])
+
+
+class PoolTests(unittest.TestCase):
+    def _config(self):
+        return {
+            "light_type": "sphere",
+            "light_bounds": {"radius_min": 0.1, "radius_max": 0.2},
+            "sampling": "segments",
+            "pool": {"size": 3, "replace_count": 1},
+            "denoise": {"enabled": False},
+            "n_val_lights": 3,
+        }
+
+    def test_shared_pool_shapes_and_replacement(self):
+        caches = [tiny_cache(offset=0.0), tiny_cache(offset=0.2)]
+        pool = MultiViewImagePool(
+            caches, self._config(), np.random.default_rng(7), torch.device("cpu")
+        )
+        self.assertEqual(tuple(pool.params.shape), (3, 4))
+        self.assertEqual(tuple(pool.targets.shape), (2, 3, 2, 3))
+        self.assertEqual(pool.supervision_images, 6)
+        self.assertFalse(np.array_equal(pool.targets[0, 0].numpy(), pool.targets[1, 0].numpy()))
+        before = pool.params[0].clone()
+        pool.replace_round()
+        self.assertFalse(torch.equal(before, pool.params[0]))
+        self.assertEqual(pool.supervision_images, 8)
+
+    def test_validation_sets_are_per_view_and_disjoint(self):
+        caches = [tiny_cache(offset=0.0), tiny_cache(offset=0.2)]
+        config = self._config()
+        pool = MultiViewImagePool(
+            caches, config, np.random.default_rng(11), torch.device("cpu")
+        )
+        validation = build_validation_sets(caches, config, seed=11)
+        self.assertEqual(len(validation), 2)
+        self.assertTrue(all(len(entries) == 3 for entries in validation))
+        disjoint = validation_disjointness(pool.used_params, validation)
+        self.assertEqual(disjoint, [True, True])
+        duplicate = [[{"params": pool.used_params[0]}], []]
+        self.assertEqual(validation_disjointness(pool.used_params, duplicate), [False, True])
 
 
 if __name__ == "__main__":
