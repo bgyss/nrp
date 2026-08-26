@@ -10,3 +10,8 @@ Pre-flight fixes applied before dispatch (approved by user):
 - Task 3/4: registry moved to nrp/torch_backend/encoder_registry.py to break the import cycle
 
 ## Tasks
+Task 0: complete (commits 6dc31b6..ebc8b15, review clean)
+Task 1: complete (commits ebc8b15..55ca5e5, review clean after 2 fix rounds)
+  - authorized deviation: clamp change is a no-op, kept as invariant; spec corrected in c1f38a8
+  - authorized deviation: wired spatial_encoding/world_bounds through train_streamed
+  - _floor_cell extracted in encoding.py; both forwards call it; tests import it
