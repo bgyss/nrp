@@ -32,3 +32,8 @@ Task 4: complete (commits 6fa062c..22ddfcc, review clean after 1 fix round)
     the G3 gate in Task 8 asserts that field, so it would have verified a constant)
   - needs_occupancy flag shown red-then-green; buffer round-trip now discriminating
   - base_resolution/finest_resolution now validated against supplied occupancy
+Task 5: complete (commit a31120c, review clean, no fix round)
+  - implementer self-caught that brief's constant-filled tables couldn't detect a wrong
+    AXIS_TO_PLANE coordinate pair; added a discriminating test, shown red-then-green
+  - world_transform interaction verified: normals rotated by world_basis (model.py:264-265)
+  - MINOR (deferred): gradient test doesn't assert ZERO grad on non-selected planes
