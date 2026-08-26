@@ -20,6 +20,7 @@ from nrp.torch_backend.conditioned_multiview import (  # noqa: E402
     camera_direction,
     global_world_bounds,
     load_camera_manifest,
+    train_conditioned,
     validation_disjointness,
 )
 
@@ -174,6 +175,85 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(disjoint, [True, True])
         duplicate = [[{"params": pool.used_params[0]}], []]
         self.assertEqual(validation_disjointness(pool.used_params, duplicate), [False, True])
+
+
+class TrainingTests(unittest.TestCase):
+    def _manifest(self, root: Path) -> Path:
+        tiny_cache(width=2, offset=0.0).save(root / "front.npz")
+        tiny_cache(width=2, offset=0.2).save(root / "side.npz")
+        manifest = root / "views.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "views": [
+                        {
+                            "name": "front",
+                            "cache": "front.npz",
+                            "camera": {
+                                "origin": [0.0, 0.0, 2.0],
+                                "target": [0.0, 0.0, 0.0],
+                            },
+                        },
+                        {
+                            "name": "side",
+                            "cache": "side.npz",
+                            "camera": {
+                                "origin": [2.0, 0.0, 0.0],
+                                "target": [0.0, 0.0, 0.0],
+                            },
+                        },
+                    ]
+                }
+            )
+        )
+        return manifest
+
+    def test_train_conditioned_two_views(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "conditioned"
+            report = train_conditioned(
+                {
+                    "manifest": str(self._manifest(root)),
+                    "out_dir": str(out_dir),
+                    "light_type": "sphere",
+                    "light_bounds": {"radius_min": 0.1, "radius_max": 0.2},
+                    "sampling": "segments",
+                    "pool": {"size": 3, "replace_every": 2, "replace_count": 1},
+                    "denoise": {"enabled": False},
+                    "iters": 6,
+                    "batch_pixels": 16,
+                    "lr": 0.005,
+                    "model": {
+                        "camera_conditioned": True,
+                        "spatial_encoding": "world3d",
+                        "hidden_width": 8,
+                        "hidden_layers": 1,
+                        "encoding": {
+                            "levels": 1,
+                            "features_per_level": 2,
+                            "finest_resolution": 4,
+                        },
+                    },
+                    "n_val_lights": 2,
+                    "seed": 7,
+                    "device": "cpu",
+                }
+            )
+            self.assertEqual(report["view_count"], 2)
+            self.assertEqual(len(report["views"]), 2)
+            self.assertEqual(report["validation_disjoint_by_view"], [True, True])
+            self.assertEqual(len(report["shared_training_light_params"]), 6)
+            self.assertTrue(np.isfinite(report["loss_first"]))
+            self.assertTrue(np.isfinite(report["loss_last"]))
+            self.assertTrue(
+                all(
+                    np.isfinite(row["val_psnr_db_vs_raw_mean"])
+                    for row in report["views"]
+                )
+            )
+            self.assertTrue((out_dir / "model.pt").exists())
+            self.assertTrue((out_dir / "conditioned_train_report.json").exists())
 
 
 if __name__ == "__main__":

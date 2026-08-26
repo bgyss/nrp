@@ -9,6 +9,7 @@ contract so all R2 paths agree on paths, camera directions, and scene bounds.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,9 +21,11 @@ import torch
 from ..gather_light import gather_light
 from ..path_cache import PathCache
 from .denoise import denoise_image
+from .device import autocast, resolve_device, resolve_precision
 from .gather import TorchPathCache
+from .model import TorchNRP, relative_mse_loss
 from .sampling import sample_light
-from .train import light_param_dim_from_cfg, light_param_vector
+from .train import evaluate, light_param_dim_from_cfg, light_param_vector, spatial_tensors
 
 
 def _finite_vector(value, name: str) -> np.ndarray:
@@ -285,3 +288,175 @@ def validation_disjointness(
             )
         )
     return result
+
+
+def train_conditioned(cfg: dict, resume: bool = False) -> dict:
+    """Train one world-anchored, camera-conditioned proxy over all manifest views."""
+    if resume:
+        raise ValueError("camera-conditioned R2 training does not support resume yet")
+    model_cfg = cfg.get("model")
+    if not isinstance(model_cfg, dict) or not model_cfg.get("camera_conditioned", False):
+        raise ValueError("R2 training requires model.camera_conditioned=true")
+    if model_cfg.get("spatial_encoding", "pixel2d") != "world3d":
+        raise ValueError("R2 training requires model.spatial_encoding='world3d'")
+
+    views = load_camera_manifest(cfg["manifest"])
+    caches = [PathCache.load(str(view.cache_path)) for view in views]
+    device = resolve_device(cfg.get("device"))
+    precision = resolve_precision(cfg.get("precision"))
+    seed = int(cfg.get("seed", 0))
+    rng = np.random.default_rng(seed)
+    torch.manual_seed(seed)
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    n_pixels = caches[0].height * caches[0].width
+    bounds = global_world_bounds(caches)
+
+    model = TorchNRP(
+        light_type=cfg["light_type"],
+        light_param_dim=light_param_dim_from_cfg(cfg),
+        hidden_width=model_cfg.get("hidden_width", 128),
+        hidden_layers=model_cfg.get("hidden_layers", 4),
+        encoding=model_cfg.get("encoding"),
+        spatial_encoding="world3d",
+        world_bounds=bounds,
+        camera_conditioned=True,
+        use_encoding=model_cfg.get("use_encoding", True),
+        use_aux=model_cfg.get("use_aux", True),
+        texture_kernel=model_cfg.get("texture_conditioning") == "kernel",
+    ).to(device)
+    spatial_rows, aux_rows = zip(
+        *(spatial_tensors(cache, device, "world3d") for cache in caches), strict=True
+    )
+    spatial = torch.stack(spatial_rows)
+    aux = torch.stack(aux_rows)
+    view_dirs = torch.stack(
+        [camera_tensor(view, n_pixels, device) for view in views], dim=0
+    )
+
+    pool_started = time.perf_counter()
+    pool = MultiViewImagePool(caches, cfg, rng, device)
+    pool_seconds = time.perf_counter() - pool_started
+    validation_sets = build_validation_sets(caches, cfg, seed=seed)
+    disjoint_by_view = validation_disjointness(pool.used_params, validation_sets)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.get("lr", 1e-2))
+    iters = int(cfg["iters"])
+    batch = int(cfg.get("batch_pixels", 4096))
+    if iters <= 0 or batch <= 0:
+        raise ValueError("iters and batch_pixels must be positive")
+    if model_cfg.get("init_output_scale", True):
+        model.init_output_scale(float(pool.targets.mean(dim=-1).median().item()))
+
+    scaler = torch.amp.GradScaler("cuda") if precision == "fp16" and device.type == "cuda" else None
+    loss_curve: list[float] = []
+    train_started = time.perf_counter()
+    replace_every = int(cfg["pool"]["replace_every"])
+    if replace_every <= 0:
+        raise ValueError("pool.replace_every must be positive")
+    model.train()
+    for iteration in range(iters):
+        view_ids = torch.randint(0, len(caches), (batch,), generator=generator).to(device)
+        pool_ids = torch.randint(0, pool.size, (batch,), generator=generator).to(device)
+        pixel_ids = torch.randint(0, n_pixels, (batch,), generator=generator).to(device)
+        with autocast(device, precision):
+            pred = model(
+                spatial[view_ids, pixel_ids],
+                aux[view_ids, pixel_ids],
+                pool.params[pool_ids],
+                view_dir=view_dirs[view_ids, pixel_ids],
+            )
+            target = pool.targets[view_ids, pool_ids, pixel_ids]
+            loss = relative_mse_loss(pred, target)
+        optimizer.zero_grad()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
+        loss_curve.append(float(loss.detach().item()))
+        if (iteration + 1) % replace_every == 0:
+            pool.replace_round()
+    train_seconds = time.perf_counter() - train_started
+
+    model.eval()
+    view_reports = []
+    for index, (view, cache, entries) in enumerate(
+        zip(views, caches, validation_sets, strict=True)
+    ):
+        metrics = evaluate(
+            model,
+            entries,
+            spatial[index],
+            aux[index],
+            device,
+            hw=(cache.height, cache.width),
+            view_dir=view_dirs[index],
+        )
+        view_reports.append(
+            {
+                "name": view.name,
+                "camera": view.camera,
+                "validation_light_params": [entry["params"].tolist() for entry in entries],
+                "val_lights": metrics,
+                "val_psnr_db_vs_raw_mean": float(
+                    np.mean([metric["psnr_db_vs_raw"] for metric in metrics])
+                ),
+                "val_smape_vs_raw_mean": float(
+                    np.mean([metric["smape_vs_raw"] for metric in metrics])
+                ),
+            }
+        )
+
+    model_dir = Path(cfg["out_dir"])
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "model.pt"
+    model.save(str(model_path))
+    with torch.no_grad():
+        fixed = pool.params[0].expand(n_pixels, -1)
+        started = time.perf_counter()
+        for _ in range(5):
+            model(spatial[0], aux[0], fixed, view_dir=view_dirs[0])
+        inference_ms = (time.perf_counter() - started) / 5.0 * 1000.0
+    report = {
+        "config": {key: value for key, value in cfg.items() if key != "out_dir"},
+        "view_count": len(views),
+        "views": view_reports,
+        "resolution": [caches[0].width, caches[0].height],
+        "parameter_count": model.parameter_count,
+        "model_bytes": os.path.getsize(model_path),
+        "model_path": "model.pt",
+        "path_cache_segments": [cache.segment_count for cache in caches],
+        "global_world_bounds": bounds,
+        "shared_training_light_params": [vector.tolist() for vector in pool.used_params],
+        "validation_light_params": [
+            [entry["params"].tolist() for entry in entries] for entries in validation_sets
+        ],
+        "validation_disjoint_by_view": disjoint_by_view,
+        "pool_build_seconds": pool_seconds,
+        "supervision_images": pool.supervision_images,
+        "supervision_seconds": pool.supervision_seconds,
+        "train_seconds": train_seconds,
+        "iters_per_second": iters / train_seconds if train_seconds > 0 else None,
+        "inference_ms_per_frame": inference_ms,
+        "inference_hz": 1000.0 / inference_ms if inference_ms > 0 else None,
+        "loss_first": loss_curve[0],
+        "loss_last": loss_curve[-1],
+        "loss_curve": loss_curve,
+        "validation_disjoint": all(disjoint_by_view),
+        "val_psnr_db_vs_raw_mean": float(
+            np.mean([row["val_psnr_db_vs_raw_mean"] for row in view_reports])
+        ),
+        "val_smape_vs_raw_mean": float(
+            np.mean([row["val_smape_vs_raw_mean"] for row in view_reports])
+        ),
+    }
+    report_path = model_dir / "conditioned_train_report.json"
+    report_path.write_text(json.dumps(report, indent=2))
+    print(
+        f"trained one conditioned model for {len(views)} views ({model.parameter_count} params) "
+        f"in {train_seconds:.1f}s; held-out PSNR {report['val_psnr_db_vs_raw_mean']:.2f} dB"
+    )
+    print(f"wrote {model_path} and {report_path}")
+    return report

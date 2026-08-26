@@ -246,7 +246,15 @@ def _tonemap_srgb(img: np.ndarray) -> np.ndarray:
     return np.clip((img / (1.0 + img)) ** (1.0 / 2.2), 0.0, 1.0)
 
 
-def evaluate(model, val_set, xy, aux, device, hw: tuple[int, int] | None = None) -> list[dict]:
+def evaluate(
+    model,
+    val_set,
+    xy,
+    aux,
+    device,
+    hw: tuple[int, int] | None = None,
+    view_dir: torch.Tensor | None = None,
+) -> list[dict]:
     model.eval()
     metrics = []
     n_px = xy.shape[0]
@@ -255,7 +263,11 @@ def evaluate(model, val_set, xy, aux, device, hw: tuple[int, int] | None = None)
             params = torch.as_tensor(
                 light_param_vector(entry["light"]), dtype=torch.float32, device=device
             ).expand(n_px, -1)
-            pred = model(xy, aux, params).cpu().numpy().astype(np.float64)
+            pred = (
+                model(xy, aux, params, view_dir=view_dir)
+                if view_dir is not None
+                else model(xy, aux, params)
+            ).cpu().numpy().astype(np.float64)
             light = entry["light"]
             m = {
                 "light": light.to_dict() if hasattr(light, "to_dict") else None,
