@@ -382,6 +382,19 @@ def _pixel_tensors(cache: PathCache, device) -> tuple[torch.Tensor, torch.Tensor
     return to(xy), to(aux)
 
 
+def spatial_tensors_for(cache: PathCache, model, device) -> tuple[torch.Tensor, torch.Tensor]:
+    """Spatial coordinates matching the model's encoding, plus the 7-column aux block.
+
+    The streamed path previously assumed pixel2d, which silently blocked every
+    world-anchored encoding from the S1 accelerated trainer.
+    """
+    xy, aux = _pixel_tensors(cache, device)
+    if model.spatial_encoding == "pixel2d":
+        return xy, aux
+    position = torch.as_tensor(cache.position.reshape(-1, 3), dtype=torch.float32, device=device)
+    return position, aux
+
+
 def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tuple[TorchNRP, dict]:
     """Train a TorchNRP sphere-light proxy from a streamed pool. Mirrors
     `nrp.torch_backend.train.train`'s core loop closely enough that, given the same
@@ -390,7 +403,6 @@ def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tupl
     rng = np.random.default_rng(cfg.get("seed", 0))
     torch.manual_seed(cfg.get("seed", 0))
     device = resolve_device(cfg.get("device"))
-    xy, aux = _pixel_tensors(gbuffer_cache, device)
 
     t_pool0 = time.perf_counter()
     pool = StreamedImagePool(shard_dir, gbuffer_cache, cfg, rng, device)
@@ -402,6 +414,7 @@ def train_streamed(shard_dir: Path, gbuffer_cache: PathCache, cfg: dict) -> tupl
         encoding=cfg["model"]["encoding"],
         light_type="sphere",
     ).to(device)
+    xy, aux = spatial_tensors_for(gbuffer_cache, model, device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.get("lr", 1e-3))
     gen = torch.Generator(device="cpu").manual_seed(cfg.get("seed", 0))
 

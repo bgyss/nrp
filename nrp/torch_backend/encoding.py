@@ -57,14 +57,16 @@ class HashEncoding2D(nn.Module):
         res = self.resolutions[level]
         if self._dense[level]:
             return iy * (res + 1) + ix
-        return (ix * _PRIMES[0]) ^ (iy * _PRIMES[1]) & (self.table_size - 1)
+        return ((ix * _PRIMES[0]) ^ (iy * _PRIMES[1])) & (self.table_size - 1)
 
     def forward(self, xy: torch.Tensor) -> torch.Tensor:
         """xy in [0,1]^2, shape (N, 2) -> (N, levels * features_per_level)."""
         outputs = []
         for level, res in enumerate(self.resolutions):
             pos = xy * res
-            pos0 = torch.floor(pos).long().clamp_(0, res)
+            # Clamp to res-1 so the cell [x0, x0+1] is always non-degenerate; x0 == res
+            # would make all corners identical and the level output constant.
+            pos0 = torch.floor(pos).long().clamp_(0, res - 1)
             frac = pos - pos0
             x0, y0 = pos0[:, 0], pos0[:, 1]
             x1 = (x0 + 1).clamp(max=res)
@@ -155,7 +157,9 @@ class HashEncoding3D(nn.Module):
         outputs = []
         for level, res in enumerate(self.resolutions):
             pos = xyz * res
-            pos0 = torch.floor(pos).long().clamp_(0, res)
+            # Clamp to res-1 so the cell [x0, x0+1] is always non-degenerate; x0 == res
+            # would make all corners identical and the level output constant.
+            pos0 = torch.floor(pos).long().clamp_(0, res - 1)
             frac = pos - pos0
             x0, y0, z0 = pos0[:, 0], pos0[:, 1], pos0[:, 2]
             x1 = (x0 + 1).clamp(max=res)
