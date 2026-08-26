@@ -25,17 +25,116 @@ import argparse
 import json
 import os
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import torch
 
 from ..gather_light import gather_lights
-from ..lights import light_from_dict
+from ..lights import TexturedQuadLight, light_from_dict
 from ..metrics import psnr
 from ..path_cache import PathCache
 from .bench import _synchronize
+from .conditioned_multiview import camera_tensor, load_camera_manifest
 from .model import TorchNRP
 from .train import light_param_vector, model_tensors
+
+
+@dataclass
+class ConditionedView:
+    """Resident pixel features for one camera evaluated by a shared R2 model."""
+
+    name: str
+    model: TorchNRP
+    cache: PathCache
+    device: torch.device
+    spatial: torch.Tensor
+    aux: torch.Tensor
+    view_dir: torch.Tensor
+
+    def render(self, lights: list, model: TorchNRP | None = None) -> np.ndarray:
+        active_model = self.model if model is None else model
+        n_px = self.cache.height * self.cache.width
+        image = torch.zeros((n_px, 3), device=self.device)
+        with torch.no_grad():
+            for light in lights:
+                params = torch.as_tensor(
+                    light_param_vector(light), dtype=torch.float32, device=self.device
+                ).expand(n_px, -1)
+                rgb = (
+                    torch.ones(3, dtype=torch.float32, device=self.device)
+                    if isinstance(light, TexturedQuadLight)
+                    else torch.as_tensor(light.rgb, dtype=torch.float32, device=self.device)
+                )
+                image += active_model(
+                    self.spatial, self.aux, params, view_dir=self.view_dir
+                ) * rgb
+        return image.cpu().numpy().astype(np.float64).reshape(
+            self.cache.height, self.cache.width, 3
+        )
+
+
+def load_conditioned_views(
+    manifest_path: str, model_path: str, device: str = "cpu"
+) -> tuple[TorchNRP, list[ConditionedView]]:
+    """Load one camera-conditioned model and N resident camera feature records."""
+    dev = torch.device(device)
+    views = load_camera_manifest(manifest_path)
+    manifest_dir = os.path.dirname(os.path.abspath(manifest_path))
+    resolved_model = (
+        model_path if os.path.isabs(model_path) else os.path.join(manifest_dir, model_path)
+    )
+    model = TorchNRP.load(resolved_model).to(dev).eval()
+    if not model.camera_conditioned:
+        raise ValueError("R2 shared inference requires a camera-conditioned model")
+    resident = []
+    for view in views:
+        cache = PathCache.load(str(view.cache_path))
+        spatial, aux = model_tensors(cache, model, dev)
+        resident.append(
+            ConditionedView(
+                name=view.name,
+                model=model,
+                cache=cache,
+                device=dev,
+                spatial=spatial,
+                aux=aux,
+                view_dir=camera_tensor(view, cache.height * cache.width, dev),
+            )
+        )
+    return model, resident
+
+
+def relight_conditioned_all(
+    model: TorchNRP, views: list[ConditionedView], lights: list
+) -> dict[str, np.ndarray]:
+    """Apply one light edit through the same resident model for every view."""
+    return {view.name: view.render(lights, model=model) for view in views}
+
+
+def conditioned_edit_latency_ms(
+    model: TorchNRP,
+    views: list[ConditionedView],
+    lights: list,
+    frames: int = 10,
+    warmup: int = 2,
+) -> float:
+    """Measure one all-view proxy edit without cache/GATHERLIGHT access."""
+    if not views:
+        raise ValueError("at least one conditioned view is required")
+    if frames <= 0 or warmup < 0:
+        raise ValueError("frames must be positive and warmup must be non-negative")
+    devices = {view.device for view in views}
+    for _ in range(warmup):
+        relight_conditioned_all(model, views, lights)
+    for device in devices:
+        _synchronize(device)
+    started = time.perf_counter()
+    for _ in range(frames):
+        relight_conditioned_all(model, views, lights)
+    for device in devices:
+        _synchronize(device)
+    return (time.perf_counter() - started) / frames * 1000.0
 
 
 class ViewProxy:

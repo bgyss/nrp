@@ -13,6 +13,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # noqa: E402
 
+from nrp.lights import SphereLight  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.conditioned_multiview import (  # noqa: E402
     MultiViewImagePool,
@@ -22,6 +23,12 @@ from nrp.torch_backend.conditioned_multiview import (  # noqa: E402
     load_camera_manifest,
     train_conditioned,
     validation_disjointness,
+)
+from nrp.torch_backend.model import TorchNRP  # noqa: E402
+from nrp.torch_backend.relight_multiview import (  # noqa: E402
+    conditioned_edit_latency_ms,
+    load_conditioned_views,
+    relight_conditioned_all,
 )
 
 
@@ -254,6 +261,66 @@ class TrainingTests(unittest.TestCase):
             )
             self.assertTrue((out_dir / "model.pt").exists())
             self.assertTrue((out_dir / "conditioned_train_report.json").exists())
+
+
+class InferenceTests(unittest.TestCase):
+    def _manifest_and_model(self, root: Path) -> tuple[Path, Path]:
+        tiny_cache(width=2, offset=0.0).save(root / "front.npz")
+        tiny_cache(width=2, offset=0.2).save(root / "side.npz")
+        manifest = root / "views.json"
+        manifest.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "front",
+                        "cache": "front.npz",
+                        "camera": {
+                            "origin": [0.0, 0.0, 2.0],
+                            "target": [0.0, 0.0, 0.0],
+                        },
+                    },
+                    {
+                        "name": "side",
+                        "cache": "side.npz",
+                        "camera": {
+                            "origin": [2.0, 0.0, 0.0],
+                            "target": [0.0, 0.0, 0.0],
+                        },
+                    },
+                ]
+            )
+        )
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world3d",
+            world_bounds=global_world_bounds(
+                [tiny_cache(width=2, offset=0.0), tiny_cache(width=2, offset=0.2)]
+            ),
+            camera_conditioned=True,
+        )
+        model_path = root / "model.pt"
+        model.save(model_path)
+        return manifest, model_path
+
+    def test_shared_conditioned_relight_uses_one_model_and_resident_features(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest, model_path = self._manifest_and_model(Path(tmp))
+            model, views = load_conditioned_views(manifest, model_path, device="cpu")
+            self.assertTrue(all(view.spatial.shape == (2, 3) for view in views))
+            self.assertIs(model, views[0].model)
+            self.assertIs(model, views[1].model)
+            lights = [SphereLight(center=[0.2, 0.0, 0.5], radius=0.2)]
+            before = relight_conditioned_all(model, views, lights)
+            for view in views:
+                view.cache.seg_origin[:] = 999.0
+            after = relight_conditioned_all(model, views, lights)
+            for name in before:
+                np.testing.assert_allclose(before[name], after[name])
+            latency = conditioned_edit_latency_ms(model, views[:2], lights, frames=2, warmup=1)
+            self.assertTrue(np.isfinite(latency))
+            self.assertGreater(latency, 0.0)
 
 
 if __name__ == "__main__":
