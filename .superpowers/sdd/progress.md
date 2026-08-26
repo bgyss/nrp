@@ -26,3 +26,9 @@ Task 3: complete (commit 967e1f7, review clean)
 NOTE: `ruff format .` reformats ~10 files inherited non-conformant from main/codex branch.
   Dispatches now instruct formatting ONLY touched paths. stash@{0} holds one such drift
   capture from the Task 4 fix round (pre-existing churn, safe to drop; left for the user).
+Task 4: complete (commits 6fa062c..22ddfcc, review clean after 1 fix round)
+  - zero-collision claim verified from code: key packing injective over [0,res], side=res+1
+  - capacity_report() now MEASURES collisions from keys buffer (was hard-coded 0.0 literal;
+    the G3 gate in Task 8 asserts that field, so it would have verified a constant)
+  - needs_occupancy flag shown red-then-green; buffer round-trip now discriminating
+  - base_resolution/finest_resolution now validated against supplied occupancy
