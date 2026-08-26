@@ -12,7 +12,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
 | 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
 | 6 | Scale & speed track | [scale-track.md](scale-track.md) | ✅ Complete locally — S1–S6 measured; CUDA stretch S7/S8 parked |
-| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ Halted at R1 — controlled three-seed follow-up confirms unstable 3D parity; tri-plane candidate also not promoted; R2–R6 not attempted |
+| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ Halted before R2 — R1A is mixed: target-scale tri-plane passes 5/5, while the other crossed world-policy arms fail the per-seed gate; R2–R6 not attempted |
 
 ## How the phases connect
 
@@ -53,9 +53,10 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 7. **Representation track** (`representation-track.md`) tests whether replacing the
    per-view 2D pixel hashgrid with a 3D first-hit world-position hashgrid is a viable
    foundation for multi-camera proxies. R1 passes on the toy box but the direct 3D
-   grid passes only 1/3 controlled Country Kitchen seeds; a matched tri-plane
-   follow-up passes 2/3 but remains too unstable to promote. The approved contract
-   therefore still halts R2–R6 and records the characterized negative.
+   grid passes only 1/3 controlled Country Kitchen seeds. R1A's five-seed crossed
+   matrix finds one strict candidate pass — target-scale tri-plane at 5/5 — while
+   direct 3D under both policies and framework-default tri-plane fail at least one
+   seed. The approved contract still halts R2–R6 and records the mixed result.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware
