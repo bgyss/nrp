@@ -22,10 +22,18 @@ from ..gather_light import gather_light
 from ..path_cache import PathCache
 from .denoise import denoise_image
 from .device import autocast, resolve_device, resolve_precision
+from .encoder_registry import SPATIAL_ENCODERS
 from .gather import TorchPathCache
 from .model import TorchNRP, relative_mse_loss
+from .occupancy import grid_occupancy, level_resolutions, normalize_positions
 from .sampling import sample_light
-from .train import evaluate, light_param_dim_from_cfg, light_param_vector, spatial_tensors
+from .train import (
+    WORLD_ENCODINGS,
+    evaluate,
+    light_param_dim_from_cfg,
+    light_param_vector,
+    spatial_tensors,
+)
 
 
 def _finite_vector(value, name: str) -> np.ndarray:
@@ -153,11 +161,7 @@ def _render_target(
             cache.normal,
             cache.depth,
             method=denoise.get("method", "bilateral"),
-            **{
-                key: value
-                for key, value in denoise.items()
-                if key not in {"enabled", "method"}
-            },
+            **{key: value for key, value in denoise.items() if key not in {"enabled", "method"}},
         )
     return np.asarray(image, dtype=np.float64).reshape(-1, 3)
 
@@ -297,8 +301,12 @@ def train_conditioned(cfg: dict, resume: bool = False) -> dict:
     model_cfg = cfg.get("model")
     if not isinstance(model_cfg, dict) or not model_cfg.get("camera_conditioned", False):
         raise ValueError("R2 training requires model.camera_conditioned=true")
-    if model_cfg.get("spatial_encoding", "pixel2d") != "world3d":
-        raise ValueError("R2 training requires model.spatial_encoding='world3d'")
+    encoding_name = model_cfg.get("spatial_encoding", "pixel2d")
+    if encoding_name not in WORLD_ENCODINGS:
+        raise ValueError(
+            "camera-conditioned training requires a world-anchored spatial encoding; "
+            f"got {encoding_name!r}, expected one of {sorted(WORLD_ENCODINGS)}"
+        )
 
     views = load_camera_manifest(cfg["manifest"])
     caches = [PathCache.load(str(view.cache_path)) for view in views]
@@ -311,27 +319,46 @@ def train_conditioned(cfg: dict, resume: bool = False) -> dict:
     n_pixels = caches[0].height * caches[0].width
     bounds = global_world_bounds(caches)
 
+    encoding_cfg = model_cfg.get("encoding") or {}
+    encoder_cls = SPATIAL_ENCODERS[encoding_name]
+    needs_occupancy = (
+        getattr(encoder_cls, "needs_occupancy", False)
+        or encoding_cfg.get("allocation") == "occupancy"
+    )
+    occupancy = None
+    if needs_occupancy:
+        # Occupancy spans the union of every training view, so a held-out camera
+        # looking at the same surfaces lands inside the occupied set.
+        stacked = np.concatenate([cache.position.reshape(-1, 3) for cache in caches], axis=0)
+        occupancy = grid_occupancy(
+            normalize_positions(stacked, bounds),
+            level_resolutions(
+                int(encoding_cfg.get("levels", 8)),
+                int(encoding_cfg.get("base_resolution", 4)),
+                int(encoding_cfg.get("finest_resolution", 128)),
+            ),
+        )
+
     model = TorchNRP(
         light_type=cfg["light_type"],
         light_param_dim=light_param_dim_from_cfg(cfg),
         hidden_width=model_cfg.get("hidden_width", 128),
         hidden_layers=model_cfg.get("hidden_layers", 4),
         encoding=model_cfg.get("encoding"),
-        spatial_encoding="world3d",
+        spatial_encoding=encoding_name,
         world_bounds=bounds,
+        occupancy=occupancy,
         camera_conditioned=True,
         use_encoding=model_cfg.get("use_encoding", True),
         use_aux=model_cfg.get("use_aux", True),
         texture_kernel=model_cfg.get("texture_conditioning") == "kernel",
     ).to(device)
     spatial_rows, aux_rows = zip(
-        *(spatial_tensors(cache, device, "world3d") for cache in caches), strict=True
+        *(spatial_tensors(cache, device, encoding_name) for cache in caches), strict=True
     )
     spatial = torch.stack(spatial_rows)
     aux = torch.stack(aux_rows)
-    view_dirs = torch.stack(
-        [camera_tensor(view, n_pixels, device) for view in views], dim=0
-    )
+    view_dirs = torch.stack([camera_tensor(view, n_pixels, device) for view in views], dim=0)
 
     pool_started = time.perf_counter()
     pool = MultiViewImagePool(caches, cfg, rng, device)

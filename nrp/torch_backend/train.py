@@ -40,6 +40,7 @@ from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
 from .denoise import denoise_image
 from .device import autocast, resolve_device, resolve_precision
+from .encoder_registry import SPATIAL_ENCODERS
 from .gather import TorchPathCache
 from .model import (
     LIGHT_PARAM_DIMS,
@@ -48,6 +49,9 @@ from .model import (
     relative_mse_loss,
 )
 from .sampling import sample_light
+
+#: Encodings that consume first-hit world positions rather than pixel coordinates.
+WORLD_ENCODINGS = frozenset(name for name in SPATIAL_ENCODERS if name != "pixel2d")
 
 
 def light_param_vector(light) -> np.ndarray:
@@ -92,7 +96,7 @@ def spatial_tensors(
     xy, aux = pixel_tensors(cache, device)
     if spatial_encoding == "pixel2d":
         return xy, aux
-    if spatial_encoding in {"world3d", "world_triplane"}:
+    if spatial_encoding in WORLD_ENCODINGS:
         return torch.as_tensor(
             cache.position.reshape(-1, 3), dtype=torch.float32, device=device
         ), aux
