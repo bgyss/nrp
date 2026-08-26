@@ -10,6 +10,7 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 |---|---|---|---|
 | R1 | World-space encoding at parity | **done — honest negative**: toy passes; Country Kitchen passes on only 1/3 controlled seeds | `out/r1-worldgrid/report.json`, `out/r1-followup/report.json`, `docs/performance.md#world-space-encoding-at-parity-representation-track-rung-r1` |
 | R1 follow-up | Provenance, collision, and tri-plane diagnosis | **done — candidate not promoted**: tri-plane passes on 2/3 seeds, but fails the unchanged per-seed gate | `out/r1-followup/report.json`, `docs/plans/2026-07-27-r1-next-experiments.md` |
+| R1A | Five-seed variance decomposition | **done — mixed**: target-scale world tri-plane passes all 5 seeds; the other three crossed world-policy arms do not | `out/r1a/report.json`, `examples/r1a_variance.py` |
 | R2 | One network, N cameras | **blocked by R1 gate; not attempted** | — |
 | R3 | Novel-view interpolation | blocked by R1/R2; not attempted | — |
 | R4 | Real scene, real scale | blocked by R2; not attempted | — |
@@ -76,6 +77,36 @@ optimizer/initialization variance as a first-class factor. The bounded follow-up
 ladder and its stop conditions are in
 `docs/plans/2026-07-27-r1-next-experiments.md`.
 
+## R1A variance decomposition
+
+The R1A runner crosses the three matched-budget representations with both output-bias
+policies on the 128² Country Kitchen cache: five seeds × three representations × two
+policies, for 30 CPU arms. Each seed has one 12-light held-out set generated before
+training; the same light specifications and frozen references are shared by all six
+arms for that seed. The report stores the light fingerprints, per-light paired PSNR
+deltas, seed-level summaries, and percentile paired-bootstrap 95% CIs over the five
+seed-level means.
+
+| representation | output-bias policy | seed deltas vs same-policy pixel2d (dB) | mean ± std (dB) | paired 95% CI (dB) | seeds passing −0.5 dB |
+|---|---|---|---:|---:|---:|
+| world3d | target-scale | −1.262, −0.862, −0.826, −1.001, +0.124 | −0.765 ± 0.470 | [−1.105, −0.291] | 1/5 |
+| world3d | framework-default | −1.665, −0.578, −0.741, 0.000, −0.913 | −0.779 ± 0.539 | [−1.262, −0.331] | 1/5 |
+| world tri-plane | target-scale | −0.008, +1.016, +1.118, +0.069, +1.961 | +0.831 ± 0.732 | [+0.228, +1.435] | **5/5 — pass** |
+| world tri-plane | framework-default | −3.789, −0.727, +0.526, 0.000, +1.242 | −0.550 ± 1.743 | [−2.170, +0.707] | 3/5 |
+
+The target-scale world tri-plane is the only crossed world-policy arm whose every
+seed clears the unchanged gate. The framework-default policy does not reproduce that
+result: its tri-plane arm fails two seeds, including seed 0. This is evidence of an
+initialization/representation interaction, not permission to average away the failed
+seeds. R2 remains unattempted and unauthorized; no camera-conditioned experiment was
+started from this result.
+
+All arms use 106,085 parameters for pixel2d, 106,345 for world3d, and 106,239 for
+world tri-plane, with 3,000 iterations, batch size 4,096, the 64-image pool, CPU
+training, and OIDN targets. Mean training throughput was 24.9 it/s for pixel2d,
+21.3 it/s for world3d, and 24.3 it/s for world tri-plane; the two bias policies had
+the same architecture and comparable throughput.
+
 ## Reproduce and verify
 
 The standard configs are the 2D controls; the matched world-grid configs are
@@ -84,6 +115,7 @@ The standard configs are the 2D controls; the matched world-grid configs are
 ```sh
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_worldgrid.py --devices cpu mps
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_failure_analysis.py --reuse
+UV_CACHE_DIR=.uv-cache uv run python examples/r1a_variance.py --seeds 0 1 2 3 4 --denoise-method oidn
 mise run test
 mise run lint
 mise run pipeline-audit

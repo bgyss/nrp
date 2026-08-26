@@ -2813,8 +2813,39 @@ remains a failure at −0.64 dB. The next campaign must therefore cross
 representation with initialization across multiple seeds instead of treating either
 policy as universally superior.
 
-The bounded next ladder is
-`docs/plans/2026-07-27-r1-next-experiments.md`: five-seed variance decomposition,
-matched allocation/fusion sweeps, coordinate-rotation robustness, localized error
-analysis, then a second real scene. R2 remains blocked unless one world-anchored arm
-passes the unchanged −0.5 dB floor on every seed and both real scenes.
+### R1A: five-seed variance decomposition
+
+`UV_CACHE_DIR=.uv-cache uv run python examples/r1a_variance.py --seeds 0 1 2 3 4 --denoise-method oidn`
+ran the bounded CPU matrix recorded in `out/r1a/report.json`: five seeds ×
+`pixel2d`/`world3d`/`world_triplane` × target-scale/framework-default output bias.
+The 30 arms use the same 128² Country Kitchen cache (3,266,799 segments), 3,000
+iterations, batch size 4,096, 64-image pool, and OIDN targets. For each seed, the
+runner generated one 12-light validation set before any arm and reused it across all
+six arms. Per-light PSNR deltas and the frozen-light fingerprints are retained in the
+JSON report; the CIs below are percentile paired-bootstrap intervals over the five
+seed-level mean deltas.
+
+| representation | output-bias policy | seed deltas vs same-policy pixel2d (dB) | mean ± std (dB) | paired 95% CI (dB) | seeds passing −0.5 dB |
+|---|---|---|---:|---:|---:|
+| world3d | target-scale | −1.262, −0.862, −0.826, −1.001, +0.124 | −0.765 ± 0.470 | [−1.105, −0.291] | 1/5 |
+| world3d | framework-default | −1.665, −0.578, −0.741, 0.000, −0.913 | −0.779 ± 0.539 | [−1.262, −0.331] | 1/5 |
+| world tri-plane | target-scale | −0.008, +1.016, +1.118, +0.069, +1.961 | +0.831 ± 0.732 | [+0.228, +1.435] | **5/5 — pass** |
+| world tri-plane | framework-default | −3.789, −0.727, +0.526, 0.000, +1.242 | −0.550 ± 1.743 | [−2.170, +0.707] | 3/5 |
+
+The target-scale world tri-plane is the only crossed world-policy arm to clear the
+unchanged per-seed gate on all five seeds. Direct world3d fails four seeds under both
+policies. The framework-default tri-plane fails two seeds, so the matrix does not
+support treating the target-scale result as policy-independent. R2 was not started;
+the report records `r2_authorized: false` even though one R1A candidate arm passes.
+
+The matched parameter counts are 106,085 (`pixel2d`), 106,345 (`world3d`), and
+106,239 (`world_triplane`). Mean CPU training throughput across the five seeds was
+24.9, 21.3, and 24.3 iterations/s respectively; output-bias policy did not change
+the model shape. These are local measurements for this cache and configuration, not
+paper hardware results.
+
+The remaining bounded ladder is
+`docs/plans/2026-07-27-r1-next-experiments.md`: matched allocation/fusion sweeps,
+coordinate-rotation robustness, localized error analysis, then a second real scene.
+R2 remains blocked unless one world-anchored arm passes the unchanged −0.5 dB floor
+on every seed and both real scenes; this R1A result did not start R2.
