@@ -37,3 +37,8 @@ Task 5: complete (commit a31120c, review clean, no fix round)
     AXIS_TO_PLANE coordinate pair; added a discriminating test, shown red-then-green
   - world_transform interaction verified: normals rotated by world_basis (model.py:264-265)
   - MINOR (deferred): gradient test doesn't assert ZERO grad on non-selected planes
+Task 6: complete (commits 3a5e1cc..18ab347, review clean after 1 fix round)
+  - NOTE: Task 6 first review was done inline by the controller (subagent hit a session limit)
+  - arm A validates occupancy schedule BEFORE truncation; now covered by a small-budget test
+  - schedule formula de-duplicated: both grid constructors call occupancy.level_resolutions;
+    verified character-for-character identical to the removed inline copies
