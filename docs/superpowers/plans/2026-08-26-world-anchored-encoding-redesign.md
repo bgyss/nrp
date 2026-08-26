@@ -716,16 +716,18 @@ Expected: PASS (13 tests, or 12 + 1 skip if the kitchen cache is absent).
 ### Task 3: Encoder registry and uniform interface
 
 **Files:**
-- Modify: `nrp/torch_backend/encoding.py` (add registry, flags, `capacity_report` on all three existing encoders)
+- Create: `nrp/torch_backend/encoder_registry.py`
+- Modify: `nrp/torch_backend/encoding.py` (decorate the three encoders, add flags and `capacity_report`)
 - Modify: `nrp/torch_backend/model.py:167-174` (replace the if/elif chain)
 - Test: `tests/test_encoder_registry.py` (create)
 
 **Interfaces:**
 - Consumes: `nrp.torch_backend.occupancy.capacity_report`, `LevelOccupancy`
 - Produces:
-  - `SPATIAL_ENCODERS: dict[str, type]` in `nrp.torch_backend.encoding`
-  - `register_encoder(name: str)` decorator
-  - `build_encoder(name: str, config: dict, occupancy: list[LevelOccupancy] | None = None) -> nn.Module`
+  - `SPATIAL_ENCODERS: dict[str, type]` in `nrp.torch_backend.encoder_registry`
+  - `register_encoder(name: str)` decorator, in the same module
+  - `build_encoder(name: str, config: dict, occupancy: list[LevelOccupancy] | None = None) -> nn.Module`, in the same module
+  - `nrp.torch_backend.encoding` re-exports all three for convenience
   - Every encoder class exposes `needs_occupancy: bool`, `needs_normals: bool`, `output_dim: int`, `capacity_report() -> dict`
 
 - [ ] **Step 1: Write the failing tests**
@@ -743,11 +745,8 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nrp.torch_backend.encoding import (  # noqa: E402
-    SPATIAL_ENCODERS,
-    HashEncoding2D,
-    build_encoder,
-)
+from nrp.torch_backend.encoder_registry import SPATIAL_ENCODERS, build_encoder  # noqa: E402
+from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
 
 CONFIG = {
     "levels": 3,
@@ -812,11 +811,22 @@ if __name__ == "__main__":
 Run: `uv run python -m unittest tests.test_encoder_registry -v`
 Expected: FAIL with `ImportError: cannot import name 'SPATIAL_ENCODERS'`.
 
-- [ ] **Step 3: Add the registry to `encoding.py`**
+- [ ] **Step 3: Create the registry module**
 
-Insert after the `_PRIMES` definition (line 16):
+The registry lives in its own module so encoders can import `register_encoder` without
+importing `encoding`, which would otherwise create a cycle once arm B lands in a separate
+file. Create `nrp/torch_backend/encoder_registry.py`:
 
 ```python
+"""Registry of spatial encoders.
+
+Separate from `encoding` so an encoder defined in any module can register itself
+without importing the module that imports it back.
+"""
+
+from __future__ import annotations
+
+
 #: name -> encoder class. `build_encoder` is the only construction path the model uses,
 #: so adding an arm is one decorator rather than another if/elif branch.
 SPATIAL_ENCODERS: dict[str, type] = {}
@@ -848,7 +858,16 @@ def build_encoder(name: str, config: dict | None = None, occupancy=None):
     return cls(**kwargs)
 ```
 
-- [ ] **Step 4: Decorate the three existing encoders and give them the interface**
+- [ ] **Step 4: Re-export from `encoding.py` and decorate the three encoders**
+
+Add near the top of `nrp/torch_backend/encoding.py`, replacing the registry code that
+would otherwise live there:
+
+```python
+from .encoder_registry import SPATIAL_ENCODERS, build_encoder, register_encoder  # noqa: F401
+```
+
+Then decorate the encoders and give them the interface.
 
 Add `@register_encoder("pixel2d")` above `class HashEncoding2D`, `@register_encoder("world3d")`
 above `class HashEncoding3D`, and `@register_encoder("world_triplane")` above
@@ -864,26 +883,36 @@ below the class docstring:
 
 Add the same two attributes to `HashEncodingTriPlane`.
 
-Add this method to `HashEncoding2D` (and an identical one to `HashEncoding3D`, and to
-`HashEncodingTriPlane` delegating to its planes):
+Both grid classes report identically, so define the body once as a module-level helper
+rather than copying it into each class:
+
+```python
+def _grid_capacity_report(encoder) -> dict:
+    """Static slot budget per level, shared by the 2D and 3D grids.
+
+    Occupancy-aware numbers come from `nrp.torch_backend.occupancy.capacity_report`,
+    which needs a cache; this is the cache-free view.
+    """
+    return {
+        "encoding": type(encoder).__name__,
+        "levels": [
+            {
+                "level": level,
+                "resolution": res,
+                "dense": bool(encoder._dense[level]),
+                "slots": int(encoder.tables[level].shape[0]),
+            }
+            for level, res in enumerate(encoder.resolutions)
+        ],
+        "total_slots": int(sum(t.shape[0] for t in encoder.tables)),
+    }
+```
+
+Then add this one-line method to **both** `HashEncoding2D` and `HashEncoding3D`:
 
 ```python
     def capacity_report(self) -> dict:
-        """Static slot budget per level. Occupancy-aware numbers come from
-        `nrp.torch_backend.occupancy.capacity_report`, which needs a cache."""
-        return {
-            "encoding": type(self).__name__,
-            "levels": [
-                {
-                    "level": level,
-                    "resolution": res,
-                    "dense": bool(self._dense[level]),
-                    "slots": int(self.tables[level].shape[0]),
-                }
-                for level, res in enumerate(self.resolutions)
-            ],
-            "total_slots": int(sum(t.shape[0] for t in self.tables)),
-        }
+        return _grid_capacity_report(self)
 ```
 
 For `HashEncodingTriPlane`:
@@ -933,7 +962,8 @@ from .encoding import HashEncoding2D, HashEncoding3D, HashEncodingTriPlane
 to
 
 ```python
-from .encoding import SPATIAL_ENCODERS, build_encoder
+from . import encoding as _encoding  # noqa: F401  # registers the built-in encoders
+from .encoder_registry import SPATIAL_ENCODERS, build_encoder
 ```
 
 Replace the module-level `SUPPORTED_SPATIAL_ENCODINGS = {...}` literal with a lookup so
@@ -962,9 +992,9 @@ is a real regression.
 - [ ] **Step 8: Lint and commit**
 
 ```bash
-uv run ruff format nrp/torch_backend/encoding.py nrp/torch_backend/model.py tests/test_encoder_registry.py
-uv run ruff check nrp/torch_backend/encoding.py nrp/torch_backend/model.py tests/test_encoder_registry.py
-git add nrp/torch_backend/encoding.py nrp/torch_backend/model.py tests/test_encoder_registry.py
+uv run ruff format nrp/torch_backend/encoder_registry.py nrp/torch_backend/encoding.py nrp/torch_backend/model.py tests/test_encoder_registry.py
+uv run ruff check nrp/torch_backend/encoder_registry.py nrp/torch_backend/encoding.py nrp/torch_backend/model.py tests/test_encoder_registry.py
+git add nrp/torch_backend/encoder_registry.py nrp/torch_backend/encoding.py nrp/torch_backend/model.py tests/test_encoder_registry.py
 git commit -m "refactor: spatial encoder registry with a uniform interface"
 ```
 
@@ -978,7 +1008,7 @@ git commit -m "refactor: spatial encoder registry with a uniform interface"
 - Test: `tests/test_sparse_encoding.py` (create)
 
 **Interfaces:**
-- Consumes: `nrp.torch_backend.occupancy.LevelOccupancy`, `register_encoder`
+- Consumes: `nrp.torch_backend.occupancy.LevelOccupancy`, `nrp.torch_backend.encoder_registry.register_encoder`
 - Produces: `SparseVoxelEncoding` registered as `"world_sparse"`, with `needs_occupancy = True`, `needs_normals = False`, `output_dim`, `capacity_report()`, and `out_of_occupancy_fraction(xyz: torch.Tensor) -> float`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1042,14 +1072,16 @@ class TestLookup(unittest.TestCase):
         with torch.no_grad():
             for table in enc.tables:
                 table.uniform_(-1.0, 1.0)
-        # A query exactly on an occupied vertex has trilinear weight 1 on that corner.
+        # A query exactly on an occupied vertex has trilinear weight 1 on that corner,
+        # so the level's output must equal that vertex's table row. Row order follows
+        # sorted key order, so vertices[0] owns tables[0][0].
         occ0 = enc.occupancy[0]
         vertex = occ0.vertices[0]
         xyz = torch.tensor([vertex / occ0.resolution], dtype=torch.float32)
         out = enc(xyz)
-        expected = enc.tables[0][0] if np.array_equal(occ0.vertices[0], vertex) else None
-        self.assertIsNotNone(expected)
-        torch.testing.assert_close(out[0, : enc.features_per_level], expected, atol=1e-5, rtol=0)
+        torch.testing.assert_close(
+            out[0, : enc.features_per_level], enc.tables[0][0], atol=1e-5, rtol=0
+        )
 
     def test_gradients_flow_to_the_tables(self):
         rng = np.random.default_rng(3)
@@ -1131,7 +1163,7 @@ import itertools
 import torch
 from torch import nn
 
-from .encoding import register_encoder
+from .encoder_registry import register_encoder
 
 
 def _vertex_codes(vertices: torch.Tensor, resolution: int) -> torch.Tensor:
@@ -1252,14 +1284,16 @@ class SparseVoxelEncoding(nn.Module):
         }
 ```
 
-- [ ] **Step 4: Register the module so the decorator runs**
+- [ ] **Step 4: Import the module so the decorator runs**
 
-Append to the end of `nrp/torch_backend/encoding.py`:
+`sparse_encoding` imports only `encoder_registry`, so there is no cycle and the import
+goes at the top of `nrp/torch_backend/encoding.py` beside the others:
 
 ```python
-# Imported for its registration side effect; keep at the bottom to avoid a cycle.
-from . import sparse_encoding as _sparse_encoding  # noqa: E402,F401
+from . import sparse_encoding as _sparse_encoding  # noqa: F401  # registers arm B
 ```
+
+Place it *after* the `encoder_registry` import so `register_encoder` is bound first.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -1288,7 +1322,7 @@ Expected: `OK`.
 - Test: `tests/test_normal_aware_triplane.py` (create)
 
 **Interfaces:**
-- Consumes: `HashEncoding2D`, `register_encoder`
+- Consumes: `HashEncoding2D`, `nrp.torch_backend.encoder_registry.register_encoder`
 - Produces: `NormalAwareTriPlane` registered as `"world_normal_triplane"`, `needs_normals = True`, `forward(xyz: torch.Tensor, normals: torch.Tensor) -> torch.Tensor`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1390,8 +1424,7 @@ Expected: FAIL with `ImportError: cannot import name 'NormalAwareTriPlane'`.
 
 - [ ] **Step 3: Implement the encoder**
 
-Append to `nrp/torch_backend/encoding.py`, after `HashEncodingTriPlane` and before the
-bottom-of-file sparse import:
+Append to `nrp/torch_backend/encoding.py`, after `HashEncodingTriPlane`:
 
 ```python
 @register_encoder("world_normal_triplane")
@@ -2188,7 +2221,7 @@ through it until this is lifted. It also never builds occupancy, which arms A an
 - Test: `tests/test_conditioned_encodings.py` (create)
 
 **Interfaces:**
-- Consumes: `nrp.torch_backend.occupancy.cache_occupancy`, `nrp.torch_backend.encoding.SPATIAL_ENCODERS`
+- Consumes: `nrp.torch_backend.occupancy.cache_occupancy`, `nrp.torch_backend.encoder_registry.SPATIAL_ENCODERS`
 - Produces: `train_conditioned(cfg, resume=False)` accepting any registered world-anchored `model.spatial_encoding`; `WORLD_ENCODINGS: frozenset[str]` in `nrp.torch_backend.train`
 
 - [ ] **Step 1: Write the failing tests**
@@ -2258,7 +2291,7 @@ Expected: FAIL with `ImportError: cannot import name 'WORLD_ENCODINGS'`.
 Add near the top of `nrp/torch_backend/train.py`:
 
 ```python
-from .encoding import SPATIAL_ENCODERS
+from .encoder_registry import SPATIAL_ENCODERS
 
 #: Encodings that consume first-hit world positions rather than pixel coordinates.
 WORLD_ENCODINGS = frozenset(name for name in SPATIAL_ENCODERS if name != "pixel2d")
@@ -2339,7 +2372,7 @@ Change the tensor build:
 Add the imports at the top of the module:
 
 ```python
-from .encoding import SPATIAL_ENCODERS
+from .encoder_registry import SPATIAL_ENCODERS
 from .occupancy import grid_occupancy, level_resolutions, normalize_positions
 from .train import WORLD_ENCODINGS
 ```
