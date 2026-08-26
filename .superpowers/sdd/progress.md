@@ -85,3 +85,15 @@ G1 absolute floor: complete (commit 5e9a242, review clean, no fix round)
   - reviewer explicitly hunted a 4th unearned-pass instance and found none, by own
     adversarial execution. Conditions conjunctive; both reasons recorded when both fail;
     absolute_floor_db=None byte-identical to pre-change.
+Task 11: complete (commits 6775528, ef545d4, review clean, no fix round)
+  - all 5 binding requirements verified in calling code; smoke report showed
+    g1.absolute_floor_db=15.0 and g1.coverage_status="complete" (coverage path live)
+  - rotated_camera rotates camera AND geometry with the same convention as
+    transform_cache -> tests frame-change, not viewpoint-change. Correct for G4.
+  - PRODUCTION LIMITATION (recorded, not fixed): TorchNRP.load cannot reload
+    occupancy-allocated arms; occupancy is not in the checkpoint and is needed to size
+    tables before load_state_dict. The runner rebuilds it from config world_bounds +
+    encoding dict. Other callers (relight, bench, webgpu export) still cannot. Affects
+    later rungs R5/R6.
+  - MINOR (deferred): _predict duplicates relight's loop and drops its TexturedQuadLight
+    case; suggested fix is adding view_dir to relight and deleting _predict.
