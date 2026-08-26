@@ -16,14 +16,33 @@ def _deltas(rows: list[dict]) -> list[float]:
     return [float(row["delta_db"]) for row in rows]
 
 
-def g1_generalization(rows: list[dict], threshold_db: float = 1.0) -> dict:
+def g1_generalization(
+    rows: list[dict],
+    threshold_db: float = 1.0,
+    expected_seeds: set | None = None,
+    expected_cameras: set | None = None,
+) -> dict:
     """Held-out-camera promotion gate: every seed at every camera must clear the bar.
 
     The baseline is the nearest trained view's pixel2d proxy reused at the held-out
     camera -- the only thing a screen-space proxy can do at a novel camera.
+
+    ``expected_seeds``/``expected_cameras`` are optional coverage requirements: when
+    supplied, every expected seed must appear, and every expected camera must appear
+    for every expected seed, or the gate fails regardless of the deltas. When both are
+    omitted, coverage is not checked (today's behaviour) and ``coverage_complete`` is
+    reported as ``None`` so a reader can tell coverage was never verified, rather than
+    conflating "not checked" with "checked and complete".
     """
     if not rows:
-        return {"passed": False, "reason": "no rows", "failures": [], "threshold_db": threshold_db}
+        coverage_requested = expected_seeds is not None or expected_cameras is not None
+        return {
+            "passed": False,
+            "reason": "no rows",
+            "failures": [],
+            "threshold_db": threshold_db,
+            "coverage_complete": False if coverage_requested else None,
+        }
     failures = [
         {
             "arm": row["arm"],
@@ -35,13 +54,28 @@ def g1_generalization(rows: list[dict], threshold_db: float = 1.0) -> dict:
         if float(row["delta_db"]) < threshold_db
     ]
     deltas = _deltas(rows)
+
+    coverage_complete: bool | None
+    if expected_seeds is None and expected_cameras is None:
+        coverage_complete = None
+    else:
+        by_seed_cameras: dict = {}
+        for row in rows:
+            by_seed_cameras.setdefault(row["seed"], set()).add(row["camera"])
+        want_seeds = expected_seeds or set()
+        want_cameras = expected_cameras or set()
+        coverage_complete = all(
+            seed in by_seed_cameras and want_cameras <= by_seed_cameras[seed] for seed in want_seeds
+        )
+
     return {
-        "passed": not failures,
+        "passed": not failures and (coverage_complete is not False),
         "threshold_db": threshold_db,
         "failures": failures,
         "n_rows": len(rows),
         "mean_delta_db": statistics.fmean(deltas),
         "worst_delta_db": min(deltas),
+        "coverage_complete": coverage_complete,
     }
 
 
@@ -89,10 +123,15 @@ def g3_stability(
         collision_assertions_checked = False
         collision_assertions_passed = False
 
+    passed = (
+        bool(by_seed)
+        and seeds_passing == len(by_seed)
+        and (not sparse_was_measured or collision_assertions_passed)
+    )
     return {
         "seeds_total": len(by_seed),
         "seeds_passing": seeds_passing,
-        "passed": bool(by_seed) and seeds_passing == len(by_seed),
+        "passed": passed,
         "mean_delta_db": statistics.fmean(deltas) if deltas else 0.0,
         "std_delta_db": statistics.pstdev(deltas) if len(deltas) > 1 else 0.0,
         "collision_fractions": collisions,
@@ -102,9 +141,22 @@ def g3_stability(
 
 
 def g4_frame_robustness(rows: list[dict], threshold_db: float = 1.0) -> dict:
-    """Worst orientation governs, and the full rotation matrix must be present."""
+    """Worst orientation governs, and the full rotation matrix must be present.
+
+    Coverage requires every measured (seed, camera) pair to have been tested at all
+    required rotations -- a superset check over the pooled rotation values alone is
+    satisfiable by a single row at each rotation while every other seed/camera pair
+    was only ever tested at 0 degrees.
+    """
     seen = {float(row["rotation_degrees"]) for row in rows}
-    coverage_complete = seen >= set(REQUIRED_ROTATIONS)
+    by_pair: dict = {}
+    for row in rows:
+        pair = (row["seed"], row["camera"])
+        by_pair.setdefault(pair, set()).add(float(row["rotation_degrees"]))
+    required = set(REQUIRED_ROTATIONS)
+    coverage_complete = bool(by_pair) and all(
+        required <= rotations for rotations in by_pair.values()
+    )
     deltas = _deltas(rows)
     worst = min(deltas) if deltas else float("-inf")
     return {
@@ -134,7 +186,7 @@ def g5_fallback_decomposition(rows: list[dict]) -> dict:
     ]
     return {
         "gated": False,
-        "complete": not incomplete,
+        "complete": bool(rows) and not incomplete,
         "incomplete_rows": incomplete,
         "mean_out_of_occupancy_fraction": statistics.fmean(fractions) if fractions else 0.0,
         "max_out_of_occupancy_fraction": max(fractions) if fractions else 0.0,
@@ -150,7 +202,11 @@ def stop_reason(gates: dict) -> str | None:
     if not arms:
         return "no arms were measured"
     for arm in arms.values():
-        if arm.get("g1", {}).get("passed") and arm.get("g4", {}).get("passed"):
+        if (
+            arm.get("g1", {}).get("passed")
+            and arm.get("g3", {}).get("passed")
+            and arm.get("g4", {}).get("passed")
+        ):
             return None
     failing = ", ".join(sorted(arms))
     return (

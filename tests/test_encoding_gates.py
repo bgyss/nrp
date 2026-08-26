@@ -56,6 +56,30 @@ class TestG1(unittest.TestCase):
         gate = g1_generalization([_row(delta_db=1.0)], threshold_db=1.0)
         self.assertTrue(gate["passed"])
 
+    def test_coverage_omitted_preserves_behaviour_and_reports_none(self):
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(5) for c in range(4)]
+        gate = g1_generalization(rows)
+        self.assertTrue(gate["passed"])
+        self.assertIsNone(gate["coverage_complete"])
+
+    def test_coverage_supplied_and_complete_passes(self):
+        rows = [_row(seed=s, camera=f"held{c}") for s in range(2) for c in range(2)]
+        gate = g1_generalization(rows, expected_seeds={0, 1}, expected_cameras={"held0", "held1"})
+        self.assertTrue(gate["coverage_complete"])
+        self.assertTrue(gate["passed"])
+
+    def test_coverage_supplied_and_missing_a_camera_fails(self):
+        # seed 1 is missing camera held1 entirely -- the deltas that do exist all
+        # clear the threshold, but coverage is incomplete and must fail the gate.
+        rows = [
+            _row(seed=0, camera="held0"),
+            _row(seed=0, camera="held1"),
+            _row(seed=1, camera="held0"),
+        ]
+        gate = g1_generalization(rows, expected_seeds={0, 1}, expected_cameras={"held0", "held1"})
+        self.assertFalse(gate["coverage_complete"])
+        self.assertFalse(gate["passed"])
+
 
 class TestG3(unittest.TestCase):
     def test_reports_per_seed_pass_and_spread(self):
@@ -93,6 +117,15 @@ class TestG3(unittest.TestCase):
         # Not-applicable must never read as a pass either.
         self.assertFalse(gate["collision_assertions_passed"])
 
+    def test_good_deltas_but_failing_collision_assertion_is_not_a_pass(self):
+        # Every seed clears the delta threshold, but the sparse arm has a genuine
+        # key-collision defect. `passed` must not ignore that.
+        rows = [_row(seed=s, arm="world_sparse", delta_db=5.0) for s in range(3)]
+        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.02})
+        self.assertEqual(gate["seeds_passing"], gate["seeds_total"])
+        self.assertFalse(gate["collision_assertions_passed"])
+        self.assertFalse(gate["passed"])
+
 
 class TestG4(unittest.TestCase):
     def test_worst_orientation_governs(self):
@@ -110,6 +143,28 @@ class TestG4(unittest.TestCase):
         gate = g4_frame_robustness(rows)
         self.assertFalse(gate["passed"])
         self.assertFalse(gate["coverage_complete"])
+
+    def test_full_matrix_across_seeds_and_cameras_passes(self):
+        rows = [
+            _row(seed=s, camera=c, rotation_degrees=r, delta_db=3.0)
+            for s in range(2)
+            for c in ("held0", "held1")
+            for r in (0.0, 90.0, 180.0)
+        ]
+        gate = g4_frame_robustness(rows)
+        self.assertTrue(gate["coverage_complete"])
+        self.assertTrue(gate["passed"])
+
+    def test_pooled_rotation_set_complete_but_one_pair_missing_90_fails_coverage(self):
+        # 20 rows at 0 degrees plus one row each at 90 and 180 -- the pooled set of
+        # rotation values is {0, 90, 180}, but almost no seed/camera pair was ever
+        # tested off-axis. Coverage must require every pair to hit every rotation.
+        rows = [_row(seed=s, camera="held0", rotation_degrees=0.0, delta_db=3.0) for s in range(20)]
+        rows.append(_row(seed=0, camera="held0", rotation_degrees=90.0, delta_db=3.0))
+        rows.append(_row(seed=0, camera="held0", rotation_degrees=180.0, delta_db=3.0))
+        gate = g4_frame_robustness(rows)
+        self.assertFalse(gate["coverage_complete"])
+        self.assertFalse(gate["passed"])
 
 
 class TestG5(unittest.TestCase):
@@ -129,6 +184,10 @@ class TestG5(unittest.TestCase):
         gate = g5_fallback_decomposition(rows)
         self.assertFalse(gate["complete"])
 
+    def test_no_rows_is_not_vacuously_complete(self):
+        gate = g5_fallback_decomposition([])
+        self.assertFalse(gate["complete"])
+
 
 class TestStopReason(unittest.TestCase):
     def test_no_arm_passing_g1_stops_the_track(self):
@@ -136,8 +195,28 @@ class TestStopReason(unittest.TestCase):
         self.assertIsNotNone(stop_reason(gates))
 
     def test_a_passing_arm_clears_the_stop(self):
-        gates = {"arms": {"world_sparse": {"g1": {"passed": True}, "g4": {"passed": True}}}}
+        gates = {
+            "arms": {
+                "world_sparse": {
+                    "g1": {"passed": True},
+                    "g3": {"passed": True},
+                    "g4": {"passed": True},
+                }
+            }
+        }
         self.assertIsNone(stop_reason(gates))
+
+    def test_g1_and_g4_passing_but_g3_failing_does_not_clear_the_stop(self):
+        gates = {
+            "arms": {
+                "world_sparse": {
+                    "g1": {"passed": True},
+                    "g3": {"passed": False},
+                    "g4": {"passed": True},
+                }
+            }
+        }
+        self.assertIsNotNone(stop_reason(gates))
 
 
 if __name__ == "__main__":
