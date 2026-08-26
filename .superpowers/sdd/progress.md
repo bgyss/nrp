@@ -68,3 +68,16 @@ Task 9: complete (commits f5564b5..d458ee0, review clean after 1 fix round)
     arm A could not train with a default config. Root cause: nothing exercised
     train_conditioned end-to-end with an occupancy arm. Fixed via encoder_schedule_params
     (reads class __init__ defaults); literal fallbacks removed; e2e regression added.
+Task 10: complete (commit c0e455f, review clean, no fix round)
+  - each of 5 tests proven capable of failing via deliberate breakage
+  - implementer strengthened the checkpoint test against the REAL structure
+    (dict with exactly config+state_dict) instead of the brief's guess
+  - KNOWN LIMITATION: corner-exactness uses enc._index() as its own oracle, so a bug
+    inside _index's formula is masked there. Closed by Task 1's
+    test_hash_matches_reference_at_high_resolution, which checks _index against the
+    instant-ngp reference independently.
+
+DECISION (2026-08-26): G1 gains an absolute 15 dB PSNR floor alongside the 1.0 dB margin.
+  Rationale + provenance in the spec (commit 7a58e98). 15 dB is INVENTED for this
+  campaign; the 1.0 dB margin is inherited from the approved R2 ladder. Task 11 must
+  pass absolute_floor_db=15.0 to g1_generalization.
