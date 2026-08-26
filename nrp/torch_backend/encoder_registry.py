@@ -6,9 +6,26 @@ without importing the module that imports it back.
 
 from __future__ import annotations
 
+import torch
+
 #: name -> encoder class. `build_encoder` is the only construction path the model uses,
 #: so adding an arm is one decorator rather than another if/elif branch.
 SPATIAL_ENCODERS: dict[str, type] = {}
+
+
+def _floor_cell(pos: torch.Tensor, res: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Lower cell corner and interpolation fraction for scaled coordinates.
+
+    Clamping to res-1 (not res) keeps the cell [x0, x0+1] non-degenerate and
+    frac within [0, 1]. Output is identical either way for in-range inputs; the
+    invariant matters to the sparse-index encoder, which indexes corners directly.
+
+    Lives here (not in `encoding.py`) so both `encoding.py` and `sparse_encoding.py`
+    can import it without either importing the other.
+    """
+    pos0 = torch.floor(pos).long().clamp_(0, res - 1)
+    frac = pos - pos0
+    return pos0, frac
 
 
 def register_encoder(name: str):

@@ -25,11 +25,11 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from nrp.torch_backend.encoder_registry import _floor_cell  # noqa: E402
 from nrp.torch_backend.encoding import (  # noqa: E402
     _PRIMES,
     HashEncoding2D,
     HashEncoding3D,
-    _floor_cell,
 )
 
 

@@ -13,7 +13,13 @@ import math
 import torch
 from torch import nn
 
-from .encoder_registry import SPATIAL_ENCODERS, build_encoder, register_encoder  # noqa: F401
+from . import sparse_encoding as _sparse_encoding  # noqa: F401  # registers arm B
+from .encoder_registry import (  # noqa: F401
+    SPATIAL_ENCODERS,
+    _floor_cell,
+    build_encoder,
+    register_encoder,
+)
 
 _PRIMES = (1, 2654435761, 805459861)
 
@@ -37,18 +43,6 @@ def _grid_capacity_report(encoder) -> dict:
         ],
         "total_slots": int(sum(t.shape[0] for t in encoder.tables)),
     }
-
-
-def _floor_cell(pos: torch.Tensor, res: int) -> tuple[torch.Tensor, torch.Tensor]:
-    """Lower cell corner and interpolation fraction for scaled coordinates.
-
-    Clamping to res-1 (not res) keeps the cell [x0, x0+1] non-degenerate and
-    frac within [0, 1]. Output is identical either way for in-range inputs; the
-    invariant matters to the sparse-index encoder, which indexes corners directly.
-    """
-    pos0 = torch.floor(pos).long().clamp_(0, res - 1)
-    frac = pos - pos0
-    return pos0, frac
 
 
 @register_encoder("pixel2d")
