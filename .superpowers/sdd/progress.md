@@ -15,3 +15,6 @@ Task 1: complete (commits ebc8b15..55ca5e5, review clean after 2 fix rounds)
   - authorized deviation: clamp change is a no-op, kept as invariant; spec corrected in c1f38a8
   - authorized deviation: wired spatial_encoding/world_bounds through train_streamed
   - _floor_cell extracted in encoding.py; both forwards call it; tests import it
+Task 2: complete (commit d7f6a82, review clean)
+  - kitchen founding measurement independently reproduced: 78,084 verts / 4096 slots = 0.0525
+  - MINOR (deferred to final review): zero-vertex edge case in capacity_report is handled but untested
