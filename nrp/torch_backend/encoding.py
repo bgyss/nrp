@@ -271,3 +271,78 @@ class HashEncodingTriPlane(nn.Module):
             [plane(projected) for plane, projected in zip(self.planes, projections, strict=True)],
             dim=1,
         )
+
+
+@register_encoder("world_normal_triplane")
+class NormalAwareTriPlane(nn.Module):
+    """Tri-plane where each point reads only the plane aligned with its normal.
+
+    The concatenating tri-plane reads all three planes, tripling capacity pressure and
+    tying quality to the world frame -- the corrected R1C matrix measured a -3.651 dB
+    worst-orientation failure. Selecting the plane by surface normal makes the choice
+    follow geometry instead of the frame, and reads one plane instead of three.
+
+    The argmax is discontinuous across normal boundaries; gradients flow through the
+    features, not the selection. Expected artifacts are seams at sharp surface-orientation
+    discontinuities, which the per-camera error maps will show if they matter.
+    """
+
+    needs_occupancy = False
+    needs_normals = True
+
+    #: dominant normal axis -> the two coordinate axes spanning the plane it reads
+    AXIS_TO_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
+
+    def __init__(
+        self,
+        levels: int = 3,
+        features_per_level: int = 2,
+        table_size_log2: int = 13,
+        base_resolution: int = 4,
+        finest_resolution: int = 256,
+    ):
+        super().__init__()
+        config = {
+            "levels": levels,
+            "features_per_level": features_per_level,
+            "table_size_log2": table_size_log2,
+            "base_resolution": base_resolution,
+            "finest_resolution": finest_resolution,
+        }
+        self.planes = nn.ModuleList([HashEncoding2D(**config) for _ in range(3)])
+        self.levels = levels
+        self.features_per_level = features_per_level
+        self.resolutions = self.planes[0].resolutions
+
+    @property
+    def output_dim(self) -> int:
+        return self.planes[0].output_dim
+
+    def forward(self, xyz: torch.Tensor, normals: torch.Tensor | None = None) -> torch.Tensor:
+        if xyz.ndim != 2 or xyz.shape[1] != 3:
+            raise ValueError(f"xyz must have shape (N, 3), got {tuple(xyz.shape)}")
+        if normals is None:
+            raise ValueError("NormalAwareTriPlane requires normals")
+        if normals.shape != xyz.shape:
+            raise ValueError(f"normals must match xyz shape, got {tuple(normals.shape)}")
+        magnitude = normals.abs()
+        if bool((magnitude.sum(dim=1) <= 1e-8).any()):
+            raise ValueError("normals must be non-zero")
+        axis = magnitude.argmax(dim=1)
+        out = torch.zeros((xyz.shape[0], self.output_dim), dtype=xyz.dtype, device=xyz.device)
+        for a in range(3):
+            mask = axis == a
+            if not bool(mask.any()):
+                continue
+            u, v = self.AXIS_TO_PLANE[a]
+            out[mask] = self.planes[a](xyz[mask][:, (u, v)])
+        return out
+
+    def capacity_report(self) -> dict:
+        per_plane = [plane.capacity_report() for plane in self.planes]
+        return {
+            "encoding": type(self).__name__,
+            "levels": per_plane[0]["levels"],
+            "planes": per_plane,
+            "total_slots": int(sum(p["total_slots"] for p in per_plane)),
+        }

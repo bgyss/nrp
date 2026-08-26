@@ -258,7 +258,14 @@ class TorchNRP(nn.Module):
             if self.world_origin is not None:
                 world_coords = (world_coords - self.world_origin) @ self.world_basis
             normalized = ((world_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)
-            spatial = self.encoding(normalized)
+            if getattr(self.encoding, "needs_normals", False):
+                # aux columns are albedo(3) + depth(1) + normal(3); normals are the last 3.
+                normals = aux[:, 4:7]
+                if self.world_origin is not None:
+                    normals = normals @ self.world_basis
+                spatial = self.encoding(normalized, normals)
+            else:
+                spatial = self.encoding(normalized)
         else:
             spatial = self.encoding(spatial_coords) if self.encoding is not None else spatial_coords
         light_params = self._transform_light_params(light_params)
