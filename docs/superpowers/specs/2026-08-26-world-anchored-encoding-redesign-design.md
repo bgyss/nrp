@@ -42,6 +42,12 @@ Measured per-level occupancy on the real 128² Country Kitchen cache
 | 6 | 84 | no | 4096 | 44393 | 90.8% |
 | 7 | 128 | no | 4096 | 78080 | 94.8% (max 34 verts/slot) |
 
+The 78,080 figure was measured against the code as it stood, whose cell clamp was
+`clip(0, res)`. `nrp/torch_backend/occupancy.py` recomputes it as **78,084** under the
+`clip(0, res - 1)` cell rule now used by `_floor_cell`; the four-vertex delta is exactly
+the boundary points that clamp bound affects. Both numbers are correct for their code
+state, and the argument is unchanged: 4,096 slots against ~78k distinct vertices.
+
 Three findings, none of which is a coding bug:
 
 1. **"Matched parameter budget" is the wrong control variable.** Matching ~106k
