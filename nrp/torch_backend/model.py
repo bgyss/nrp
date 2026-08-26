@@ -18,6 +18,8 @@ Ablation switches (roadmap item 10, paper Table 2): `use_aux=False` drops the 7D
 G-buffer features and `use_encoding=False` feeds the raw 2D pixel coordinates instead
 of the hashgrid encoding. `forward` keeps its (spatial, aux, params) signature either
 way so training/relighting/inverse code is variant-agnostic; disabled inputs are ignored.
+R2 adds an opt-in `camera_conditioned` flag that appends a normalized camera forward
+direction to the model input while leaving the legacy three-argument call path intact.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from .encoding import HashEncoding2D, HashEncoding3D, HashEncodingTriPlane
 LIGHT_PARAM_DIMS = {"sphere": 4, "quad": 8}
 SUPPORTED_LIGHT_TYPES = {"sphere", "quad", "textured_quad"}
 SUPPORTED_SPATIAL_ENCODINGS = {"pixel2d", "world3d", "world_triplane"}
+CAMERA_DIRECTION_DIM = 3
 
 
 def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.01) -> torch.Tensor:
@@ -56,6 +59,7 @@ class TorchNRP(nn.Module):
         encoding: dict | None = None,
         spatial_encoding: str = "pixel2d",
         world_bounds: dict | None = None,
+        camera_conditioned: bool = False,
         use_encoding: bool = True,
         use_aux: bool = True,
         light_param_dim: int | None = None,
@@ -93,6 +97,7 @@ class TorchNRP(nn.Module):
         self.light_param_dim = int(light_param_dim)
         self.texture_kernel = bool(texture_kernel)
         self.spatial_encoding = spatial_encoding
+        self.camera_conditioned = bool(camera_conditioned)
         self.use_encoding = use_encoding
         self.use_aux = use_aux
         if spatial_encoding != "pixel2d":
@@ -123,6 +128,7 @@ class TorchNRP(nn.Module):
             "encoding": encoding or {},
             "spatial_encoding": spatial_encoding,
             "world_bounds": normalized_bounds,
+            "camera_conditioned": self.camera_conditioned,
             "use_encoding": use_encoding,
             "use_aux": use_aux,
             "texture_kernel": self.texture_kernel,
@@ -138,7 +144,12 @@ class TorchNRP(nn.Module):
         spatial_dim = self.encoding.output_dim if use_encoding else 2
         light_in_dim = 8 if self.texture_kernel else self.light_param_dim
         out_dim = self.light_param_dim - 8 if self.texture_kernel else 3
-        in_dim = spatial_dim + (7 if use_aux else 0) + light_in_dim
+        in_dim = (
+            spatial_dim
+            + (7 if use_aux else 0)
+            + (CAMERA_DIRECTION_DIM if self.camera_conditioned else 0)
+            + light_in_dim
+        )
         layers: list[nn.Module] = []
         for i in range(hidden_layers):
             layers.append(nn.Linear(in_dim if i == 0 else hidden_width, hidden_width))
@@ -178,13 +189,19 @@ class TorchNRP(nn.Module):
             last.bias.fill_(inverse_softplus(target_scale))
 
     def forward(
-        self, spatial_coords: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
+        self,
+        spatial_coords: torch.Tensor,
+        aux: torch.Tensor,
+        light_params: torch.Tensor,
+        view_dir: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Evaluate pixels from 2D coordinates or first-hit world positions.
 
         ``spatial_coords`` is ``(N, 2)`` normalized pixel xy for ``pixel2d`` and
         ``(N, 3)`` raw first-hit world position for ``world3d``. ``aux`` retains
-        the paper's seven albedo/depth/normal columns in both modes.
+        the paper's seven albedo/depth/normal columns in both modes. When R2 camera
+        conditioning is enabled, ``view_dir`` is a normalized camera forward vector
+        with shape ``(3,)`` or one vector per row with shape ``(N, 3)``.
         """
         if self.spatial_encoding != "pixel2d":
             if spatial_coords.ndim != 2 or spatial_coords.shape[1] != 3:
@@ -196,12 +213,46 @@ class TorchNRP(nn.Module):
             spatial = self.encoding(normalized)
         else:
             spatial = self.encoding(spatial_coords) if self.encoding is not None else spatial_coords
+        camera = None
+        if self.camera_conditioned:
+            if view_dir is None:
+                raise ValueError("camera-conditioned model requires view_dir")
+            if view_dir.ndim == 1:
+                if view_dir.shape != (CAMERA_DIRECTION_DIM,):
+                    raise ValueError("view_dir must have shape (3,) or (N, 3)")
+                view_dir = view_dir.reshape(1, CAMERA_DIRECTION_DIM).expand(
+                    spatial_coords.shape[0], -1
+                )
+            elif view_dir.ndim != 2 or view_dir.shape != (
+                spatial_coords.shape[0],
+                CAMERA_DIRECTION_DIM,
+            ):
+                raise ValueError(
+                    "view_dir must have shape (3,) or (N, 3), "
+                    f"got {tuple(view_dir.shape)}"
+                )
+            if not bool(torch.isfinite(view_dir).all()):
+                raise ValueError("view_dir must be finite")
+            norm = torch.linalg.vector_norm(view_dir, dim=1, keepdim=True)
+            if bool((norm <= 1e-8).any()):
+                raise ValueError("view_dir must be non-zero")
+            camera = view_dir / norm
         if self.texture_kernel:
             geometry, texture = light_params[:, :8], light_params[:, 8:]
-            parts = [spatial, aux, geometry] if self.use_aux else [spatial, geometry]
+            parts = [spatial]
+            if self.use_aux:
+                parts.append(aux)
+            if camera is not None:
+                parts.append(camera)
+            parts.append(geometry)
             kernel = F.softplus(self.mlp(torch.cat(parts, dim=1)))
             return (kernel * texture).view(texture.shape[0], -1, 3).sum(dim=1)
-        parts = [spatial, aux, light_params] if self.use_aux else [spatial, light_params]
+        parts = [spatial]
+        if self.use_aux:
+            parts.append(aux)
+        if camera is not None:
+            parts.append(camera)
+        parts.append(light_params)
         return F.softplus(self.mlp(torch.cat(parts, dim=1)))
 
     def save(self, path: str) -> None:

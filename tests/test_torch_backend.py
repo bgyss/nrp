@@ -175,6 +175,51 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(out.shape, (9, 3))
             self.assertTrue(bool((out >= 0).all()), "softplus head must be non-negative")
 
+    def test_camera_conditioned_forward(self):
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world3d",
+            world_bounds={"min": [0, 0, 0], "max": [1, 1, 1]},
+            camera_conditioned=True,
+        )
+        xyz = torch.rand(5, 3)
+        aux = torch.rand(5, 7)
+        params = torch.rand(5, 4)
+        direction = torch.tensor([0.0, 0.0, -1.0])
+        broadcast = model(xyz, aux, params, direction)
+        repeated = model(xyz, aux, params, direction.expand(5, -1))
+        self.assertEqual(broadcast.shape, (5, 3))
+        torch.testing.assert_close(broadcast, repeated)
+        with self.assertRaisesRegex(ValueError, "requires view_dir"):
+            model(xyz, aux, params)
+        with self.assertRaisesRegex(ValueError, "shape"):
+            model(xyz, aux, params, torch.ones(5, 2))
+        with self.assertRaisesRegex(ValueError, "non-zero"):
+            model(xyz, aux, params, torch.zeros(3))
+
+    def test_camera_conditioned_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world3d",
+            world_bounds={"min": [0, 0, 0], "max": [1, 1, 1]},
+            camera_conditioned=True,
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        view_dir = torch.tensor([0.0, 0.0, -1.0])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertTrue(loaded.camera_conditioned)
+        self.assertTrue(loaded.config["camera_conditioned"])
+        torch.testing.assert_close(
+            model(xyz, aux, lp, view_dir), loaded(xyz, aux, lp, view_dir)
+        )
+
     def test_forward_shape_textured_quad_with_configured_param_dim(self):
         model = TorchNRP(
             light_type="textured_quad",
