@@ -55,3 +55,10 @@ CARRY-FORWARD REQUIREMENT FOR TASK 11 (runner), raised by the Task 8 reviewer:
   It must also surface g3["collision_assertions_checked"], g4["coverage_complete"],
   g1["coverage_complete"], and the row counts, and must pass expected_seeds/expected_cameras
   to g1 so coverage is actually verified rather than assumed.
+Task 8: complete (commits 0bcc818..f5564b5, review clean after THREE fix rounds)
+  - the unearned-pass defect was introduced 3x, twice BY fixes for it:
+    r1 g3 collision all() vacuous; r2 g3 passed not wired + g5 empty + g4 pooled coverage;
+    r3 g1 coverage all() vacuous on empty/partial args. Now fail-closed w/ coverage_status.
+  - final review built its own empty-collection audit table from source; no 4th instance
+  - MINOR (deferred): stop_reason raises AttributeError on a non-dict arm value (fail-loud,
+    not an unearned pass) -- one-line isinstance guard suggested
