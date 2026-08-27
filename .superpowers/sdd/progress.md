@@ -97,3 +97,23 @@ Task 11: complete (commits 6775528, ef545d4, review clean, no fix round)
     later rungs R5/R6.
   - MINOR (deferred): _predict duplicates relight's loop and drops its TexturedQuadLight
     case; suggested fix is adding view_dir to relight and deleting _predict.
+
+PROBE (seed 0, rotation 0, all 3 arms) -- out/r1-encoding-redesign/probe.json
+  timing: 17.5 min per (seed,rotation) combo -> full 15-combo campaign ~= 4.4 h
+  gate wiring VERIFIED live: G4 coverage_complete=False on a single rotation;
+    G1 coverage_status="complete"; G3 collision_assertions_checked=True with
+    world_sparse measured at exactly 0.0; stop_reason non-null; report written
+    before the nonzero exit.
+  first real signal (ONE seed -- not conclusive):
+    world_sparse (arm B, primary): worst delta -0.52 dB  FAIL, out-of-occupancy 6.1%
+    world_normal_triplane (arm C): worst delta +3.09 dB  pass, oof 0%
+    world3d occupancy-alloc (A):   worst delta +1.73 dB  pass, oof 0%
+    held-out PSNR ~20.4 dB, so the 15 dB floor is not the binding constraint.
+  NOTE: arm B -- the hypothesis I argued was strongest -- is the worst here, and G5
+    immediately shows a plausible mechanism (6.1% of held-out queries fall outside the
+    occupied set and get zero features at the finest level). DO NOT tune arm B in
+    response to one probe seed; run the campaign as specified and let the 5-seed
+    matrix decide. Occupancy dilation is future work, not a mid-campaign fix.
+  MINOR (reporting): collision_by_arm dict is passed whole to every arm's g3, so a
+    non-sparse arm's report echoes {"world_sparse": 0.0} while correctly reporting
+    collision_assertions_checked=False. Noisy, not wrong.
