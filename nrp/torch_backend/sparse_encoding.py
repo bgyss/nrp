@@ -32,6 +32,11 @@ def _vertex_codes(vertices: torch.Tensor, resolution: int) -> torch.Tensor:
 class SparseVoxelEncoding(nn.Module):
     needs_occupancy = True
     needs_normals = False
+    #: exact index -> no hashing, so zero key collisions is guaranteed by
+    #: construction rather than merely measured. Keyed by the runner and by
+    #: `g3_stability`'s mandatory assertion instead of the arm's string name, so
+    #: renaming the arm cannot silently drop the assertion (see FIX 3).
+    guarantees_zero_collisions = True
 
     def __init__(
         self,

@@ -443,11 +443,27 @@ def campaign_peak(trained_caches: list[PathCache], lights: list, seed: int | Non
     return peak
 
 
-def _sparse_collision_fraction(capacity_report: dict) -> float:
-    """Worst per-level collision fraction reported for a sparse-table encoder."""
+def _sparse_collision_fraction(capacity_report: dict, arm: str) -> float:
+    """Worst per-level collision fraction reported for a sparse-table encoder.
+
+    Raises rather than defaulting to 0.0 when the report is empty or any level is
+    missing the key: 0.0 is exactly the value G3 reads as "zero collisions
+    verified", so silently returning it for a report that measured nothing would
+    report a verified zero-collision pass having checked nothing.
+    """
     levels = capacity_report.get("levels", [])
-    fractions = [lvl["collision_fraction"] for lvl in levels if "collision_fraction" in lvl]
-    return max(fractions) if fractions else 0.0
+    if not levels:
+        raise ValueError(
+            f"_sparse_collision_fraction: capacity report for arm {arm!r} has no levels; "
+            "cannot verify zero collisions from an empty report"
+        )
+    missing = [i for i, lvl in enumerate(levels) if "collision_fraction" not in lvl]
+    if missing:
+        raise ValueError(
+            f"_sparse_collision_fraction: arm {arm!r} capacity report levels {missing} "
+            "are missing 'collision_fraction'; cannot verify zero collisions"
+        )
+    return max(lvl["collision_fraction"] for lvl in levels)
 
 
 def parse_args(argv):
@@ -566,10 +582,10 @@ def main(argv: list[str] | None = None) -> int:
                             "capacity_report": report,
                         }
                     )
-                    if arm == "world_sparse":
+                    if getattr(SPATIAL_ENCODERS[arm], "guarantees_zero_collisions", False):
                         collision_by_arm[arm] = max(
                             collision_by_arm.get(arm, 0.0),
-                            _sparse_collision_fraction(report),
+                            _sparse_collision_fraction(report, arm),
                         )
 
                 for camera in held_out:
@@ -601,7 +617,16 @@ def main(argv: list[str] | None = None) -> int:
             expected_cameras=expected_cameras,
             absolute_floor_db=args.absolute_floor_db,
         )
-        g3 = g3_stability(rows, collision_by_arm, args.threshold_db)
+        # Pass only this arm's own collision entry (not the whole shared dict) so a
+        # non-zero-collision-guaranteeing arm's report never echoes another arm's
+        # collision fraction.
+        arm_collisions = {arm: collision_by_arm[arm]} if arm in collision_by_arm else {}
+        zero_collision_arms = frozenset(
+            a
+            for a in args.arms
+            if getattr(SPATIAL_ENCODERS[a], "guarantees_zero_collisions", False)
+        )
+        g3 = g3_stability(rows, arm_collisions, args.threshold_db, zero_collision_arms)
         g4 = g4_frame_robustness(rows, args.threshold_db)
         g5 = g5_fallback_decomposition(rows)
         arms_report[arm] = {

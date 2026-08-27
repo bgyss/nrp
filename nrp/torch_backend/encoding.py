@@ -48,6 +48,7 @@ def _grid_capacity_report(encoder) -> dict:
 class HashEncoding2D(nn.Module):
     needs_occupancy = False
     needs_normals = False
+    guarantees_zero_collisions = False
 
     def __init__(
         self,
@@ -123,6 +124,7 @@ class HashEncoding3D(nn.Module):
 
     needs_occupancy = False
     needs_normals = False
+    guarantees_zero_collisions = False
 
     def __init__(
         self,
@@ -258,6 +260,7 @@ class HashEncodingTriPlane(nn.Module):
 
     needs_occupancy = False
     needs_normals = False
+    guarantees_zero_collisions = False
 
     def __init__(
         self,
@@ -320,6 +323,7 @@ class NormalAwareTriPlane(nn.Module):
 
     needs_occupancy = False
     needs_normals = True
+    guarantees_zero_collisions = False
 
     #: dominant normal axis -> the two coordinate axes spanning the plane it reads
     AXIS_TO_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}

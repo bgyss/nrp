@@ -149,18 +149,26 @@ def g2_capacity_context(rows: list[dict]) -> dict:
 
 
 def g3_stability(
-    rows: list[dict], collision_fractions: dict | None = None, threshold_db: float = 1.0
+    rows: list[dict],
+    collision_fractions: dict | None = None,
+    threshold_db: float = 1.0,
+    zero_collision_arms: frozenset | set = frozenset(),
 ) -> dict:
     """Per-seed pass required; mean/std reported as context only.
 
-    Also asserts the sparse arm's key-collision fraction is exactly zero -- but only
-    when ``world_sparse`` rows were actually produced. The assertion is checked
-    against the arms that were *measured* (derived from ``rows``), not against
-    whatever happens to be present in ``collision_fractions``: a missing entry for a
-    measured arm is a failure, never a silent pass. ``collision_assertions_checked``
-    tells a reader whether "collision_assertions_passed: True" means "verified zero"
-    (checked=True) or "world_sparse was never measured" (checked=False) -- the two
-    must never be conflated.
+    Also asserts every arm claiming a zero-collision guarantee (``zero_collision_arms``
+    -- an arm's own class flag, e.g. ``guarantees_zero_collisions``, not a string
+    literal keyed off the arm's name) actually measured a key-collision fraction of
+    exactly zero -- but only when such an arm's rows were actually produced. The
+    assertion is checked against the arms that were *measured* (derived from
+    ``rows``) intersected with ``zero_collision_arms``, not against whatever happens
+    to be present in ``collision_fractions``: a missing entry for a measured
+    zero-collision-guaranteeing arm is a failure, never a silent pass. Keying off a
+    capability set rather than a hardcoded name means renaming the arm cannot make
+    this assertion silently not-applicable. ``collision_assertions_checked`` tells a
+    reader whether "collision_assertions_passed: True" means "verified zero"
+    (checked=True) or "no zero-collision-guaranteeing arm was measured"
+    (checked=False) -- the two must never be conflated.
     """
     by_seed: dict[int, list[float]] = {}
     for row in rows:
@@ -170,11 +178,13 @@ def g3_stability(
     collisions = collision_fractions or {}
 
     measured_arms = {row["arm"] for row in rows}
-    sparse_was_measured = "world_sparse" in measured_arms
-    if sparse_was_measured:
-        sparse_collision = collisions.get("world_sparse")
+    guaranteed_arms = measured_arms & set(zero_collision_arms)
+    guarantee_was_measured = bool(guaranteed_arms)
+    if guarantee_was_measured:
         collision_assertions_checked = True
-        collision_assertions_passed = sparse_collision == 0.0
+        collision_assertions_passed = all(
+            collisions.get(arm) == 0.0 for arm in guaranteed_arms
+        )
     else:
         collision_assertions_checked = False
         collision_assertions_passed = False
@@ -182,7 +192,7 @@ def g3_stability(
     passed = (
         bool(by_seed)
         and seeds_passing == len(by_seed)
-        and (not sparse_was_measured or collision_assertions_passed)
+        and (not guarantee_was_measured or collision_assertions_passed)
     )
     return {
         "seeds_total": len(by_seed),

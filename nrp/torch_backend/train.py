@@ -40,7 +40,7 @@ from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
 from .denoise import denoise_image
 from .device import autocast, resolve_device, resolve_precision
-from .encoder_registry import SPATIAL_ENCODERS
+from .encoder_registry import SPATIAL_ENCODERS, _ensure_loaded
 from .gather import TorchPathCache
 from .model import (
     LIGHT_PARAM_DIMS,
@@ -50,8 +50,18 @@ from .model import (
 )
 from .sampling import sample_light
 
-#: Encodings that consume first-hit world positions rather than pixel coordinates.
-WORLD_ENCODINGS = frozenset(name for name in SPATIAL_ENCODERS if name != "pixel2d")
+
+def world_encodings() -> frozenset[str]:
+    """Encodings that consume first-hit world positions rather than pixel coordinates.
+
+    Computed on every call (not frozen at import time) so a caller that imports this
+    module before every encoder has registered itself still sees the full set: the
+    registry is lazily populated (`encoder_registry._ensure_loaded`), so a
+    module-level snapshot taken at import time could silently miss arms registered
+    later in the same process.
+    """
+    _ensure_loaded()
+    return frozenset(name for name in SPATIAL_ENCODERS if name != "pixel2d")
 
 
 def light_param_vector(light) -> np.ndarray:
@@ -96,7 +106,7 @@ def spatial_tensors(
     xy, aux = pixel_tensors(cache, device)
     if spatial_encoding == "pixel2d":
         return xy, aux
-    if spatial_encoding in WORLD_ENCODINGS:
+    if spatial_encoding in world_encodings():
         return torch.as_tensor(
             cache.position.reshape(-1, 3), dtype=torch.float32, device=device
         ), aux

@@ -28,11 +28,11 @@ from .model import TorchNRP, relative_mse_loss
 from .occupancy import grid_occupancy, level_resolutions, normalize_positions
 from .sampling import sample_light
 from .train import (
-    WORLD_ENCODINGS,
     evaluate,
     light_param_dim_from_cfg,
     light_param_vector,
     spatial_tensors,
+    world_encodings,
 )
 
 
@@ -302,10 +302,11 @@ def train_conditioned(cfg: dict, resume: bool = False) -> dict:
     if not isinstance(model_cfg, dict) or not model_cfg.get("camera_conditioned", False):
         raise ValueError("R2 training requires model.camera_conditioned=true")
     encoding_name = model_cfg.get("spatial_encoding", "pixel2d")
-    if encoding_name not in WORLD_ENCODINGS:
+    world_encoding_names = world_encodings()
+    if encoding_name not in world_encoding_names:
         raise ValueError(
             "camera-conditioned training requires a world-anchored spatial encoding; "
-            f"got {encoding_name!r}, expected one of {sorted(WORLD_ENCODINGS)}"
+            f"got {encoding_name!r}, expected one of {sorted(world_encoding_names)}"
         )
 
     views = load_camera_manifest(cfg["manifest"])

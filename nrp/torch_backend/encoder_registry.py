@@ -14,6 +14,31 @@ import torch
 #: so adding an arm is one decorator rather than another if/elif branch.
 SPATIAL_ENCODERS: dict[str, type] = {}
 
+#: Set once `_ensure_loaded` has imported `encoding` (which in turn imports
+#: `sparse_encoding`), so every built-in encoder is registered exactly once no
+#: matter which module a caller imports first.
+_loaded = False
+
+
+def _ensure_loaded() -> None:
+    """Guarantee the built-in encoders are registered before the registry is read.
+
+    In a fresh interpreter, `SPATIAL_ENCODERS` is empty until something imports
+    `encoding` (directly, or transitively via `model`/`train`) -- an import-order
+    coincidence that made `build_encoder`/`encoder_schedule_params` correct only by
+    accident. Calling this first makes the registry self-sufficient regardless of
+    what the caller happened to import already. Guarded by `_loaded` rather than
+    relying on Python's module-import cache alone so this is a cheap no-op on every
+    call after the first, and so re-entrancy during `encoding`'s own import (it does
+    not currently call back into this module, but nothing prevents it from starting
+    to) can never recurse: the flag is set before the import runs.
+    """
+    global _loaded
+    if _loaded:
+        return
+    _loaded = True
+    from . import encoding  # noqa: F401
+
 
 def _floor_cell(pos: torch.Tensor, res: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Lower cell corner and interpolation fraction for scaled coordinates.
@@ -42,6 +67,7 @@ def register_encoder(name: str):
 
 def build_encoder(name: str, config: dict | None = None, occupancy=None):
     """Construct a spatial encoder, supplying occupancy only to arms that need it."""
+    _ensure_loaded()
     if name not in SPATIAL_ENCODERS:
         raise ValueError(
             f"unknown spatial encoding {name!r}; expected one of {sorted(SPATIAL_ENCODERS)}"
@@ -67,6 +93,7 @@ def encoder_schedule_params(name: str, config: dict | None = None) -> tuple[int,
     own constructor default, so an occupancy schedule built for a config can never
     diverge from the schedule the encoder will construct for that same config.
     """
+    _ensure_loaded()
     if name not in SPATIAL_ENCODERS:
         raise ValueError(
             f"unknown spatial encoding {name!r}; expected one of {sorted(SPATIAL_ENCODERS)}"
