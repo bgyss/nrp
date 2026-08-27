@@ -3056,3 +3056,118 @@ before `load_state_dict`. This runner rebuilds occupancy from `config
 ["world_bounds"]` plus `config["encoding"]` before loading. Other checkpoint
 consumers (relight, bench, WebGPU export) do not do this and cannot currently
 reload an occupancy-allocated model. This blocks R5/R6 until addressed.
+
+## R1 fair-allocation parity re-measurement (toy 64² and Kitchen 128²)
+
+The redesigned campaign above answers a held-out-camera generalization question;
+it does not re-measure single-view parity under a fair, non-parameter-matched
+allocation. This section does that on two scenes, under the **original,
+unchanged R1 gate** — every seed's paired PSNR delta versus a same-run `pixel2d`
+control must be ≥ −0.5 dB — not the campaign's 15 dB floor / 1.0 dB margin gate,
+which was invented specifically for held-out-camera evaluation and does not apply
+here. Evidence: `out/r1-parity/report.json` (toy) and
+`out/r1-parity-kitchen/report.json` (Kitchen). Hardware for both: Apple M1 Max,
+macOS 27.0 arm64, PyTorch 2.12.1, CPU. Both runs use OIDN-denoised training
+targets for Kitchen and the standard bilateral fallback for toy, 3,000
+iterations, batch 4,096, a 64-image pool, and the shared occupancy-based
+resolution ladder (`base_resolution=4`) rather than a matched parameter count —
+each arm is sized by how many grid vertices it actually needs, `pixel2d` included.
+
+### Toy 64² — all three world arms pass
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000
+```
+
+| arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB |
+|---|---|---:|---:|---:|
+| `world_sparse` | +0.75, −0.11, +0.62, +0.88, +0.68 | +0.56 | [+0.22, +0.80] | **5/5** |
+| `world_normal_triplane` | +0.41, −0.25, +0.32, +0.14, +1.31 | +0.39 | [−0.01, +0.90] | **5/5** |
+| `world3d` (occupancy-allocated) | +0.21, −0.04, +0.47, +0.02, +0.71 | +0.27 | [+0.03, +0.52] | **5/5** |
+
+All three world-anchored arms clear the −0.5 dB gate on every seed. Parameter
+and slot counts below were **recovered by loading each seed-0 checkpoint and
+summing trainable-float tensor `numel()`, not read from `report.json`'s own
+`parameter_count` field** — that field undercounts every arm by 6 parameters
+(likely an uncounted bias term) relative to what is actually in the checkpoint,
+so the checkpoint count is the one quoted here:
+
+| arm | trainable params | grid slots |
+|---|---:|---:|
+| `pixel2d` (control) | 68,987 | 7,740 |
+| `world_sparse` | 107,637 | 27,062 |
+| `world3d` | 107,637 | 27,062 |
+| `world_normal_triplane` | 81,997 | 14,754 |
+
+### Kitchen 128² — no arm passes
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4
+```
+
+The control was verified to reproduce `examples/kitchen_torch.json` exactly:
+levels 8, features-per-level 2, `table_size_log2=14`, base resolution 4, finest
+resolution 128, **106,085 parameters** — the historical control figure used
+throughout this document. OIDN denoising, same 64-image pool and iteration count
+as toy.
+
+| arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | seeds passing −0.5 dB | trainable params | grid slots |
+|---|---|---:|---:|---:|---:|
+| `world_sparse` | +0.02, −0.36, −1.35, −0.17, −2.83 | **−0.935** | 3/5 | 343,533 | **145,010 (5.5× the control)** |
+| `world3d` (occupancy-allocated) | −1.26, −0.59, +0.56, +0.12, −0.61 | −0.355 | 2/5 | 187,109 | 66,926 (2.5×) |
+| `world_normal_triplane` | −0.47, +0.87, −0.65, −0.36, +0.28 | −0.064 | 4/5 | 162,043 | 54,777 (2.1×) |
+
+**No world arm passes.** All three fail at least one seed against the unchanged
+−0.5 dB gate, and `world_sparse` — with 5.5× the control's grid slots and zero
+hash collisions by construction — is the *worst* performer of the three.
+
+### Correction: the allocation handicap does not explain the original R1 negative
+
+`docs/representation-track.md` previously stated that the ~19× parameter-vs-slot
+allocation handicap (§"World-anchored encoding redesign" above) **explained**
+the original R1 Kitchen negative. **That causal claim is now falsified and is
+corrected here and in `docs/representation-track.md`, not softened.**
+
+`world3d`'s Kitchen mean under this fair, non-handicapped allocation is
+**−0.355 dB**, against the historical three-seed matched-budget mean of
+**−0.356 dB** (`docs/performance.md#r1-failure-analysis-three-seeds-initialization-capacity-and-tri-plane`)
+— the original result reproduces almost exactly once the handicap is removed.
+And `world_sparse`, given 5.5× the control's slots with zero collisions (the
+exact inverse of the original deficit), performs worst of the three arms. If the
+allocation handicap were the cause, removing it should have closed most of the
+gap; instead the ranking and magnitude are essentially unchanged.
+
+The allocation handicap itself was real and is not retracted: matching parameter
+counts between a 2D and a 3D hashgrid did award `pixel2d` roughly 19× more slots
+per distinct queried vertex on the original Kitchen configuration, and that was a
+genuine methodological defect in how the original R1 gate compared the two
+representations. What is corrected is only the causal inference drawn from it:
+the handicap was not the mechanism producing the negative result.
+
+### Diagnostic: vertex support explains the scene disagreement (hypothesis, not verified by intervention)
+
+Toy 64² passes and Kitchen 128² fails under the identical arm implementations and
+the identical fair-allocation protocol. Measuring how many pixels touch each
+finest-level grid vertex — directly from the path caches, for each scene's own
+finest resolution — shows a large difference in how well-determined each finest
+vertex is:
+
+| scene | vertices/pixel | median support | vertices touched by ≤1 pixel |
+|---|---:|---:|---:|
+| toy 64² | 3.35 | 2 px | 33.7% |
+| Kitchen 128² | 4.77 | 1 px | **59.1%** |
+
+On Kitchen, a majority of finest-level vertices are constrained by exactly one
+observed pixel: a free parameter fitted to a single sample, able to memorize that
+sample but with nothing forcing it to generalize to a neighboring one. This is
+**consistent with, but not established as the mechanism for**: (a) identical arm
+code passing on toy and failing on Kitchen; (b) the monotonic
+capacity-to-worse ordering observed on Kitchen — `world_sparse` (145k slots,
+−0.935 dB) < `world3d` (67k slots, −0.355 dB) < `world_normal_triplane` (55k
+slots, −0.064 dB) < `pixel2d` (26k slots, baseline 0 dB); and (c) why `pixel2d`
+itself is strong on Kitchen — at `finest_resolution=128` on a 128² image, every
+finest-level vertex is shared by roughly 4 neighboring pixels *by construction*,
+so screen-space encoding guarantees uniform support while world-space encoding,
+which follows scene geometry rather than the pixel grid, does not. This
+hypothesis has not been tested by intervention; see
+`docs/plans/2026-08-27-kitchen-parity-next-steps.md` for the falsifiable test.

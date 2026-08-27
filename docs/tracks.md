@@ -12,7 +12,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
 | 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
 | 6 | Scale & speed track | [scale-track.md](scale-track.md) | ✅ Complete locally — S1–S6 measured; CUDA stretch S7/S8 parked |
-| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ R1 not promoted (redesigned held-out-camera gate) — no arm passes on all 5 seeds; closed as a characterized negative with a G5 decomposition; R2 pilot remains an honest negative |
+| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ R1 not promoted (redesigned held-out-camera gate) — no arm passes on all 5 seeds; closed as a characterized negative with a G5 decomposition; R2 pilot remains an honest negative. Fair-allocation single-view parity re-measured on two scenes with opposite outcomes: all 3 world arms pass 5/5 on toy 64², none passes on Kitchen 128²; the earlier "19× allocation handicap explains the Kitchen negative" claim is retracted |
 
 ## How the phases connect
 
@@ -67,7 +67,13 @@ prompts (or, for phase 3, a decision document); each links its evidence into
    all 5 seeds; the sparse arm is the strongest and the only rotation-robust one.
    R1 therefore remains unpromoted, now closed as a characterized negative with a
    mandatory fallback decomposition; the R2 pilot is separately recorded as an
-   honest quality negative, so R3–R6 remain unpromoted.
+   honest quality negative, so R3–R6 remain unpromoted. A follow-up fair-allocation
+   parity re-measurement (each arm sized by its own occupancy rather than matched
+   to `pixel2d`'s parameter count, under the original unchanged −0.5 dB per-seed
+   gate) finds all three world arms pass 5/5 seeds on the toy scene but none
+   passes on Country Kitchen — and retracts the earlier claim that the ~19×
+   parameter-matching handicap explained the Kitchen negative, since removing that
+   handicap reproduces the same negative almost exactly.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware

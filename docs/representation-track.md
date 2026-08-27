@@ -8,7 +8,7 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| R1 | World-space encoding at parity | **not promoted (redesigned gate) — no arm clears held-out-camera generalization on all seeds; closed as a characterized negative** | `out/r1-encoding-redesign/report.json`, `docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`, `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1` |
+| R1 | World-space encoding at parity | **not promoted (redesigned gate) — no arm clears held-out-camera generalization on all seeds; closed as a characterized negative. Fair-allocation single-view parity now re-measured on two scenes with opposite outcomes: all 3 world arms pass 5/5 on toy 64², none passes on Kitchen 128²; the original allocation-handicap explanation for the Kitchen negative is retracted (see R1 parity re-measurement below)** | `out/r1-encoding-redesign/report.json`, `out/r1-parity/report.json`, `out/r1-parity-kitchen/report.json`, `docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`, `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1`, `docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128` |
 | R1 follow-up | Provenance, collision, and tri-plane diagnosis | **done — candidate not promoted**: tri-plane passes on 2/3 seeds, but fails the unchanged per-seed gate | `out/r1-followup/report.json`, `docs/plans/2026-07-27-r1-next-experiments.md` |
 | R1A | Five-seed variance decomposition | **candidate only**: target-scale world tri-plane passes all 5 original Kitchen seeds | `out/r1a/report.json`, `examples/r1a_variance.py` |
 | R1 promotion audit | R1C coordinate robustness + R1E independent scene | **not promoted — corrected R1C and R1E both contain binding failures** | `out/r1-promotion/report.json`, `examples/r1_promotion.py` |
@@ -152,15 +152,22 @@ allocation, and initialization against a single-view parity gate. The design in
 `docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`
 stops that tuning loop and re-diagnoses the problem instead.
 
-**The previous R1 negative is now explained, not just repeated.** Measured on the
-real 128² Country Kitchen cache, matching *parameter* budgets between `pixel2d`
-and `world3d` left `world3d`'s finest level with 4,096 slots against 78,084
-distinct queried vertices (0.052 slots per distinct vertex), while `pixel2d` at
-the same budget kept 16,384 slots against 16,641 distinct vertices (0.98 slots
-per distinct vertex) — a **~19× allocation handicap** awarded by the gate's own
-matching rule, not a defect in the 3D representation. The +88%-capacity
-diagnostic in the R1 failure analysis above closed only ~2× of a ~19× deficit,
-which is why more capacity never rescued the candidate.
+**Measured, not yet an explanation (corrected 2026-08-27 — see the R1 parity
+re-measurement section below).** Measured on the real 128² Country Kitchen
+cache, matching *parameter* budgets between `pixel2d` and `world3d` left
+`world3d`'s finest level with 4,096 slots against 78,084 distinct queried
+vertices (0.052 slots per distinct vertex), while `pixel2d` at the same budget
+kept 16,384 slots against 16,641 distinct vertices (0.98 slots per distinct
+vertex) — a **~19× allocation handicap** awarded by the gate's own matching
+rule, and a genuine methodological defect in how the original R1 comparison was
+set up. **This document previously claimed that handicap explained the original
+R1 Kitchen negative. That causal claim is retracted as of the fair-allocation
+re-measurement below: `world3d` given a fair, occupancy-sized allocation on
+Kitchen still fails at −0.355 dB mean, almost identical to the original
+handicapped −0.356 dB mean, and `world_sparse` given 5.5× the control's slots
+with zero collisions performs worst of all three arms.** The ~19× figure stands
+as a measured description of the original experiment's design flaw; it is no
+longer offered as the cause of the negative result.
 
 **The gate changed from single-view parity to held-out-camera generalization,
 and here is why.** At `finest_resolution=128` on a 128² render, `pixel2d`'s
@@ -230,6 +237,63 @@ blocked on R1. Full per-row numbers, the rotation table, and the G2 capacity
 accounting are in
 `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1`.
 
+## R1 parity re-measurement
+
+The redesign above re-specified promotion around held-out-camera generalization
+and left single-view parity unmeasured under a *fair* (non-parameter-matched)
+allocation — every prior parity measurement matched parameter counts, which is
+exactly the rule the design document identified as awarding `pixel2d` a ~19×
+per-vertex slot advantage. This section closes that gap: same **unchanged
+original R1 gate** (every seed's paired delta vs. same-run `pixel2d` ≥ −0.5 dB,
+not the campaign's 15 dB floor / 1.0 dB margin), same three world arms, run on
+two scenes with each arm sized by its own occupancy rather than matched to
+`pixel2d`'s parameter count. Full numbers, capacity tables, denoiser and
+hardware context are in
+`docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128`;
+reports are `out/r1-parity/report.json` (toy) and
+`out/r1-parity-kitchen/report.json` (Kitchen).
+
+**The two scenes give opposite answers, and the favorable one is not the whole
+story.** On toy 64², all three world arms pass 5/5 seeds against `pixel2d`:
+`world_sparse` mean +0.56 dB, `world_normal_triplane` +0.39 dB, `world3d`
++0.27 dB. On Kitchen 128², under the identical arms and protocol, **no arm
+passes**: `world_sparse` 3/5 (mean −0.935 dB), `world3d` 2/5 (mean −0.355 dB),
+`world_normal_triplane` 4/5 (mean −0.064 dB). A mean is not a pass under this
+gate either way — every number above is reported alongside its per-seed pass
+count, not in place of it.
+
+Toy capacity figures (trainable params / grid slots, recovered by summing
+checkpoint tensor `numel()` for float parameters — `report.json`'s own
+`parameter_count` field undercounts by 6 relative to the checkpoint, for
+reasons not further investigated) are: `pixel2d` 68,987 / 7,740; `world_sparse`
+and `world3d` 107,637 / 27,062; `world_normal_triplane` 81,997 / 14,754. On
+Kitchen, `world_sparse` reaches 145,010 slots — 5.5× the 26,289-slot control —
+with zero hash collisions by construction, and still performs worst of the
+three arms.
+
+**Correction — the allocation handicap does not explain the original Kitchen
+negative.** See the correction embedded in the R1 redesign section above and
+restated in `docs/performance.md`: `world3d`'s fair-allocation Kitchen mean
+(−0.355 dB) reproduces the original handicapped three-seed mean (−0.356 dB)
+almost exactly, and removing the handicap entirely (`world_sparse` at 5.5×
+slots) makes the result worse, not better. The ~19× figure remains a correct
+description of a real defect in the original matching rule; it is not the
+mechanism behind the negative.
+
+**A hypothesis for the scene disagreement, not yet tested by intervention.**
+Measuring how many pixels touch each finest-level grid vertex, directly from
+each scene's own cache: toy 64² has 3.35 vertices/pixel (median support 2 px,
+33.7% of vertices touched by ≤1 pixel); Kitchen 128² has 4.77 vertices/pixel
+(median support **1 px**, **59.1%** touched by ≤1 pixel). A majority of
+Kitchen's finest-level world-space vertices are fit to a single observed pixel
+— free to memorize, with nothing forcing generalization to a neighbor — while
+`pixel2d` at `finest_resolution=128` on a 128² image guarantees uniform ~4×
+support by construction (screen space ties vertex density to pixel density;
+world space does not). This is consistent with the toy/Kitchen split and with
+the monotonic capacity-to-worse ordering on Kitchen, but it has not been tested
+by an intervention that would falsify it. `docs/plans/2026-08-27-kitchen-parity-next-steps.md`
+proposes that test.
+
 ## R2 implementation and pilot
 
 The R2 machinery is implemented and measured, but the rung is not promoted because
@@ -271,6 +335,8 @@ UV_CACHE_DIR=.uv-cache uv run python examples/r1_worldgrid.py --devices cpu mps
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_failure_analysis.py --reuse
 UV_CACHE_DIR=.uv-cache uv run python examples/r1a_variance.py --seeds 0 1 2 3 4 --denoise-method oidn
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --gather-backend numpy --denoise-method oidn --workers 2
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4
 mise run test
 mise run lint
 mise run pipeline-audit
