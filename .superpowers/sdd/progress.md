@@ -159,3 +159,23 @@ Light-rotation fix: commit 80d07a6, review clean.
   campaign_peak proven bit-identical under rotation (gather_lights uses only relative
   geometry), so computing it once at rotation 0 is correct, not a shortcut.
   The buggy case is pinned as a permanent regression test.
+Task 12: complete (commit 7a69096) -- CHARACTERIZED NEGATIVE, no arm promoted.
+  Run 3 valid. All arms beat baseline on average (+1.88/+1.40/+1.41 dB) but G1 requires
+  >=1.0 dB on every one of 60 rows; 24-30 fell short. std ~1.9 dB vs a 1.0 dB per-row bar.
+  world_sparse strongest and uniquely frame-robust (+2.00/+1.83/+1.80 across rotations);
+  zero collisions measured; G5 shows fallback is NOT the limiter (out-occ 24.44 dB >
+  in-occ 23.46 dB), so the shortfall is uniform.
+  Zero rows failed the 15 dB floor -> outcome driven purely by the comparative margin.
+  pipeline-audit: only the pre-existing bedroom_cache.npz failure (verified by stashing).
+
+DEFERRED MINORS for final review triage:
+  1. capacity_report zero-vertex edge case untested (task 2)
+  2. arm C gradient test doesn't assert ZERO grad on non-selected planes (task 5)
+  3. test_default_is_bit_identical_... name overclaims vs its own assertions (task 7)
+  4. stop_reason raises AttributeError on a non-dict arm value (task 8)
+  5. corner-exactness uses _index as its own oracle; closed by task 1's reference test (task 10)
+  6. _predict duplicates relight's loop and drops TexturedQuadLight (task 11)
+  7. TorchNRP.load cannot reload occupancy-allocated arms -- PRODUCTION LIMITATION,
+     affects R5/R6 (task 11)
+  8. collision_by_arm echoes world_sparse into non-sparse arms' reports (cosmetic)
+  9. parameter_count absent from report.json; taken from run.log (task 12)
