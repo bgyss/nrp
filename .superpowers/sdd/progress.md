@@ -151,3 +151,11 @@ CAMPAIGN RUN 2 COMPLETE but INVALID -- evaluation lights were never rotated.
     world_sparse at 0 deg = mean +2.00 dB, worst -0.57 dB across 20 rows.
   SAME CLASS as the mirrored camera basis (task 7): an incomplete transform producing a
   plausible-looking experiment that measures the wrong thing. Neither crashed.
+Light-rotation fix: commit 80d07a6, review clean.
+  Reviewer built an independent world-coordinate enumeration: seg_origin, seg_dir,
+  position, normal all rotated; seg_tmax/albedo/depth/radius/rgb provably invariant;
+  world_bounds + occupancy rebuilt per rotation from already-rotated caches; light
+  center rotated (the fix); non-SphereLight raises TypeError instead of passing through.
+  campaign_peak proven bit-identical under rotation (gather_lights uses only relative
+  geometry), so computing it once at rotation 0 is correct, not a shortcut.
+  The buggy case is pinned as a permanent regression test.
