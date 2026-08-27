@@ -9,6 +9,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples.r1_encoding_redesign import (  # noqa: E402
+    ARM_ENCODING_CONFIG,
+    ARM_NAMES,
     camera_arc,
     campaign_peak,
     nearest_trained_camera,
@@ -16,6 +18,7 @@ from examples.r1_encoding_redesign import (  # noqa: E402
 from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
+from nrp.torch_backend.encoder_registry import encoder_schedule_params  # noqa: E402
 
 
 def _cache_with_throughput(value: float) -> PathCache:
@@ -160,6 +163,34 @@ class TestDeltaIsPeakInvariant(unittest.TestCase):
         # ...but the delta between them does not, which is what makes it safe for a
         # fixed campaign peak to change the absolute floor without touching G1's win.
         self.assertAlmostEqual(delta_a, delta_b, places=9)
+
+
+class TestArmEncodingConfigSharesResolutionSchedule(unittest.TestCase):
+    """The three arms must be compared on a COMMON resolution ladder (same
+    base_resolution/finest_resolution), even though their level counts and
+    parameter budgets are deliberately left unequal. An empty per-arm config
+    (falling through to that encoder class's own constructor default) is exactly
+    the bug this guards against -- each class's default schedule differs, which
+    would make any measured difference between arms inseparable from schedule and
+    capacity."""
+
+    def test_all_arms_resolve_to_the_same_base_and_finest_resolution(self):
+        schedules = {
+            name: encoder_schedule_params(name, ARM_ENCODING_CONFIG.get(name, {}))
+            for name in ARM_NAMES
+        }
+        bases = {base for _levels, base, _finest in schedules.values()}
+        finests = {finest for _levels, _base, finest in schedules.values()}
+        self.assertEqual(
+            bases,
+            {4},
+            f"arms disagree on base_resolution: {schedules}",
+        )
+        self.assertEqual(
+            finests,
+            {64},
+            f"arms disagree on finest_resolution: {schedules}",
+        )
 
 
 if __name__ == "__main__":

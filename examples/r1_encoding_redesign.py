@@ -69,16 +69,47 @@ N_TRAIN_CAMERAS = 8
 N_HELD_OUT_CAMERAS = 4
 N_EVAL_LIGHTS = 8
 
-#: Per-arm encoding overrides. Deliberately minimal: any key not listed here falls
-#: through to the registered encoder class's own constructor default, resolved by
-#: `encoder_schedule_params`/`build_encoder` -- re-declaring a schedule default here
-#: that merely repeats the class default was the exact duplication defect fixed in
-#: the previous task, so only genuine overrides (like world3d's occupancy opt-in)
-#: belong in this dict.
+#: Per-arm encoding overrides. Each arm's constructor default schedule differs
+#: (measured: world_sparse levels=8/finest=128, world_normal_triplane levels=3/
+#: finest=255, world3d levels=8/finest=255), so comparing arms with empty configs
+#: compares different resolution ladders and a 3x parameter spread -- any measured
+#: difference between arms is then inseparable from schedule and capacity, which
+#: defeats the point of the experiment. Every arm below is pinned to the SAME
+#: base_resolution=4, finest_resolution=64: finest=64 matches the 64^2 toy render
+#: resolution, so the finest level is about one vertex per pixel -- the same
+#: relationship the `pixel2d` baseline has to the image. Parameter counts are
+#: deliberately NOT matched across arms; matching parameters is what starved the
+#: original world3d experiment, and the remaining capacity spread is reported by
+#: gate G2 instead of hidden. `encoder_schedule_params`/`build_encoder` still
+#: resolve these dicts (explicit values win, anything omitted falls through to the
+#: class default) -- this is the single place the campaign's schedule is declared,
+#: not a bypass of that resolution path.
 ARM_ENCODING_CONFIG: dict[str, dict] = {
-    "world_sparse": {},
-    "world_normal_triplane": {},
-    "world3d": {"allocation": "occupancy"},
+    "world_sparse": {
+        "levels": 8,
+        "features_per_level": 2,
+        "base_resolution": 4,
+        "finest_resolution": 64,
+    },
+    # 4 levels, not 8: this arm reads a single 2D plane per point (picked by
+    # surface normal), so its capacity scales with plane count rather than the
+    # volumetric arms' level count -- kept asymmetric on purpose, common only in
+    # the resolution ladder (base/finest), not in level count.
+    "world_normal_triplane": {
+        "levels": 4,
+        "features_per_level": 2,
+        "table_size_log2": 14,
+        "base_resolution": 4,
+        "finest_resolution": 64,
+    },
+    "world3d": {
+        "levels": 8,
+        "features_per_level": 2,
+        "table_size_log2": 14,
+        "base_resolution": 4,
+        "finest_resolution": 64,
+        "allocation": "occupancy",
+    },
 }
 
 
