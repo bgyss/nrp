@@ -40,14 +40,34 @@ from ..path_cache import PathCache
 from ..train import ensure_cache, load_config
 from .denoise import denoise_image
 from .device import autocast, resolve_device, resolve_precision
+from .encoder_registry import (
+    SPATIAL_ENCODERS,
+    _ensure_loaded,
+    encoder_schedule_params,
+    encoder_wants_occupancy,
+)
 from .gather import TorchPathCache
 from .model import (
     LIGHT_PARAM_DIMS,
-    SUPPORTED_SPATIAL_ENCODINGS,
     TorchNRP,
+    _supported_spatial_encodings,
     relative_mse_loss,
 )
+from .occupancy import LevelOccupancy, grid_occupancy, level_resolutions, normalize_positions
 from .sampling import sample_light
+
+
+def world_encodings() -> frozenset[str]:
+    """Encodings that consume first-hit world positions rather than pixel coordinates.
+
+    Computed on every call (not frozen at import time) so a caller that imports this
+    module before every encoder has registered itself still sees the full set: the
+    registry is lazily populated (`encoder_registry._ensure_loaded`), so a
+    module-level snapshot taken at import time could silently miss arms registered
+    later in the same process.
+    """
+    _ensure_loaded()
+    return frozenset(name for name in SPATIAL_ENCODERS if name != "pixel2d")
 
 
 def light_param_vector(light) -> np.ndarray:
@@ -92,7 +112,7 @@ def spatial_tensors(
     xy, aux = pixel_tensors(cache, device)
     if spatial_encoding == "pixel2d":
         return xy, aux
-    if spatial_encoding in {"world3d", "world_triplane"}:
+    if spatial_encoding in world_encodings():
         return torch.as_tensor(
             cache.position.reshape(-1, 3), dtype=torch.float32, device=device
         ), aux
@@ -118,6 +138,74 @@ def world_bounds(cache: PathCache) -> dict:
     return {"min": lo.tolist(), "max": hi.tolist()}
 
 
+def configured_world_bounds(cache: PathCache, cfg: dict) -> dict:
+    """Use an explicit world normalization bound when an experiment supplies one."""
+    configured = cfg.get("model", {}).get("world_bounds")
+    if configured is None:
+        return world_bounds(cache)
+    if not isinstance(configured, dict) or set(configured) != {"min", "max"}:
+        raise ValueError("model.world_bounds must contain exactly 'min' and 'max'")
+    lower = np.asarray(configured["min"], dtype=np.float64)
+    upper = np.asarray(configured["max"], dtype=np.float64)
+    if lower.shape != (3,) or upper.shape != (3,):
+        raise ValueError("model.world_bounds min and max must each contain three values")
+    if not np.isfinite(lower).all() or not np.isfinite(upper).all():
+        raise ValueError("model.world_bounds must be finite")
+    if np.any(upper <= lower):
+        raise ValueError("model.world_bounds max must exceed min on every axis")
+    return {"min": lower.tolist(), "max": upper.tolist()}
+
+
+def build_single_cache_occupancy(
+    cache: PathCache,
+    spatial_encoding: str,
+    encoding_cfg: dict | None,
+    bounds: dict | None,
+) -> list[LevelOccupancy] | None:
+    """Occupancy of one cache's first-hit positions, or None if the arm doesn't need it.
+
+    Single-view counterpart of `conditioned_multiview.train_conditioned`'s occupancy
+    build: `world_sparse` always needs occupancy (`needs_occupancy=True`), and
+    `world3d` needs it only when its config sets `allocation: "occupancy"`.
+    `encoder_wants_occupancy` is the single source of truth for that decision so
+    this can never diverge from what `build_encoder` itself decides.
+    """
+    if spatial_encoding == "pixel2d":
+        return None
+    if not encoder_wants_occupancy(spatial_encoding, encoding_cfg):
+        return None
+    if bounds is None:
+        raise ValueError(f"spatial encoding {spatial_encoding!r} requires world_bounds")
+    levels, base_resolution, finest_resolution = encoder_schedule_params(
+        spatial_encoding, encoding_cfg
+    )
+    normalized = normalize_positions(cache.position.reshape(-1, 3), bounds)
+    return grid_occupancy(normalized, level_resolutions(levels, base_resolution, finest_resolution))
+
+
+def load_trained_model(path: str, cache: PathCache) -> TorchNRP:
+    """Load a `train()` checkpoint, rebuilding occupancy for arms that need one.
+
+    `TorchNRP.save`/`load` deliberately excludes occupancy from the persisted config
+    (it isn't JSON/tensor serializable), so `TorchNRP.load` alone raises for
+    `world_sparse` and any `allocation: "occupancy"` arm. This reproduces the exact
+    recipe `train()` used -- the same cache's first-hit positions, the same stored
+    `world_bounds`, the same encoder schedule -- so the reloaded encoder's table
+    layout is identical to the one the checkpoint's weights were trained against.
+    Arms that don't need occupancy (`pixel2d`, uniform `world3d`, ...) round-trip
+    through this exactly like plain `TorchNRP.load`.
+    """
+    blob = torch.load(path, map_location="cpu", weights_only=True)
+    config = dict(blob["config"])
+    occupancy = build_single_cache_occupancy(
+        cache, config["spatial_encoding"], config.get("encoding"), config.get("world_bounds")
+    )
+    model = TorchNRP(**config, occupancy=occupancy)
+    model.load_state_dict(blob["state_dict"])
+    model.eval()
+    return model
+
+
 def validate_torch_config(cfg: dict) -> str:
     """Validate and return the selected spatial encoding.
 
@@ -128,10 +216,10 @@ def validate_torch_config(cfg: dict) -> str:
     if not isinstance(model_cfg, dict):
         raise ValueError("config.model must be an object")
     selected = model_cfg.get("spatial_encoding", "pixel2d")
-    if selected not in SUPPORTED_SPATIAL_ENCODINGS:
+    if selected not in _supported_spatial_encodings():
         raise ValueError(
             "model.spatial_encoding must be one of "
-            f"{sorted(SUPPORTED_SPATIAL_ENCODINGS)}, got {selected!r}"
+            f"{sorted(_supported_spatial_encodings())}, got {selected!r}"
         )
     if selected != "pixel2d" and model_cfg.get("use_encoding", True) is False:
         raise ValueError(f"model.spatial_encoding {selected!r} requires use_encoding=true")
@@ -246,7 +334,15 @@ def _tonemap_srgb(img: np.ndarray) -> np.ndarray:
     return np.clip((img / (1.0 + img)) ** (1.0 / 2.2), 0.0, 1.0)
 
 
-def evaluate(model, val_set, xy, aux, device, hw: tuple[int, int] | None = None) -> list[dict]:
+def evaluate(
+    model,
+    val_set,
+    xy,
+    aux,
+    device,
+    hw: tuple[int, int] | None = None,
+    view_dir: torch.Tensor | None = None,
+) -> list[dict]:
     model.eval()
     metrics = []
     n_px = xy.shape[0]
@@ -255,7 +351,16 @@ def evaluate(model, val_set, xy, aux, device, hw: tuple[int, int] | None = None)
             params = torch.as_tensor(
                 light_param_vector(entry["light"]), dtype=torch.float32, device=device
             ).expand(n_px, -1)
-            pred = model(xy, aux, params).cpu().numpy().astype(np.float64)
+            pred = (
+                (
+                    model(xy, aux, params, view_dir=view_dir)
+                    if view_dir is not None
+                    else model(xy, aux, params)
+                )
+                .cpu()
+                .numpy()
+                .astype(np.float64)
+            )
             light = entry["light"]
             m = {
                 "light": light.to_dict() if hasattr(light, "to_dict") else None,
@@ -304,6 +409,10 @@ def train(cfg: dict, resume: bool = False) -> dict:
     cache = ensure_cache(cfg)
     n_px = cache.height * cache.width
     spatial, aux = spatial_tensors(cache, device, spatial_encoding)
+    bounds = configured_world_bounds(cache, cfg) if spatial_encoding != "pixel2d" else None
+    occupancy = build_single_cache_occupancy(
+        cache, spatial_encoding, cfg["model"].get("encoding"), bounds
+    )
 
     model = TorchNRP(
         light_type=cfg["light_type"],
@@ -312,7 +421,9 @@ def train(cfg: dict, resume: bool = False) -> dict:
         hidden_layers=cfg["model"].get("hidden_layers", 4),
         encoding=cfg["model"].get("encoding"),
         spatial_encoding=spatial_encoding,
-        world_bounds=world_bounds(cache) if spatial_encoding != "pixel2d" else None,
+        world_bounds=bounds,
+        occupancy=occupancy,
+        world_transform=cfg["model"].get("world_transform"),
         use_encoding=cfg["model"].get("use_encoding", True),
         use_aux=cfg["model"].get("use_aux", True),
         texture_kernel=cfg["model"].get("texture_conditioning") == "kernel",

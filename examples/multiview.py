@@ -211,6 +211,10 @@ def main() -> None:
                     "name": p["name"],
                     "model": f"{p['name']}/model.pt",
                     "cache": f"{p['name']}/path_cache.npz",
+                    "camera": {
+                        "origin": p["origin"],
+                        "target": p["target"],
+                    },
                 }
                 for p in poses
             ],

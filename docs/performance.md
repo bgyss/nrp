@@ -449,6 +449,57 @@ inference table above).
 view proxy — **0.76 MB total for all 3 views**, vs 3 path caches of 3.3–3.7 MB
 `.npz` each (10.5 MB total) that are *not* needed at edit time.
 
+## R2: One Network, N Cameras
+
+R2's implementation pilot uses one camera-conditioned `world3d` TorchNRP over the
+same three 48×48 Cornell-box camera caches used by the per-view baseline above. The
+pilot command was:
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r2_conditioned.py \
+  --out out/r2-conditioned/report.json --n-views 3 --width 48 --height 48 \
+  --spp 16 --bounces 4 --iters 3000 --devices cpu --denoise bilateral
+```
+
+Hardware context: macOS 27 arm64, Python 3.12.11, PyTorch 2.12.1, Mitsuba 3.9.0.
+LLVM and Metal initialization were unavailable in this run, so the Mitsuba export
+used the scalar CPU loop. The conditioned model receives global-bound first-hit
+world position, G-buffer aux, a normalized camera forward direction, and sphere
+light parameters. Each view's 12 validation lights are generated independently and
+are disjoint from the shared training-light vectors. The machine-readable report is
+`out/r2-conditioned/report.json`.
+
+**Per-view quality gate:** conditioned PSNR must be no more than 1 dB below the
+separate per-view baseline, evaluated on the same held-out light vectors.
+
+| view | per-view baseline (dB) | one conditioned network (dB) | delta (dB) | ≤1 dB gate |
+|---|---:|---:|---:|---|
+| view0 | 22.522 | 21.455 | −1.067 | **fail** |
+| view1 | 26.618 | 25.106 | −1.513 | **fail** |
+| view2 | 23.369 | 20.453 | −2.916 | **fail** |
+
+The local structural checks pass: all three camera pairs load, all validation sets
+are disjoint, and exactly one conditioned checkpoint serves all views. The quality
+gate is an honest negative, not averaged away across cameras; the worst view misses
+by 1.916 dB beyond the allowed loss.
+
+**Resident model memory:** one conditioned checkpoint is **0.375 MB**; the three
+per-view baseline checkpoints total **0.773 MB** (0.258 MB each). This measures
+model artifacts only, matching the existing multiview compactness convention; the
+precomputed per-view feature tensors are resident in both inference paths.
+
+**All-view edit latency:** 20 synchronized edits with 3 warmup iterations, CPU:
+
+| N views | conditioned network (ms/edit) | N per-view baselines (ms/edit) |
+|---:|---:|---:|
+| 1 | 8.05 | 4.66 |
+| 2 | 17.43 | 9.18 |
+| 3 | 25.49 | 13.67 |
+
+Both paths scale approximately linearly with N and touch no path segments during
+the timed proxy edit. This pilot implements the R2 machinery and records a measured
+negative, but it does not promote R1 or authorize the R3–R6 claims.
+
 ## Per-layer compositing NRPs (roadmap item 8, §6.1 / Fig. 11)
 
 The toy scene split into first-hit layers — foreground sphere vs background box
@@ -2847,5 +2898,289 @@ paper hardware results.
 The remaining bounded ladder is
 `docs/plans/2026-07-27-r1-next-experiments.md`: matched allocation/fusion sweeps,
 coordinate-rotation robustness, localized error analysis, then a second real scene.
-R2 remains blocked unless one world-anchored arm passes the unchanged −0.5 dB floor
-on every seed and both real scenes; this R1A result did not start R2.
+R2 remains blocked unless one world-anchored arm passes the unchanged −0.5 dB floor on every seed and both real scenes. R1A did not start R2; the later R2 implementation pilot is recorded separately as
+an honest negative. R2 remains blocked because the R1 promotion gate was not cleared.
+
+### R1 promotion audit: R1C coordinate robustness and R1E independent scene
+
+The target-scale `world_triplane` candidate from R1A was tested against the unchanged
+−0.5 dB per-seed rule. The canonical machine-readable result is
+`out/r1-promotion/report.json`; the corrected run used CPU, the NumPy gather backend,
+OIDN targets with one thread pinned for TBB/OIDN/OpenMP/MKL, 3,000 iterations, batch
+4,096, and the matched 106,239-parameter world-triplane / 106,085-parameter pixel2d
+pair.
+
+The complete R1C matrix is:
+
+| normalization | 0° pass count | 90° pass count | 180° pass count | worst delta (dB) |
+|---|---:|---:|---:|---:|
+| AABB | 5/5 | 3/5 | 3/5 | −3.651 |
+| 1st–99th percentile | 2/5 | 2/5 | 3/5 | −3.612 |
+
+The initial 90° AABB seed-2 measurement (−1.045 dB) was not valid promotion evidence
+because it mixed a Torch gather backend with process-variable OIDN output. With the
+execution contract fixed, that row is replaced by a reproducible −3.651 dB failure,
+and the full matrix still has binding per-seed failures. Percentile normalization
+also clamps 5.35% of first-hit positions outside its bounds.
+
+R1E independently re-traced the Mitsuba Bedroom gallery scene at 128² / 64 spp /
+4 bounces under the same corrected protocol. Its five paired deltas are +1.526,
++0.811, +0.142, +2.060, and **−3.083** dB for seeds 0–4; seed 4 fails. The final
+promotion field is `false`, and R1 remains unpromoted. The evidence is a measured
+robustness/generalization negative, not a claim that the world-triplane idea is
+uniformly invalid.
+
+## World-anchored encoding redesign (representation-track rung R1)
+
+The prior R1/R1A/R1C/R1E campaigns tuned capacity, tri-plane allocation, and
+initialization against a single-view parity gate without asking whether that gate
+measured anything a world-anchored encoder could plausibly win. The design in
+`docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`
+diagnosed why: matching a 106k-ish *parameter* budget between a 2D and a 3D
+hashgrid left the 3D grid's finest level with a ~19× worse allocation per queried
+vertex (0.98 slots/vertex for 2D's per-pixel table versus 0.052 for 3D on the real
+Country Kitchen cache), and the gate itself — single-view reconstruction — is the
+one task a per-pixel lookup table (`pixel2d` at these settings) is optimal at and
+cannot generalize past. This campaign re-specifies promotion around held-out-camera
+generalization and re-runs three arms once, honestly, against it.
+
+`mkdir -p out/r1-encoding-redesign && nohup uv run python
+examples/r1_encoding_redesign.py --out out/r1-encoding-redesign/report.json` ran
+the toy box at 64², 16 spp, 3,000 iterations, 5 seeds (0–4), 3 world rotations
+(0°/90°/180°) about the up axis, 8 training cameras and 4 held-out cameras on an
+arc (60 held-out rows per arm). Hardware: macOS 27 arm64, Python 3.12.13, PyTorch
+2.12.1, CPU only. The report is `out/r1-encoding-redesign/report.json`;
+`promoted: false`.
+
+**Two campaign runs were invalidated before this one, and are not discarded:**
+
+1. **Run 1** aborted ~40 minutes in. `ARM_ENCODING_CONFIG` passed empty dicts, so
+   each arm fell back to its own encoder class's constructor defaults, which
+   differ: `world_sparse` at levels=8/finest=128/108,057 params,
+   `world_normal_triplane` at levels=3/finest=255/158,717 params, `world3d` at
+   levels=8/finest=255/330,567 params — a ~3× parameter spread and three different
+   resolution schedules. Any arm-to-arm difference in that run was confounded with
+   schedule and capacity, not a representation finding. Fixed by pinning all arms
+   to a shared ladder (`base_resolution=4, finest_resolution=64`, one vertex per
+   pixel at the finest level, the same relationship `pixel2d` has), leaving
+   capacity honestly unequal and reported by G2 rather than matched.
+2. **Run 2** completed and produced a confident but invalid report, preserved at
+   `out/r1-encoding-redesign/report-INVALID-unrotated-lights.json`. Evaluation
+   lights were computed once per seed from the unrotated cache and reused at every
+   rotation, while geometry and camera were rotated — so at 90°/180° the light sat
+   in the wrong place relative to the rotated scene, a different physical setup
+   rather than a change of coordinate frame. Symptom: near-black references at
+   some held-out rows (e.g. psnr=52 dB against a 70 dB baseline), per-row deltas
+   ranging from −18.21 to +33.59 dB, and std of 5.97–7.25 dB across arms. Fixing
+   the light rotation (commit `80d07a6`) dropped std to ~1.9 dB and the worst
+   per-row delta from −18.21 to −1.51 dB.
+
+**Gate results (final, valid run), per arm, all 60 rows (5 seeds × 4 held-out
+cameras × 3 rotations):**
+
+| arm | mean Δ (dB) | worst Δ (dB) | std (dB) | rows failing G1 | seeds passing G3 | collisions |
+|---|---:|---:|---:|---:|---:|---:|
+| world_sparse (arm B) | +1.88 | −1.51 | 1.94 | 24/60 | 0/5 | 0.0% (measured) |
+| world_normal_triplane (arm C) | +1.40 | −2.25 | 1.99 | 29/60 | 0/5 | n/a (dense planes) |
+| world3d, occupancy-allocated (arm A) | +1.41 | −1.51 | 1.90 | 30/60 | 0/5 | n/a |
+
+`stop_reason`: "no arm passed G1 across all seeds, cameras, and orientations
+(world3d, world_normal_triplane, world_sparse); close as a characterized negative
+with the G5 decomposition." **No arm is promoted.** Across the three arms' 180
+rows (60 per arm), 83 fail G1 (24 + 29 + 30, per the table above), and every one
+of those 83 failing rows fails for the reason `below_delta_threshold`; zero rows
+fail the 15 dB absolute floor, so the floor is non-binding here and the outcome
+is driven entirely by the 1.0 dB comparative-margin gate. A favorable mean is not
+evidence: G3 requires every seed to pass, and none does for any arm.
+
+**G4 — rotation breakdown (mean Δ by world rotation, dB):**
+
+| arm | 0° | 90° | 180° |
+|---|---:|---:|---:|
+| world_sparse | +2.00 | +1.83 | +1.80 |
+| world_normal_triplane | +2.03 | +1.53 | +0.64 |
+| world3d | +2.42 | +0.98 | +0.83 |
+
+`world_sparse` is essentially flat across rotation — the exact-index sparse table
+carries no orientation-dependent collision structure, so it is frame-robust even
+though it still fails G1. Both hashed arms (`world_normal_triplane`, `world3d`)
+degrade markedly with rotation, consistent with hash-collision structure shifting
+under the world frame.
+
+**G5 — fallback decomposition (arm B / `world_sparse` only, mandatory).** Mean
+out-of-occupancy query fraction at held-out cameras is 0.446% (max 1.343%);
+mean in-occupancy PSNR is 23.46 dB versus mean out-of-occupancy PSNR of 24.44 dB
+— slightly *higher* out of occupancy. The sparse fallback (zero features at the
+finest level for a never-seen vertex) is therefore **not** the limiting factor:
+the shortfall against the `pixel2d` baseline is uniform across in- and
+out-of-occupancy pixels, not concentrated in unseen geometry.
+
+Caveat: this comparison is paired across all 60 rows, but the out-of-occupancy
+set is small — a mean of ≈18 pixels out of 4,096 per row (minimum 3). Treat the
+24.44 dB vs 23.46 dB comparison as indicative rather than a matched test; it is
+not a statistically powered claim that out-of-occupancy pixels render better.
+
+**G2 — capacity (reported, not gated).** Arms A (`world3d`, occupancy-allocated)
+and B (`world_sparse`) share the identical resolution ladder `[4, 5, 8, 13, 19,
+28, 43, 64]` and land at the identical parameter count, 145,187, differing only
+in hash-with-collisions (A) versus collision-free exact sparse index (B). Arm B's
+key arrays total 365,184 bytes across 45,648 occupied slots (0.0% collision by
+construction, asserted rather than merely reported). Arm C
+(`world_normal_triplane`) uses 4 dense 2D hashgrid levels per plane (3 planes,
+`[4, 10, 25, 63]`) for 82,375 parameters — lower purely because a tri-plane reads
+one plane per point rather than eight 3D corners.
+
+**Gate provenance.** The 15 dB absolute floor is invented for this campaign
+(chosen against measured trained-view quality of 19.17–22.16 dB at toy/kitchen
+scale, so it leaves room for genuine held-out-camera degradation while still
+rejecting a broken arm); the 1.0 dB comparative margin is inherited unchanged from
+the approved R2 ladder, not newly invented. Per-seed PSNR reference peak (max
+GATHERLIGHT radiance over trained views, linear units — `peak_by_seed` in the
+report) ranges 6.82–12.27 (seed 3 lowest, seed 0 highest) — these are diagnostic
+ceilings, not comparable to the held-out PSNRs above, which are measured against
+reconstructed images rather than this per-seed peak-signal figure.
+
+**Observed noise versus gate stringency.** Standard deviation across the 60 rows
+is ≈1.9 dB for every arm, against a 1.0 dB per-row margin that must hold on all 60
+rows simultaneously. This is an observation about how tight the comparative gate
+is relative to this scene's row-to-row noise, not an argument that the threshold
+should change — the 1.0 dB figure is an inherited convention, and no arm's
+failure pattern suggests the noise is a measurement artifact rather than real
+per-camera variation (G4's rotation breakdown shows the same arms failing worse
+at 90°/180°, which is structure, not noise).
+
+**Known production limitation, affecting later rungs.** `TorchNRP.load` cannot
+reload occupancy-allocated arms (`world3d` here): occupancy is computed from the
+path cache and is not stored in the checkpoint, so nothing sizes the tables
+before `load_state_dict`. This runner rebuilds occupancy from `config
+["world_bounds"]` plus `config["encoding"]` before loading. Other checkpoint
+consumers (relight, bench, WebGPU export) do not do this and cannot currently
+reload an occupancy-allocated model. This blocks R5/R6 until addressed.
+
+## R1 fair-allocation parity re-measurement (toy 64² and Kitchen 128²)
+
+The redesigned campaign above answers a held-out-camera generalization question;
+it does not re-measure single-view parity under a fair, non-parameter-matched
+allocation. This section does that on two scenes, under the **original,
+unchanged R1 gate** — every seed's paired PSNR delta versus a same-run `pixel2d`
+control must be ≥ −0.5 dB — not the campaign's 15 dB floor / 1.0 dB margin gate,
+which was invented specifically for held-out-camera evaluation and does not apply
+here. Evidence: `out/r1-parity/report.json` (toy) and
+`out/r1-parity-kitchen/report.json` (Kitchen). Hardware for both: Apple M1 Max,
+macOS 27.0 arm64, PyTorch 2.12.1, CPU. Both runs use OIDN-denoised training
+targets for Kitchen and the standard bilateral fallback for toy, 3,000
+iterations, batch 4,096, a 64-image pool, and the shared occupancy-based
+resolution ladder (`base_resolution=4`) rather than a matched parameter count —
+each arm is sized by how many grid vertices it actually needs, `pixel2d` included.
+
+### Toy 64² — all three world arms pass
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000
+```
+
+| arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB |
+|---|---|---:|---:|---:|
+| `world_sparse` | +0.75, −0.11, +0.62, +0.88, +0.68 | +0.56 | [+0.22, +0.80] | **5/5** |
+| `world_normal_triplane` | +0.41, −0.25, +0.32, +0.14, +1.31 | +0.39 | [−0.01, +0.90] | **5/5** |
+| `world3d` (occupancy-allocated) | +0.21, −0.04, +0.47, +0.02, +0.71 | +0.27 | [+0.03, +0.52] | **5/5** |
+
+All three world-anchored arms clear the −0.5 dB gate on every seed. Parameter
+and slot counts below are `report.json`'s own `parameter_count` and
+`capacity_report.total_slots` fields (`out/r1-parity/report.json`,
+`training_arms[*].parameter_count`), which count only `model.parameters()`.
+An earlier pass instead summed float tensor `numel()` over the checkpoint's
+`state_dict`, which also includes the non-trainable `world_min`/`world_extent`
+buffers (3 + 3 floats) that every world-anchored arm registers for its world
+bounds — `pixel2d` has no world bounds and so no such offset, which is why it
+alone showed no discrepancy. The counts below are the corrected,
+parameters-only figures:
+
+| arm | trainable params | grid slots |
+|---|---:|---:|
+| `pixel2d` (control) | 68,987 | 7,740 |
+| `world_sparse` | 107,631 | 27,062 |
+| `world3d` | 107,631 | 27,062 |
+| `world_normal_triplane` | 81,991 | 14,754 |
+
+### Kitchen 128² — no arm passes
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4
+```
+
+The control was verified to reproduce `examples/kitchen_torch.json` exactly:
+levels 8, features-per-level 2, `table_size_log2=14`, base resolution 4, finest
+resolution 128, **106,085 parameters** — the historical control figure used
+throughout this document. OIDN denoising, same 64-image pool and iteration count
+as toy.
+
+| arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | seeds passing −0.5 dB | trainable params | grid slots |
+|---|---|---:|---:|---:|---:|
+| `world_sparse` | +0.02, −0.36, −1.35, −0.17, −2.83 | **−0.935** | 3/5 | 343,527 | **145,010 (5.5× the control)** |
+| `world3d` (occupancy-allocated) | −1.26, −0.59, +0.56, +0.12, −0.61 | −0.355 | 2/5 | 187,103 | 66,926 (2.5×) |
+| `world_normal_triplane` | −0.47, +0.87, −0.65, −0.36, +0.28 | −0.064 | 4/5 | 162,037 | 54,777 (2.1×) |
+
+**No world arm passes.** All three fail at least one seed against the unchanged
+−0.5 dB gate, and `world_sparse` — with 5.5× the control's grid slots and zero
+hash collisions by construction — is the *worst* performer of the three.
+
+### Correction: the allocation handicap does not explain the original R1 negative
+
+`docs/representation-track.md` previously stated that the ~19× parameter-vs-slot
+allocation handicap (§"World-anchored encoding redesign" above) **explained**
+the original R1 Kitchen negative. **That causal claim is now falsified and is
+corrected here and in `docs/representation-track.md`, not softened.**
+
+`world3d`'s Kitchen mean under this fair, non-handicapped allocation is
+**−0.355 dB**, against the historical three-seed matched-budget mean of
+**−0.356 dB** (`docs/performance.md#r1-failure-analysis-three-seeds-initialization-capacity-and-tri-plane`)
+— the original result reproduces almost exactly once the handicap is removed.
+And `world_sparse`, given 5.5× the control's slots with zero collisions (the
+exact inverse of the original deficit), performs worst of the three arms. If the
+allocation handicap were the cause, removing it should have closed most of the
+gap; instead the ranking and magnitude are essentially unchanged.
+
+The allocation handicap itself was real and is not retracted: matching parameter
+counts between a 2D and a 3D hashgrid did award `pixel2d` roughly 19× more slots
+per distinct queried vertex on the original Kitchen configuration, and that was a
+genuine methodological defect in how the original R1 gate compared the two
+representations. What is corrected is only the causal inference drawn from it:
+the handicap was not the mechanism producing the negative result.
+
+### Diagnostic: vertex support explains the scene disagreement (hypothesis, not verified by intervention)
+
+Toy 64² passes and Kitchen 128² fails under the identical arm implementations and
+the identical fair-allocation protocol. Measuring how many pixels touch each
+finest-level grid vertex — directly from the path caches, for each scene's own
+finest resolution, via `examples/vertex_support.py` (reuses
+`nrp.torch_backend.occupancy`'s `normalize_positions`/`level_resolutions` and its
+corner enumeration, so it describes the same grid the encoders query) — shows a
+large difference in how well-determined each finest vertex is. Regenerate with:
+
+```sh
+uv run python examples/vertex_support.py --cache out/r1-encoding-redesign/seed0/train0.npz \
+  --levels 8 --base-resolution 4 --finest-resolution 64 --out out/vertex-support/toy64.json
+uv run python examples/vertex_support.py --cache out/kitchen/path_cache.npz \
+  --levels 8 --base-resolution 4 --finest-resolution 128 --out out/vertex-support/kitchen128.json
+```
+
+| scene | vertices/pixel | median support | vertices touched by ≤1 pixel | source |
+|---|---:|---:|---:|---|
+| toy 64² | 3.35 | 2 px | 33.7% | `out/vertex-support/toy64.json` (`finest`) |
+| Kitchen 128² | 4.77 | 1 px | **59.1%** | `out/vertex-support/kitchen128.json` (`finest`) |
+
+On Kitchen, a majority of finest-level vertices are constrained by exactly one
+observed pixel: a free parameter fitted to a single sample, able to memorize that
+sample but with nothing forcing it to generalize to a neighboring one. This is
+**consistent with, but not established as the mechanism for**: (a) identical arm
+code passing on toy and failing on Kitchen; (b) the monotonic
+capacity-to-worse ordering observed on Kitchen — `world_sparse` (145k slots,
+−0.935 dB) < `world3d` (67k slots, −0.355 dB) < `world_normal_triplane` (55k
+slots, −0.064 dB) < `pixel2d` (26k slots, baseline 0 dB); and (c) why `pixel2d`
+itself is strong on Kitchen — at `finest_resolution=128` on a 128² image, every
+finest-level vertex is shared by roughly 4 neighboring pixels *by construction*,
+so screen-space encoding guarantees uniform support while world-space encoding,
+which follows scene geometry rather than the pixel grid, does not. This
+hypothesis has not been tested by intervention; see
+`docs/plans/2026-08-27-kitchen-parity-next-steps.md` for the falsifiable test.

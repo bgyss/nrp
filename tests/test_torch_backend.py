@@ -40,6 +40,7 @@ from nrp.torch_backend.sampling import sample_light, sample_positions  # noqa: E
 from nrp.torch_backend.train import (  # noqa: E402
     light_param_vector,
     load_config,
+    load_trained_model,
     train,
     validate_torch_config,
 )
@@ -175,6 +176,51 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(out.shape, (9, 3))
             self.assertTrue(bool((out >= 0).all()), "softplus head must be non-negative")
 
+    def test_camera_conditioned_forward(self):
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world3d",
+            world_bounds={"min": [0, 0, 0], "max": [1, 1, 1]},
+            camera_conditioned=True,
+        )
+        xyz = torch.rand(5, 3)
+        aux = torch.rand(5, 7)
+        params = torch.rand(5, 4)
+        direction = torch.tensor([0.0, 0.0, -1.0])
+        broadcast = model(xyz, aux, params, direction)
+        repeated = model(xyz, aux, params, direction.expand(5, -1))
+        self.assertEqual(broadcast.shape, (5, 3))
+        torch.testing.assert_close(broadcast, repeated)
+        with self.assertRaisesRegex(ValueError, "requires view_dir"):
+            model(xyz, aux, params)
+        with self.assertRaisesRegex(ValueError, "shape"):
+            model(xyz, aux, params, torch.ones(5, 2))
+        with self.assertRaisesRegex(ValueError, "non-zero"):
+            model(xyz, aux, params, torch.zeros(3))
+
+    def test_camera_conditioned_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world3d",
+            world_bounds={"min": [0, 0, 0], "max": [1, 1, 1]},
+            camera_conditioned=True,
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        view_dir = torch.tensor([0.0, 0.0, -1.0])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertTrue(loaded.camera_conditioned)
+        self.assertTrue(loaded.config["camera_conditioned"])
+        torch.testing.assert_close(
+            model(xyz, aux, lp, view_dir), loaded(xyz, aux, lp, view_dir)
+        )
+
     def test_forward_shape_textured_quad_with_configured_param_dim(self):
         model = TorchNRP(
             light_type="textured_quad",
@@ -232,6 +278,47 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(loaded.spatial_encoding, "world_triplane")
         torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
 
+    def test_world_transform_maps_inputs_before_normalization(self):
+        common = {
+            "hidden_width": 8,
+            "hidden_layers": 1,
+            "encoding": {"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            "spatial_encoding": "world3d",
+            "world_bounds": {"min": [0, 0, 0], "max": [1, 1, 1]},
+        }
+        transformed = TorchNRP(
+            **common,
+            world_transform={"origin": [1, 0, 0], "basis": np.eye(3).tolist()},
+        )
+        raw = TorchNRP(**common)
+        for source, destination in zip(transformed.parameters(), raw.parameters(), strict=True):
+            destination.data.copy_(source.data)
+        xyz_raw = torch.tensor([[1.2, 0.3, 0.4], [1.7, 0.8, 0.1]])
+        xyz_transformed = xyz_raw - torch.tensor([1.0, 0.0, 0.0])
+        aux, lp = torch.rand(2, 7), torch.rand(2, 4)
+        lp_transformed = lp.clone()
+        lp_transformed[:, :3] -= torch.tensor([1.0, 0.0, 0.0])
+        torch.testing.assert_close(
+            transformed(xyz_raw, aux, lp), raw(xyz_transformed, aux, lp_transformed)
+        )
+
+    def test_world_transform_save_load_roundtrip(self):
+        model = TorchNRP(
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={"levels": 1, "features_per_level": 2, "finest_resolution": 4},
+            spatial_encoding="world_triplane",
+            world_bounds={"min": [0, 0, 0], "max": [1, 1, 1]},
+            world_transform={"origin": [1, 2, 3], "basis": np.eye(3).tolist()},
+        )
+        xyz, aux, lp = torch.rand(5, 3), torch.rand(5, 7), torch.rand(5, 4)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "model.pt")
+            model.save(path)
+            loaded = TorchNRP.load(path)
+        self.assertEqual(loaded.config["world_transform"]["origin"], [1.0, 2.0, 3.0])
+        torch.testing.assert_close(model(xyz, aux, lp), loaded(xyz, aux, lp))
+
     def test_spatial_encoding_config_validation(self):
         self.assertEqual(validate_torch_config({"model": {}}), "pixel2d")
         self.assertEqual(
@@ -282,6 +369,84 @@ class ModelTests(unittest.TestCase):
             report = train(cfg)
             model = TorchNRP.load(str(Path(tmp) / "out" / "model.pt"))
             cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
+            image = relight(model, cache, [light])
+        self.assertEqual(report["parameter_count"], model.parameter_count)
+        self.assertEqual(image.shape, (8, 8, 3))
+        self.assertTrue(np.isfinite(image).all())
+
+    def test_world_sparse_training_and_relight_smoke(self):
+        """world_sparse always needs occupancy; train() must build it, not just
+        world3d's opt-in occupancy allocation (see build_single_cache_occupancy)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 8, "height": 8, "spp": 2, "bounces": 1, "seed": 2},
+                "light_type": "sphere",
+                "light_bounds": {"radius_min": 0.05, "radius_max": 0.2},
+                "sampling": "segments",
+                "pool": {"size": 4, "replace_every": 5, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 10,
+                "batch_pixels": 64,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "spatial_encoding": "world_sparse",
+                    "encoding": {
+                        "levels": 2,
+                        "base_resolution": 2,
+                        "finest_resolution": 8,
+                    },
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+                "device": "cpu",
+            }
+            report = train(cfg)
+            cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            model = load_trained_model(str(Path(tmp) / "out" / "model.pt"), cache)
+            light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
+            image = relight(model, cache, [light])
+        self.assertEqual(report["parameter_count"], model.parameter_count)
+        self.assertEqual(image.shape, (8, 8, 3))
+        self.assertTrue(np.isfinite(image).all())
+
+    def test_world3d_occupancy_allocation_training_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 8, "height": 8, "spp": 2, "bounces": 1, "seed": 2},
+                "light_type": "sphere",
+                "light_bounds": {"radius_min": 0.05, "radius_max": 0.2},
+                "sampling": "segments",
+                "pool": {"size": 4, "replace_every": 5, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 10,
+                "batch_pixels": 64,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "spatial_encoding": "world3d",
+                    "encoding": {
+                        "levels": 2,
+                        "table_size_log2": 6,
+                        "base_resolution": 2,
+                        "finest_resolution": 8,
+                        "allocation": "occupancy",
+                    },
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+                "device": "cpu",
+            }
+            report = train(cfg)
+            cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            model = load_trained_model(str(Path(tmp) / "out" / "model.pt"), cache)
             light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
             image = relight(model, cache, [light])
         self.assertEqual(report["parameter_count"], model.parameter_count)

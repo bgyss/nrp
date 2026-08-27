@@ -201,6 +201,14 @@ run = "uv run python examples/r1_failure_analysis.py --reuse"
 description = "R1A five-seed paired representation and output-bias matrix (writes evidence before the no-candidate gate)"
 run = "uv run python examples/r1a_variance.py"
 
+[tasks.r1-promotion]
+description = "R1 promotion audit: coordinate robustness plus independent 128² real-scene confirmation"
+run = "uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --gather-backend numpy --workers 2"
+
+[tasks.r1-encoding-redesign]
+description = "R1 redesign: three encoding arms against the held-out-camera gate"
+run = "uv run python examples/r1_encoding_redesign.py --out out/r1-encoding-redesign/report.json"
+
 [tasks.viewer]
 description = "E6 exported-runtime headless viewer loop and parity report"
 run = "uv run python examples/engine_runtime.py --out out/engine-runtime/report.json"
@@ -260,6 +268,10 @@ run = "uv run python examples/layers.py --out out/layers/report.json"
 [tasks.multiview]
 description = "Multi-view NRPs (§6.1): export 3 cornell-box views, train per-view proxies, measure edit latency"
 run = "uv run python examples/multiview.py --out out/multiview/report.json"
+
+[tasks.r2-conditioned]
+description = "R2: one camera-conditioned NRP over the Cornell-box view manifest"
+run = "uv run python examples/r2_conditioned.py --out out/r2-conditioned/report.json"
 
 [tasks.ablation]
 description = "Table-2/Fig.-7 component ablation x spp sweep on the Mitsuba cornell box"

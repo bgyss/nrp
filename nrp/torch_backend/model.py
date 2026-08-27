@@ -18,6 +18,8 @@ Ablation switches (roadmap item 10, paper Table 2): `use_aux=False` drops the 7D
 G-buffer features and `use_encoding=False` feeds the raw 2D pixel coordinates instead
 of the hashgrid encoding. `forward` keeps its (spatial, aux, params) signature either
 way so training/relighting/inverse code is variant-agnostic; disabled inputs are ignored.
+R2 adds an opt-in `camera_conditioned` flag that appends a normalized camera forward
+direction to the model input while leaving the legacy three-argument call path intact.
 """
 
 from __future__ import annotations
@@ -28,11 +30,16 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 
-from .encoding import HashEncoding2D, HashEncoding3D, HashEncodingTriPlane
+from . import encoding as _encoding  # noqa: F401  # registers the built-in encoders
+from .encoder_registry import SPATIAL_ENCODERS, build_encoder
 
 LIGHT_PARAM_DIMS = {"sphere": 4, "quad": 8}
 SUPPORTED_LIGHT_TYPES = {"sphere", "quad", "textured_quad"}
-SUPPORTED_SPATIAL_ENCODINGS = {"pixel2d", "world3d", "world_triplane"}
+CAMERA_DIRECTION_DIM = 3
+
+
+def _supported_spatial_encodings() -> set[str]:
+    return set(SPATIAL_ENCODERS)
 
 
 def relative_mse_loss(pred: torch.Tensor, target: torch.Tensor, eps: float = 0.01) -> torch.Tensor:
@@ -56,6 +63,9 @@ class TorchNRP(nn.Module):
         encoding: dict | None = None,
         spatial_encoding: str = "pixel2d",
         world_bounds: dict | None = None,
+        occupancy=None,
+        world_transform: dict | None = None,
+        camera_conditioned: bool = False,
         use_encoding: bool = True,
         use_aux: bool = True,
         light_param_dim: int | None = None,
@@ -64,9 +74,9 @@ class TorchNRP(nn.Module):
         super().__init__()
         if light_type not in SUPPORTED_LIGHT_TYPES:
             raise ValueError(f"light_type must be one of {sorted(SUPPORTED_LIGHT_TYPES)}")
-        if spatial_encoding not in SUPPORTED_SPATIAL_ENCODINGS:
+        if spatial_encoding not in _supported_spatial_encodings():
             raise ValueError(
-                f"spatial_encoding must be one of {sorted(SUPPORTED_SPATIAL_ENCODINGS)}"
+                f"spatial_encoding must be one of {sorted(_supported_spatial_encodings())}"
             )
         if spatial_encoding != "pixel2d" and not use_encoding:
             raise ValueError(f"spatial_encoding {spatial_encoding!r} requires use_encoding=true")
@@ -93,6 +103,7 @@ class TorchNRP(nn.Module):
         self.light_param_dim = int(light_param_dim)
         self.texture_kernel = bool(texture_kernel)
         self.spatial_encoding = spatial_encoding
+        self.camera_conditioned = bool(camera_conditioned)
         self.use_encoding = use_encoding
         self.use_aux = use_aux
         if spatial_encoding != "pixel2d":
@@ -115,6 +126,34 @@ class TorchNRP(nn.Module):
             self.world_min = None
             self.world_extent = None
             normalized_bounds = None
+        if world_transform is not None and spatial_encoding == "pixel2d":
+            raise ValueError("world_transform requires a world spatial encoding")
+        if world_transform is None:
+            self.world_origin = None
+            self.world_basis = None
+            normalized_transform = None
+        else:
+            if not isinstance(world_transform, dict) or set(world_transform) != {
+                "origin",
+                "basis",
+            }:
+                raise ValueError("world_transform must contain exactly 'origin' and 'basis'")
+            origin = torch.as_tensor(world_transform["origin"], dtype=torch.float32)
+            basis = torch.as_tensor(world_transform["basis"], dtype=torch.float32)
+            if origin.shape != (3,):
+                raise ValueError("world_transform origin must contain three values")
+            if basis.shape != (3, 3):
+                raise ValueError("world_transform basis must have shape (3, 3)")
+            if not bool(torch.isfinite(origin).all() and torch.isfinite(basis).all()):
+                raise ValueError("world_transform must be finite")
+            if not bool(torch.allclose(basis.T @ basis, torch.eye(3), atol=1e-5)):
+                raise ValueError("world_transform basis must be orthonormal")
+            self.register_buffer("world_origin", origin)
+            self.register_buffer("world_basis", basis)
+            normalized_transform = {
+                "origin": origin.tolist(),
+                "basis": basis.tolist(),
+            }
         self.config = {
             "light_type": light_type,
             "light_param_dim": self.light_param_dim,
@@ -123,22 +162,25 @@ class TorchNRP(nn.Module):
             "encoding": encoding or {},
             "spatial_encoding": spatial_encoding,
             "world_bounds": normalized_bounds,
+            "world_transform": normalized_transform,
+            "camera_conditioned": self.camera_conditioned,
             "use_encoding": use_encoding,
             "use_aux": use_aux,
             "texture_kernel": self.texture_kernel,
         }
         if not use_encoding:
             self.encoding = None
-        elif spatial_encoding == "world3d":
-            self.encoding = HashEncoding3D(**(encoding or {}))
-        elif spatial_encoding == "world_triplane":
-            self.encoding = HashEncodingTriPlane(**(encoding or {}))
         else:
-            self.encoding = HashEncoding2D(**(encoding or {}))
+            self.encoding = build_encoder(spatial_encoding, encoding or {}, occupancy=occupancy)
         spatial_dim = self.encoding.output_dim if use_encoding else 2
         light_in_dim = 8 if self.texture_kernel else self.light_param_dim
         out_dim = self.light_param_dim - 8 if self.texture_kernel else 3
-        in_dim = spatial_dim + (7 if use_aux else 0) + light_in_dim
+        in_dim = (
+            spatial_dim
+            + (7 if use_aux else 0)
+            + (CAMERA_DIRECTION_DIM if self.camera_conditioned else 0)
+            + light_in_dim
+        )
         layers: list[nn.Module] = []
         for i in range(hidden_layers):
             layers.append(nn.Linear(in_dim if i == 0 else hidden_width, hidden_width))
@@ -177,14 +219,34 @@ class TorchNRP(nn.Module):
             last.weight.zero_()
             last.bias.fill_(inverse_softplus(target_scale))
 
+    def _transform_light_params(self, light_params: torch.Tensor) -> torch.Tensor:
+        """Map world-space light geometry into the optional canonical world frame."""
+        if self.world_origin is None:
+            return light_params
+        center = (light_params[:, :3] - self.world_origin) @ self.world_basis
+        if self.light_type == "sphere":
+            geometry = torch.cat([center, light_params[:, 3:]], dim=1)
+        else:
+            normal = light_params[:, 3:6] @ self.world_basis
+            geometry = torch.cat([center, normal, light_params[:, 6:]], dim=1)
+        if self.texture_kernel:
+            return torch.cat([geometry, light_params[:, 8:]], dim=1)
+        return geometry
+
     def forward(
-        self, spatial_coords: torch.Tensor, aux: torch.Tensor, light_params: torch.Tensor
+        self,
+        spatial_coords: torch.Tensor,
+        aux: torch.Tensor,
+        light_params: torch.Tensor,
+        view_dir: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Evaluate pixels from 2D coordinates or first-hit world positions.
 
         ``spatial_coords`` is ``(N, 2)`` normalized pixel xy for ``pixel2d`` and
         ``(N, 3)`` raw first-hit world position for ``world3d``. ``aux`` retains
-        the paper's seven albedo/depth/normal columns in both modes.
+        the paper's seven albedo/depth/normal columns in both modes. When R2 camera
+        conditioning is enabled, ``view_dir`` is a normalized camera forward vector
+        with shape ``(3,)`` or one vector per row with shape ``(N, 3)``.
         """
         if self.spatial_encoding != "pixel2d":
             if spatial_coords.ndim != 2 or spatial_coords.shape[1] != 3:
@@ -192,16 +254,60 @@ class TorchNRP(nn.Module):
                     f"{self.spatial_encoding} spatial_coords must have shape (N, 3), "
                     f"got {tuple(spatial_coords.shape)}"
                 )
-            normalized = ((spatial_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)
-            spatial = self.encoding(normalized)
+            world_coords = spatial_coords
+            if self.world_origin is not None:
+                world_coords = (world_coords - self.world_origin) @ self.world_basis
+            normalized = ((world_coords - self.world_min) / self.world_extent).clamp(0.0, 1.0)
+            if getattr(self.encoding, "needs_normals", False):
+                # aux columns are albedo(3) + depth(1) + normal(3); normals are the last 3.
+                normals = aux[:, 4:7]
+                if self.world_origin is not None:
+                    normals = normals @ self.world_basis
+                spatial = self.encoding(normalized, normals)
+            else:
+                spatial = self.encoding(normalized)
         else:
             spatial = self.encoding(spatial_coords) if self.encoding is not None else spatial_coords
+        light_params = self._transform_light_params(light_params)
+        camera = None
+        if self.camera_conditioned:
+            if view_dir is None:
+                raise ValueError("camera-conditioned model requires view_dir")
+            if view_dir.ndim == 1:
+                if view_dir.shape != (CAMERA_DIRECTION_DIM,):
+                    raise ValueError("view_dir must have shape (3,) or (N, 3)")
+                view_dir = view_dir.reshape(1, CAMERA_DIRECTION_DIM).expand(
+                    spatial_coords.shape[0], -1
+                )
+            elif view_dir.ndim != 2 or view_dir.shape != (
+                spatial_coords.shape[0],
+                CAMERA_DIRECTION_DIM,
+            ):
+                raise ValueError(
+                    f"view_dir must have shape (3,) or (N, 3), got {tuple(view_dir.shape)}"
+                )
+            if not bool(torch.isfinite(view_dir).all()):
+                raise ValueError("view_dir must be finite")
+            norm = torch.linalg.vector_norm(view_dir, dim=1, keepdim=True)
+            if bool((norm <= 1e-8).any()):
+                raise ValueError("view_dir must be non-zero")
+            camera = view_dir / norm
         if self.texture_kernel:
             geometry, texture = light_params[:, :8], light_params[:, 8:]
-            parts = [spatial, aux, geometry] if self.use_aux else [spatial, geometry]
+            parts = [spatial]
+            if self.use_aux:
+                parts.append(aux)
+            if camera is not None:
+                parts.append(camera)
+            parts.append(geometry)
             kernel = F.softplus(self.mlp(torch.cat(parts, dim=1)))
             return (kernel * texture).view(texture.shape[0], -1, 3).sum(dim=1)
-        parts = [spatial, aux, light_params] if self.use_aux else [spatial, light_params]
+        parts = [spatial]
+        if self.use_aux:
+            parts.append(aux)
+        if camera is not None:
+            parts.append(camera)
+        parts.append(light_params)
         return F.softplus(self.mlp(torch.cat(parts, dim=1)))
 
     def save(self, path: str) -> None:

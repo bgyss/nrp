@@ -1,0 +1,27 @@
+{
+  "scene": "examples/scenes/bedroom/scene.xml",
+  "resolution": [
+    128,
+    128
+  ],
+  "spp": 64,
+  "bounces": 4,
+  "seed": 0,
+  "mode": "scalar",
+  "variant": "scalar_rgb",
+  "segments": 3365679,
+  "trace_seconds": 56.91408604099706,
+  "wall_seconds": 69.8319052079969,
+  "cache_bytes": 145038007,
+  "peak_rss_bytes": 3034923008,
+  "hardware": {
+    "platform": "darwin",
+    "platform_release": "27.0.0",
+    "machine": "arm64",
+    "cpu": "arm",
+    "cpu_count": 10,
+    "memory_bytes": null
+  },
+  "move_shape": null,
+  "translate": null
+}

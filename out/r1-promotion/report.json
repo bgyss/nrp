@@ -1,0 +1,882 @@
+{
+  "experiment": "R1 promotion audit",
+  "rung": "R1",
+  "status": "candidate_not_promoted",
+  "candidate": {
+    "representation": "world_triplane",
+    "output_bias_policy": "target_scale",
+    "gate_threshold_db": -0.5,
+    "training_denoiser": {
+      "enabled": true,
+      "method": "oidn"
+    },
+    "gather_backend": "numpy"
+  },
+  "r1a": {
+    "report": "out/r1a/report.json",
+    "candidate_pass": true,
+    "source_report": "out/r1a/report.json"
+  },
+  "r1c": {
+    "source_command": "UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --out out/r1-promotion/r1c-fixed/report.json --seeds 0 1 2 3 4 --rotations 0 90 180 --bounds-modes aabb percentile --skip-r1e --denoise-method oidn --gather-backend numpy --workers 2",
+    "scene": "Country Kitchen",
+    "observed_rotations_degrees": [
+      0.0,
+      90.0,
+      180.0
+    ],
+    "observed_bounds_modes": [
+      "aabb",
+      "percentile"
+    ],
+    "expected_rotations_degrees": [
+      0.0,
+      90.0,
+      180.0
+    ],
+    "expected_bounds_modes": [
+      "aabb",
+      "percentile"
+    ],
+    "coverage_complete": true,
+    "runs": [
+      {
+        "seed": 0,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": -0.007760138539669503,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 1.0162116518186015,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 1.1184508896159866,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 0.06886294144645122,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "delta_db": 1.9609186703692878,
+        "gate_pass": true,
+        "source": "r1a"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 19.102936992297312,
+        "candidate_psnr_db": 17.74560123133003,
+        "delta_db": -1.3573357609672811,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 20.663360525410184,
+        "candidate_psnr_db": 19.88559831118181,
+        "delta_db": -0.7777622142283747,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed1"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 15.86719582689346,
+        "candidate_psnr_db": 15.79854815994558,
+        "delta_db": -0.0686476669478786,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 22.687968712202462,
+        "candidate_psnr_db": 20.40946080981462,
+        "delta_db": -2.2785079023878403,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 24.399708440677127,
+        "candidate_psnr_db": 26.273096527887606,
+        "delta_db": 1.8733880872104791,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed4"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 18.147660178615013,
+        "candidate_psnr_db": 17.8406438641157,
+        "delta_db": -0.307016314499311,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 18.308058952216033,
+        "candidate_psnr_db": 21.148903516998498,
+        "delta_db": 2.840844564782465,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed1"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 16.665145787601073,
+        "candidate_psnr_db": 13.013660481057856,
+        "delta_db": -3.6514853065432167,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 22.51093281238767,
+        "candidate_psnr_db": 21.13501710806806,
+        "delta_db": -1.3759157043196097,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 25.207811570032305,
+        "candidate_psnr_db": 25.368597051293303,
+        "delta_db": 0.1607854812609979,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed4"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 18.147660178615013,
+        "candidate_psnr_db": 17.944635940701726,
+        "delta_db": -0.2030242379132865,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 18.308058952216033,
+        "candidate_psnr_db": 18.625217125458764,
+        "delta_db": 0.3171581732427313,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed1"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 16.665145787601073,
+        "candidate_psnr_db": 15.393919669986404,
+        "delta_db": -1.2712261176146686,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 22.51093281238767,
+        "candidate_psnr_db": 20.639260938946347,
+        "delta_db": -1.871671873441322,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 25.207811570032305,
+        "candidate_psnr_db": 23.648417528452452,
+        "delta_db": -1.5593940415798535,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed4"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 17.989782257929242,
+        "candidate_psnr_db": 17.894914467266506,
+        "delta_db": -0.09486779066273598,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 19.64416208488918,
+        "candidate_psnr_db": 20.585453964667263,
+        "delta_db": 0.9412918797780812,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed1"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 17.8671941474389,
+        "candidate_psnr_db": 16.392911265945454,
+        "delta_db": -1.4742828814934477,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 22.517943886686385,
+        "candidate_psnr_db": 21.39898549679953,
+        "delta_db": -1.1189583898868563,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 24.58926280081825,
+        "candidate_psnr_db": 26.42584035844902,
+        "delta_db": 1.8365775576307684,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed4"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 17.989782257929242,
+        "candidate_psnr_db": 16.94043631599246,
+        "delta_db": -1.0493459419367817,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 19.64416208488918,
+        "candidate_psnr_db": 21.19735261275284,
+        "delta_db": 1.5531905278636593,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed1"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 17.8671941474389,
+        "candidate_psnr_db": 14.254776439167145,
+        "delta_db": -3.6124177082717566,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 22.517943886686385,
+        "candidate_psnr_db": 22.592783631840692,
+        "delta_db": 0.07483974515430702,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 24.58926280081825,
+        "candidate_psnr_db": 25.937787440050617,
+        "delta_db": 1.348524639232366,
+        "gate_pass": true,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed4"
+      }
+    ]
+  },
+  "r1e": {
+    "source_command": "UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --out out/r1-promotion/r1e-numpy-fixed/report.json --seeds 0 1 2 3 4 --skip-r1c --denoise-method oidn --gather-backend numpy --workers 2",
+    "scene": "Bedroom",
+    "runs": [
+      {
+        "seed": 0,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 19.113287769970846,
+        "candidate_psnr_db": 20.639654257291514,
+        "delta_db": 1.5263664873206686,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-numpy-fixed/r1e/seed0",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 24.08020913037841,
+        "candidate_psnr_db": 24.89102832938052,
+        "delta_db": 0.8108191990021112,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-numpy-fixed/r1e/seed1",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 24.036013234832055,
+        "candidate_psnr_db": 24.17762099757906,
+        "delta_db": 0.14160776274700382,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-numpy-fixed/r1e/seed2",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 18.98946676277969,
+        "candidate_psnr_db": 21.04962284811321,
+        "delta_db": 2.060156085333521,
+        "gate_pass": true,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-numpy-fixed/r1e/seed3",
+        "scene": "Bedroom"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 22.93078744388175,
+        "candidate_psnr_db": 19.847466103898164,
+        "delta_db": -3.0833213399835877,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-numpy-fixed/r1e/seed4",
+        "scene": "Bedroom"
+      }
+    ]
+  },
+  "promotion": {
+    "threshold_db": -0.5,
+    "r1a_pass": true,
+    "r1c_pass": false,
+    "r1e_pass": false,
+    "r1c_run_count": 30,
+    "r1e_run_count": 5,
+    "r1c_complete": true,
+    "r1e_complete": true,
+    "r1c_failures": [
+      {
+        "seed": 0,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 19.102936992297312,
+        "candidate_psnr_db": 17.74560123133003,
+        "delta_db": -1.3573357609672811,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed0"
+      },
+      {
+        "seed": 1,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 20.663360525410184,
+        "candidate_psnr_db": 19.88559831118181,
+        "delta_db": -0.7777622142283747,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed1"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 22.687968712202462,
+        "candidate_psnr_db": 20.40946080981462,
+        "delta_db": -2.2785079023878403,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -2.4913779385387897,
+            -0.020775999990291893,
+            -3.117299795150757
+          ],
+          "max": [
+            1.561534306332469,
+            3.227504037320614,
+            1.8786394020542503
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_0/percentile/seed3"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 16.665145787601073,
+        "candidate_psnr_db": 13.013660481057856,
+        "delta_db": -3.6514853065432167,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 22.51093281238767,
+        "candidate_psnr_db": 21.13501710806806,
+        "delta_db": -1.3759157043196097,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/aabb/seed3"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 16.665145787601073,
+        "candidate_psnr_db": 15.393919669986404,
+        "delta_db": -1.2712261176146686,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 22.51093281238767,
+        "candidate_psnr_db": 20.639260938946347,
+        "delta_db": -1.871671873441322,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed3"
+      },
+      {
+        "seed": 4,
+        "rotation_degrees": 90.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 25.207811570032305,
+        "candidate_psnr_db": 23.648417528452452,
+        "delta_db": -1.5593940415798535,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -3.117299795150757,
+            -0.020775999990291893,
+            -1.5615343063324691
+          ],
+          "max": [
+            1.8786394020542503,
+            3.227504037320614,
+            2.4913779385387897
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_90/percentile/seed4"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 17.8671941474389,
+        "candidate_psnr_db": 16.392911265945454,
+        "delta_db": -1.4742828814934477,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed2"
+      },
+      {
+        "seed": 3,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 22.517943886686385,
+        "candidate_psnr_db": 21.39898549679953,
+        "delta_db": -1.1189583898868563,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/aabb/seed3"
+      },
+      {
+        "seed": 0,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 17.989782257929242,
+        "candidate_psnr_db": 16.94043631599246,
+        "delta_db": -1.0493459419367817,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed0"
+      },
+      {
+        "seed": 2,
+        "rotation_degrees": 180.0,
+        "bounds_mode": "percentile",
+        "control_psnr_db": 17.8671941474389,
+        "candidate_psnr_db": 14.254776439167145,
+        "delta_db": -3.6124177082717566,
+        "gate_pass": false,
+        "candidate_bounds": {
+          "min": [
+            -1.5615343063324691,
+            -0.020775999990291893,
+            -1.87863940205425
+          ],
+          "max": [
+            2.4913779385387897,
+            3.227504037320614,
+            3.117299795150757
+          ]
+        },
+        "out_of_bounds_fraction": 0.05352783203125,
+        "output_dir": "out/r1-promotion/r1c-fixed/r1c/rotation_180/percentile/seed2"
+      }
+    ],
+    "r1e_failures": [
+      {
+        "seed": 4,
+        "rotation_degrees": 0.0,
+        "bounds_mode": "aabb",
+        "control_psnr_db": 22.93078744388175,
+        "candidate_psnr_db": 19.847466103898164,
+        "delta_db": -3.0833213399835877,
+        "gate_pass": false,
+        "candidate_bounds": null,
+        "out_of_bounds_fraction": 0.0,
+        "output_dir": "out/r1-promotion/r1e-numpy-fixed/r1e/seed4",
+        "scene": "Bedroom"
+      }
+    ],
+    "promoted": false
+  },
+  "stop_condition": "R1C fails the per-seed gate: 0\u00b0/percentile seed 0 delta -1.357 dB < -0.500 dB."
+}
