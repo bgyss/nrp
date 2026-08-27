@@ -12,7 +12,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
 | 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
 | 6 | Scale & speed track | [scale-track.md](scale-track.md) | ✅ Complete locally — S1–S6 measured; CUDA stretch S7/S8 parked |
-| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ R1 not promoted — corrected R1C and R1E contain binding per-seed failures; R2 pilot remains an honest negative |
+| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ R1 not promoted (redesigned held-out-camera gate) — no arm passes on all 5 seeds; closed as a characterized negative with a G5 decomposition; R2 pilot remains an honest negative |
 
 ## How the phases connect
 
@@ -58,9 +58,16 @@ prompts (or, for phase 3, a decision document); each links its evidence into
    direct 3D under both policies and framework-default tri-plane fail at least one
    seed. After correcting the gather/denoiser execution confound, the full R1C
    matrix still fails multiple orientation/normalization cells and R1E's
-   independent Bedroom scene fails seed 4 (−3.083 dB). R1 therefore remains
-   unpromoted; the R2 pilot is separately recorded as an honest quality negative,
-   so R3–R6 remain unpromoted.
+   independent Bedroom scene fails seed 4 (−3.083 dB). Rather than keep tuning past
+   that stop point, the R1 redesign re-diagnosed the negative as a ~19× allocation
+   handicap built into the parameter-matching rule and re-specified promotion around
+   held-out-camera generalization instead of single-view parity. Three redesigned
+   arms (collision-free sparse voxel, normal-aware tri-plane, occupancy-allocated
+   3D hash) all clear a positive mean delta against `pixel2d` but none passes on
+   all 5 seeds; the sparse arm is the strongest and the only rotation-robust one.
+   R1 therefore remains unpromoted, now closed as a characterized negative with a
+   mandatory fallback decomposition; the R2 pilot is separately recorded as an
+   honest quality negative, so R3–R6 remain unpromoted.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware

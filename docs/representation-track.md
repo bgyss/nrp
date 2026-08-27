@@ -8,7 +8,7 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| R1 | World-space encoding at parity | **not promoted — direct world3d negative; tri-plane candidate fails corrected R1C/R1E gates** | `out/r1-worldgrid/report.json`, `out/r1-followup/report.json`, `out/r1-promotion/report.json`, `docs/performance.md#world-space-encoding-at-parity-representation-track-rung-r1` |
+| R1 | World-space encoding at parity | **not promoted (redesigned gate) — no arm clears held-out-camera generalization on all seeds; closed as a characterized negative** | `out/r1-encoding-redesign/report.json`, `docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`, `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1` |
 | R1 follow-up | Provenance, collision, and tri-plane diagnosis | **done — candidate not promoted**: tri-plane passes on 2/3 seeds, but fails the unchanged per-seed gate | `out/r1-followup/report.json`, `docs/plans/2026-07-27-r1-next-experiments.md` |
 | R1A | Five-seed variance decomposition | **candidate only**: target-scale world tri-plane passes all 5 original Kitchen seeds | `out/r1a/report.json`, `examples/r1a_variance.py` |
 | R1 promotion audit | R1C coordinate robustness + R1E independent scene | **not promoted — corrected R1C and R1E both contain binding failures** | `out/r1-promotion/report.json`, `examples/r1_promotion.py` |
@@ -144,6 +144,90 @@ The exact execution correction resolved the earlier backend/process confound, bu
 it did not rescue the candidate: R1C remains coordinate-sensitive and R1E fails
 one independent-scene seed. R1 is therefore not promoted. R2's measured quality
 negative and the R3–R6 promotion gates remain unchanged.
+
+## R1 redesign
+
+The three campaigns above (R1, R1A, R1 promotion audit) tuned capacity, tri-plane
+allocation, and initialization against a single-view parity gate. The design in
+`docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`
+stops that tuning loop and re-diagnoses the problem instead.
+
+**The previous R1 negative is now explained, not just repeated.** Measured on the
+real 128² Country Kitchen cache, matching *parameter* budgets between `pixel2d`
+and `world3d` left `world3d`'s finest level with 4,096 slots against 78,084
+distinct queried vertices (0.052 slots per distinct vertex), while `pixel2d` at
+the same budget kept 16,384 slots against 16,641 distinct vertices (0.98 slots
+per distinct vertex) — a **~19× allocation handicap** awarded by the gate's own
+matching rule, not a defect in the 3D representation. The +88%-capacity
+diagnostic in the R1 failure analysis above closed only ~2× of a ~19× deficit,
+which is why more capacity never rescued the candidate.
+
+**The gate changed from single-view parity to held-out-camera generalization,
+and here is why.** At `finest_resolution=128` on a 128² render, `pixel2d`'s
+finest level is dense with zero collisions everywhere except level 7, which lands
+at exactly one hashgrid vertex per pixel — a free per-pixel lookup table. Asking
+a world-anchored encoder to match that at single-view reconstruction asks it to
+match a memorizer at the one task a memorizer is unbeatable at, and the one task
+where it cannot generalize to any other camera at all. R1's redesigned G1 gate
+instead requires beating `pixel2d` by a comparative margin (1.0 dB, unchanged
+from the R2 ladder) *and* clearing an absolute 15 dB PSNR floor (new to this
+campaign — see provenance below), at held-out cameras never used for training,
+across 5 seeds and 3 world rotations, with no averaging.
+
+**Outcome, per arm, against G1/G3/G4 — no averaging away of failures:**
+
+| arm | rows failing G1 (of 60) | seeds passing G3 (of 5) | worst Δ across rotations |
+|---|---:|---:|---:|
+| `world_sparse` (arm B, primary) | 24 | 0 | −1.51 dB (rotation 90°, seed 4) |
+| `world_normal_triplane` (arm C) | 29 | 0 | −2.25 dB (rotation 0°, seed 4) |
+| `world3d`, occupancy-allocated (arm A, control) | 30 | 0 | −1.51 dB |
+
+All 60 failing rows across all three arms fail for the reason
+`below_delta_threshold` — none fails the 15 dB absolute floor, so the floor was
+not the binding constraint for any arm. Mean deltas are positive for every arm
+(+1.88, +1.40, +1.41 dB respectively), and every arm still fails because G3
+requires every one of 5 seeds to pass and none does. **A favorable mean is not
+evidence of a pass.**
+
+**`world_sparse` is the strongest arm and the only frame-robust one, while still
+not clearing the bar.** Its mean delta is highest (+1.88 dB) and its per-rotation
+mean is nearly flat — +2.00 / +1.83 / +1.80 dB at 0°/90°/180° — because its
+collision-free exact index has no orientation-dependent hash structure to
+degrade. Both hashed arms degrade with rotation instead (triplane: +2.03 / +1.53
+/ +0.64 dB; world3d: +2.42 / +0.98 / +0.83 dB). The mandatory G5 decomposition
+for `world_sparse` rules out its own sparse-fallback mechanism as the cause of
+the shortfall: mean out-of-occupancy query fraction at held-out cameras is only
+0.446% (max 1.343%), and out-of-occupancy PSNR (24.44 dB) is *higher* than
+in-occupancy PSNR (23.46 dB) — the gap to the gate is uniform, not concentrated
+in unseen geometry.
+
+**Gate provenance.** The 1.0 dB comparative margin is the existing R2 convention,
+not invented for this campaign. The 15 dB absolute floor is invented for this
+campaign, chosen against measured trained-view quality of 19.17–22.16 dB at this
+scale so a held-out camera could show genuine degradation without automatically
+failing on threshold choice alone; it turned out non-binding, so the outcome is
+driven entirely by the inherited 1.0 dB margin against ≈1.9 dB of row-to-row
+noise on all three arms.
+
+**Two campaign runs were spent and invalidated before the result above.** Run 1
+(~40 minutes, aborted) let each arm fall back to differing encoder-class defaults
+— a ~3× parameter spread and three different resolution schedules — so any
+arm-to-arm difference was confounded with capacity and schedule, not
+representation. Run 2 completed but computed evaluation lights once per seed from
+the unrotated cache and reused them at every rotation, so at 90°/180° the light
+sat in the wrong place relative to the rotated geometry (a different physical
+setup, not a frame change); it produced near-black references at some rows and
+per-row deltas up to −18.21 dB, preserved at
+`out/r1-encoding-redesign/report-INVALID-unrotated-lights.json` rather than
+discarded. Both are recorded so the cost of getting a comparative experiment
+wrong is visible, not just the final valid number.
+
+**Per gate spec, no fourth arm, threshold widening, seed drop, or rotation-set
+change follows this result.** `promoted: false` and `stop_reason` in
+`out/r1-encoding-redesign/report.json` record the stop condition; R2–R6 remain
+blocked on R1. Full per-row numbers, the rotation table, and the G2 capacity
+accounting are in
+`docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1`.
 
 ## R2 implementation and pilot
 
