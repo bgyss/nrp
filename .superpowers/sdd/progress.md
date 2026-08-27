@@ -134,3 +134,20 @@ CAMPAIGN RUN 1 ABORTED at 18:10 (~40 min in) -- CONFOUND, not a crash.
   world3d). It does NOT license differing RESOLUTION SCHEDULES. Corrected to a common
   ladder (base 4, finest 64 == the 64^2 render resolution, ~one vertex per pixel, the
   same relationship pixel2d has), capacity left unequal and reported by G2.
+
+CAMPAIGN RUN 2 COMPLETE but INVALID -- evaluation lights were never rotated.
+  Report preserved as out/r1-encoding-redesign/report-INVALID-unrotated-lights.json
+  main() computes eval_lights ONCE per seed from the UNROTATED cache (~line 461) and
+  reuses it for every rotation (~line 543). transform_cache rotates geometry and
+  rotated_camera rotates the camera, but the light stays at its original world position
+  -> at 90/180 deg the light sits wrong relative to the rotated scene. That is a
+  DIFFERENT PHYSICAL SETUP, not a change of coordinate frame, so G4 measured nothing
+  meaningful and G1 was contaminated (it pools all rotations).
+  Signature: delta_db by rotation -- 0 deg mean +2.00 min -0.57 (healthy);
+    90 deg min -7.14; 180 deg mean -1.31 min -18.21 max +33.59.
+    Worst rows show psnr=52 dB vs baseline=70 dB, i.e. near-BLACK references where
+    trivial differences produce huge dB swings.
+  The 0-degree rows are the only valid data in run 2 and they look encouraging:
+    world_sparse at 0 deg = mean +2.00 dB, worst -0.57 dB across 20 rows.
+  SAME CLASS as the mirrored camera basis (task 7): an incomplete transform producing a
+  plausible-looking experiment that measures the wrong thing. Neither crashed.
