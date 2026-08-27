@@ -345,7 +345,7 @@ def evaluate_camera(
     return row
 
 
-def campaign_peak(trained_caches: list[PathCache], lights: list) -> float:
+def campaign_peak(trained_caches: list[PathCache], lights: list, seed: int | None = None) -> float:
     """The single fixed PSNR peak for one seed's whole campaign.
 
     `psnr` defaults its peak to *the reference image's own max* (documented HDR
@@ -359,8 +359,25 @@ def campaign_peak(trained_caches: list[PathCache], lights: list) -> float:
     held-out references never influence the scale the held-out cameras are judged on
     -- makes the absolute floor comparable across cameras while leaving the delta
     numerically unchanged (it never depended on the peak to begin with).
+
+    A campaign runs unattended for hours across many seeds; a silently corrupted peak
+    (all-zero or non-finite trained references) would propagate as -inf/NaN PSNR into
+    every row for that seed and only surface at the end of the run. Fail immediately
+    instead.
     """
-    return max(float(gather_lights(cache, lights).max()) for cache in trained_caches)
+    if not trained_caches:
+        raise ValueError(
+            f"campaign_peak: no trained caches provided for seed={seed!r}; "
+            "cannot compute a PSNR peak from an empty campaign"
+        )
+    peak = max(float(gather_lights(cache, lights).max()) for cache in trained_caches)
+    if not np.isfinite(peak) or peak <= 0.0:
+        raise ValueError(
+            f"campaign_peak: computed peak {peak!r} for seed={seed!r} is not finite and "
+            "positive (trained GATHERLIGHT references may be all-zero or non-finite); "
+            "refusing to propagate a corrupted peak into every PSNR for this seed"
+        )
+    return peak
 
 
 def _sparse_collision_fraction(capacity_report: dict) -> float:
@@ -412,7 +429,9 @@ def main(argv: list[str] | None = None) -> int:
         cache_paths = export_arc(trained + held_out, seed_dir, args)
         eval_lights = frozen_lights(PathCache.load(str(cache_paths[trained[0]["name"]])), seed)
         seed_peak = campaign_peak(
-            [PathCache.load(str(cache_paths[camera["name"]])) for camera in trained], eval_lights
+            [PathCache.load(str(cache_paths[camera["name"]])) for camera in trained],
+            eval_lights,
+            seed=seed,
         )
         peak_by_seed[seed] = seed_peak
 

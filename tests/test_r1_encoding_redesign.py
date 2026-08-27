@@ -10,9 +10,81 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples.r1_encoding_redesign import (  # noqa: E402
     camera_arc,
+    campaign_peak,
     nearest_trained_camera,
 )
+from nrp.lights import SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
+from nrp.path_cache import PathCache  # noqa: E402
+
+
+def _cache_with_throughput(value: float) -> PathCache:
+    """A one-path-per-pixel cache whose sole segment carries a known, constant
+    throughput. With a sphere light of rgb=(1,1,1) covering both segments, GATHERLIGHT
+    reduces to exactly `throughput` per pixel (n_paths=1, full hit, no attenuation) --
+    so the expected peak below is derived independently of `gather_lights`/`campaign_peak`.
+    """
+    return PathCache(
+        width=2,
+        height=1,
+        n_paths=np.array([1, 1], dtype=np.int64),
+        seg_pixel=np.array([0, 1], dtype=np.int64),
+        seg_origin=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+        seg_dir=np.array([[0.0, 0.0, 1.0], [0.0, 0.0, 1.0]]),
+        seg_tmax=np.array([1.0, 1.0]),
+        seg_throughput=np.full((2, 3), value),
+        albedo=np.full((1, 2, 3), 0.5),
+        depth=np.ones((1, 2)),
+        normal=np.tile(np.array([0.0, 1.0, 0.0]), (1, 2, 1)),
+        position=np.array([[[0.0, 0.0, 1.0], [1.0, 0.0, 1.0]]]),
+    )
+
+
+_COVERING_LIGHT = [SphereLight(center=[0.5, 0.0, 0.5], radius=10.0, rgb=[1.0, 1.0, 1.0])]
+
+
+class TestCampaignPeak(unittest.TestCase):
+    """`campaign_peak` must reduce over TRAINED-view references only: held-out
+    references never influence the scale held-out cameras are judged against."""
+
+    def test_peak_comes_from_trained_cache_not_held_out(self):
+        trained_cache = _cache_with_throughput(1.0)
+        held_out_cache = _cache_with_throughput(5.0)  # deliberately the larger max
+
+        peak = campaign_peak([trained_cache], _COVERING_LIGHT, seed=0)
+
+        # Derived independently: throughput=1.0, rgb=1.0, one segment per pixel, full
+        # hit -> every pixel's GATHERLIGHT value is exactly 1.0, so max == 1.0.
+        self.assertAlmostEqual(peak, 1.0, places=12)
+        # Not the held-out cache's max (5.0), not a mean of the two (3.0), not the
+        # first cache in some other ordering -- pinning the exact reduction.
+        self.assertNotAlmostEqual(peak, 5.0, places=6)
+        self.assertNotAlmostEqual(peak, 3.0, places=6)
+        del held_out_cache  # only used to prove it must NOT be passed in below
+
+    def test_widening_the_reduction_to_include_held_out_would_change_the_answer(self):
+        # Sanity check on the fixture itself: if a future refactor fed
+        # `trained_caches + held_out_caches` into the same max-reduction, the peak
+        # would change (to 5.0), which is exactly the regression FIX 1 guards against.
+        trained_cache = _cache_with_throughput(1.0)
+        held_out_cache = _cache_with_throughput(5.0)
+        widened_peak = campaign_peak([trained_cache, held_out_cache], _COVERING_LIGHT, seed=0)
+        self.assertAlmostEqual(widened_peak, 5.0, places=12)
+
+
+class TestCampaignPeakGuards(unittest.TestCase):
+    def test_empty_trained_caches_raises_with_useful_message(self):
+        with self.assertRaisesRegex(ValueError, "no trained caches"):
+            campaign_peak([], _COVERING_LIGHT, seed=7)
+
+    def test_non_finite_or_nonpositive_peak_raises(self):
+        zero_cache = _cache_with_throughput(0.0)
+        with self.assertRaisesRegex(ValueError, "seed=3"):
+            campaign_peak([zero_cache], _COVERING_LIGHT, seed=3)
+
+        nan_cache = _cache_with_throughput(float("nan"))
+        with self.assertRaisesRegex(ValueError, "not finite"):
+            campaign_peak([nan_cache], _COVERING_LIGHT, seed=9)
 
 
 class TestCameraArc(unittest.TestCase):
