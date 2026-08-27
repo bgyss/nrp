@@ -443,8 +443,12 @@ def main() -> None:
             "device": "cpu",
         },
         extra={
+            # Record every argument that distinguishes this run, including --cache and
+            # --out-dir. A command string missing those silently reproduces a DIFFERENT
+            # scene while appearing to reproduce this one.
             "command": (
                 "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
+                f"--cache {args.cache} --out-dir {args.out_dir} "
                 f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters} "
                 f"--finest-resolution {args.finest_resolution} "
                 f"--base-resolution {args.base_resolution}"
