@@ -13,12 +13,14 @@ that failed one; a negative is a valid result here.
 Design (single view, no camera arc, no rotations):
   - Arms: pixel2d (control), world_sparse, world_normal_triplane, world3d
     (allocation="occupancy").
-  - Every arm shares base_resolution=4, finest_resolution=64 (64 matches the 64^2
-    render, so pixel2d's natural one-vertex-per-pixel relationship to the image is
-    mirrored by the world arms' finest level). Levels/table_size_log2 differ only
-    where the arm's own geometry requires it (world_normal_triplane reads one plane
-    per point, so it gets 4 levels; world_sparse has no dense/hashed table to size,
-    so it has no table_size_log2).
+  - Every arm shares the same base_resolution/finest_resolution ladder
+    (--base-resolution, --finest-resolution; defaults 4/64). finest_resolution is
+    chosen to match the render's pixel dimension (64 for the 64^2 toy render, 128 for
+    the 128^2 Kitchen render), so pixel2d's natural one-vertex-per-pixel relationship
+    to the image is mirrored by the world arms' finest level. Levels/table_size_log2
+    differ only where the arm's own geometry requires it (world_normal_triplane reads
+    one plane per point, so it gets 4 levels; world_sparse has no dense/hashed table
+    to size, so it has no table_size_log2).
   - Capacity is NOT matched -- matching it is precisely what invalidated the
     original R1 measurement. Each arm's parameter count and capacity_report() are
     recorded instead.
@@ -78,52 +80,74 @@ ARMS = (CONTROL_ARM, *WORLD_ARMS)
 #: single-view design (no camera arc, no rotations).
 DEFAULT_CACHE = "out/r1-encoding-redesign/seed0/train0.npz"
 
-#: Common resolution ladder for every arm, including the control: base_resolution=4,
-#: finest_resolution=64 (one vertex per pixel at the finest level, matching pixel2d's
-#: natural relationship to the 64^2 render). Per-arm level counts and table sizes
-#: differ only where the arm's own geometry requires it -- see the module docstring.
-ARM_MODELS: dict[str, dict] = {
-    "pixel2d": {
-        "spatial_encoding": "pixel2d",
-        "encoding": {
-            "levels": 8,
-            "features_per_level": 2,
-            "table_size_log2": 14,
-            "base_resolution": 4,
-            "finest_resolution": 64,
+#: Default resolution ladder, preserved exactly: base_resolution=4, finest_resolution=64
+#: (one vertex per pixel at the finest level, matching pixel2d's natural relationship
+#: to the 64^2 toy render). Callers that need a different render resolution (e.g. 128
+#: for Kitchen) build a fresh ladder with `build_arm_models`.
+DEFAULT_BASE_RESOLUTION = 4
+DEFAULT_FINEST_RESOLUTION = 64
+
+
+def build_arm_models(
+    *,
+    base_resolution: int = DEFAULT_BASE_RESOLUTION,
+    finest_resolution: int = DEFAULT_FINEST_RESOLUTION,
+) -> dict[str, dict]:
+    """Build the per-arm model configs for a given base/finest resolution ladder.
+
+    Every arm shares `base_resolution`/`finest_resolution`, including the control.
+    Per-arm level counts and table sizes differ only where the arm's own geometry
+    requires it -- see the module docstring -- and are NOT touched here.
+    """
+    return {
+        "pixel2d": {
+            "spatial_encoding": "pixel2d",
+            "encoding": {
+                "levels": 8,
+                "features_per_level": 2,
+                "table_size_log2": 14,
+                "base_resolution": base_resolution,
+                "finest_resolution": finest_resolution,
+            },
         },
-    },
-    "world_sparse": {
-        "spatial_encoding": "world_sparse",
-        "encoding": {
-            "levels": 8,
-            "features_per_level": 2,
-            "base_resolution": 4,
-            "finest_resolution": 64,
+        "world_sparse": {
+            "spatial_encoding": "world_sparse",
+            "encoding": {
+                "levels": 8,
+                "features_per_level": 2,
+                "base_resolution": base_resolution,
+                "finest_resolution": finest_resolution,
+            },
         },
-    },
-    "world_normal_triplane": {
-        "spatial_encoding": "world_normal_triplane",
-        "encoding": {
-            "levels": 4,
-            "features_per_level": 2,
-            "table_size_log2": 14,
-            "base_resolution": 4,
-            "finest_resolution": 64,
+        "world_normal_triplane": {
+            "spatial_encoding": "world_normal_triplane",
+            "encoding": {
+                "levels": 4,
+                "features_per_level": 2,
+                "table_size_log2": 14,
+                "base_resolution": base_resolution,
+                "finest_resolution": finest_resolution,
+            },
         },
-    },
-    "world3d": {
-        "spatial_encoding": "world3d",
-        "encoding": {
-            "levels": 8,
-            "features_per_level": 2,
-            "table_size_log2": 14,
-            "base_resolution": 4,
-            "finest_resolution": 64,
-            "allocation": "occupancy",
+        "world3d": {
+            "spatial_encoding": "world3d",
+            "encoding": {
+                "levels": 8,
+                "features_per_level": 2,
+                "table_size_log2": 14,
+                "base_resolution": base_resolution,
+                "finest_resolution": finest_resolution,
+                "allocation": "occupancy",
+            },
         },
-    },
-}
+    }
+
+
+#: Module-level default ladder (base_resolution=4, finest_resolution=64), preserved
+#: exactly for backward compatibility -- callers that need a different render
+#: resolution should call `build_arm_models` and thread the result through
+#: `make_arm_config`'s `arm_models` argument instead of mutating this.
+ARM_MODELS: dict[str, dict] = build_arm_models()
 
 #: Shared training/pool/denoise settings, matching examples/r1_toy_world3d.json.
 BASE_TRAIN_CONFIG: dict = {
@@ -140,20 +164,24 @@ BASE_TRAIN_CONFIG: dict = {
 }
 
 
-def make_arm_config(base: dict, arm: str, seed: int, out_dir: Path) -> dict:
+def make_arm_config(
+    base: dict, arm: str, seed: int, out_dir: Path, arm_models: dict[str, dict] = ARM_MODELS
+) -> dict:
     """Build one arm's training config: the shared ladder plus this arm's overrides.
 
     `base` is never mutated -- every nested structure that gets touched (`model`,
-    `model.encoding`) is deep-copied before use.
+    `model.encoding`) is deep-copied before use. `arm_models` defaults to the
+    module-level base=4/finest=64 ladder; pass the result of `build_arm_models` to
+    use a different resolution ladder (e.g. for a different render resolution).
     """
-    if arm not in ARM_MODELS:
-        raise ValueError(f"unknown arm {arm!r}; expected one of {sorted(ARM_MODELS)}")
+    if arm not in arm_models:
+        raise ValueError(f"unknown arm {arm!r}; expected one of {sorted(arm_models)}")
     cfg = copy.deepcopy(base)
     cfg["seed"] = seed
     cfg["device"] = "cpu"
     cfg["out_dir"] = str(out_dir)
     cfg["model"] = copy.deepcopy(cfg.get("model", {}))
-    cfg["model"].update(copy.deepcopy(ARM_MODELS[arm]))
+    cfg["model"].update(copy.deepcopy(arm_models[arm]))
     return cfg
 
 
@@ -248,6 +276,7 @@ def run_experiment(
     seeds: tuple[int, ...],
     resamples: int,
     bootstrap_seed: int,
+    arm_models: dict[str, dict] = ARM_MODELS,
 ) -> dict:
     validation_sets, validation_specs = build_frozen_validation_sets(cache, base_cfg, seeds)
     metrics_by_arm: dict[tuple[str, int], list[dict]] = {}
@@ -256,7 +285,7 @@ def run_experiment(
     for seed in seeds:
         for arm in ARMS:
             arm_dir = out_root / "train" / arm / f"seed{seed}"
-            arm_cfg = make_arm_config(base_cfg, arm, seed, arm_dir)
+            arm_cfg = make_arm_config(base_cfg, arm, seed, arm_dir, arm_models=arm_models)
             train_report = train(arm_cfg)
             model_path = arm_dir / "model.pt"
             model = load_trained_model(str(model_path), cache)
@@ -334,6 +363,25 @@ def main() -> None:
     parser.add_argument("--iters", type=int, default=BASE_TRAIN_CONFIG["iters"])
     parser.add_argument("--bootstrap-resamples", type=int, default=BOOTSTRAP_RESAMPLES)
     parser.add_argument("--bootstrap-seed", type=int, default=BOOTSTRAP_SEED)
+    parser.add_argument(
+        "--finest-resolution",
+        type=int,
+        default=DEFAULT_FINEST_RESOLUTION,
+        help="Finest hashgrid resolution for every arm; match the render's pixel "
+        "dimension (default 64, for the 64^2 toy render).",
+    )
+    parser.add_argument(
+        "--base-resolution",
+        type=int,
+        default=DEFAULT_BASE_RESOLUTION,
+        help="Base (coarsest) hashgrid resolution for every arm (default 4).",
+    )
+    parser.add_argument(
+        "--denoise-method",
+        default=BASE_TRAIN_CONFIG["denoise"]["method"],
+        choices=["bilateral", "oidn"],
+        help="Pool/validation-target denoiser (default: bilateral).",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent.parent
@@ -347,6 +395,10 @@ def main() -> None:
     base_cfg = copy.deepcopy(BASE_TRAIN_CONFIG)
     base_cfg["cache"] = str(cache_path)
     base_cfg["iters"] = args.iters
+    base_cfg["denoise"] = copy.deepcopy(base_cfg["denoise"])
+    base_cfg["denoise"]["method"] = args.denoise_method
+    if args.denoise_method == "oidn":
+        base_cfg["denoise"].pop("radius", None)
 
     out_root = Path(args.out_dir)
     if not out_root.is_absolute():
@@ -358,6 +410,14 @@ def main() -> None:
         raise SystemExit("--seeds must not contain duplicates")
     if args.bootstrap_resamples < 1:
         raise SystemExit("--bootstrap-resamples must be positive")
+    if args.finest_resolution < 1:
+        raise SystemExit("--finest-resolution must be positive")
+    if args.base_resolution < 1:
+        raise SystemExit("--base-resolution must be positive")
+
+    arm_models = build_arm_models(
+        base_resolution=args.base_resolution, finest_resolution=args.finest_resolution
+    )
 
     result = run_experiment(
         base_cfg,
@@ -367,6 +427,7 @@ def main() -> None:
         seeds=seeds,
         resamples=args.bootstrap_resamples,
         bootstrap_seed=args.bootstrap_seed,
+        arm_models=arm_models,
     )
 
     report = build_report(
@@ -384,7 +445,9 @@ def main() -> None:
         extra={
             "command": (
                 "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
-                f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters}"
+                f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters} "
+                f"--finest-resolution {args.finest_resolution} "
+                f"--base-resolution {args.base_resolution}"
             ),
             "cache": _relative_path(cache_path, root),
             "resolution": [cache.width, cache.height],
@@ -392,7 +455,11 @@ def main() -> None:
             "training_config": {
                 k: v for k, v in base_cfg.items() if k not in {"out_dir", "seed", "cache"}
             },
-            "arm_models": ARM_MODELS,
+            "resolution_ladder": {
+                "base_resolution": args.base_resolution,
+                "finest_resolution": args.finest_resolution,
+            },
+            "arm_models": arm_models,
             "bootstrap_resamples": args.bootstrap_resamples,
             "bootstrap_seed": args.bootstrap_seed,
             "validation": {

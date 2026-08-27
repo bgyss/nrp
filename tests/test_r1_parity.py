@@ -85,6 +85,50 @@ class ArmConfigTests(unittest.TestCase):
             runner.make_arm_config({"model": {}}, "not_an_arm", seed=0, out_dir=Path("out/x"))
 
 
+class ResolutionLadderTests(unittest.TestCase):
+    """--finest-resolution/--base-resolution build a ladder shared by every arm.
+
+    `build_arm_models` must never let one arm drift to a different base/finest
+    resolution than the others -- that would silently reintroduce the kind of
+    capacity mismatch this experiment exists to rule out.
+    """
+
+    def test_default_ladder_matches_todays_64(self):
+        runner = load_runner()
+        arm_models = runner.build_arm_models()
+        for arm in runner.ARMS:
+            encoding = arm_models[arm]["encoding"]
+            self.assertEqual(encoding["base_resolution"], 4, arm)
+            self.assertEqual(encoding["finest_resolution"], 64, arm)
+        # The module-level default must also match (nothing bypasses build_arm_models).
+        for arm in runner.ARMS:
+            encoding = runner.ARM_MODELS[arm]["encoding"]
+            self.assertEqual(encoding["base_resolution"], 4, arm)
+            self.assertEqual(encoding["finest_resolution"], 64, arm)
+
+    def test_custom_ladder_is_shared_by_every_arm(self):
+        runner = load_runner()
+        arm_models = runner.build_arm_models(base_resolution=8, finest_resolution=128)
+        for arm in runner.ARMS:
+            encoding = arm_models[arm]["encoding"]
+            self.assertEqual(encoding["base_resolution"], 8, arm)
+            self.assertEqual(encoding["finest_resolution"], 128, arm)
+
+    def test_arm_models_flows_through_make_arm_config(self):
+        # This is the assertion that would actually catch one arm drifting from the
+        # rest: build a ladder, then verify make_arm_config's output -- what the
+        # trainer actually receives -- carries it through for every arm.
+        runner = load_runner()
+        arm_models = runner.build_arm_models(base_resolution=8, finest_resolution=128)
+        for arm in runner.ARMS:
+            cfg = runner.make_arm_config(
+                {"model": {}}, arm, seed=0, out_dir=Path("out/x"), arm_models=arm_models
+            )
+            encoding = cfg["model"]["encoding"]
+            self.assertEqual(encoding["base_resolution"], 8, arm)
+            self.assertEqual(encoding["finest_resolution"], 128, arm)
+
+
 class SeedGateTests(unittest.TestCase):
     def test_all_seeds_passing_gate_passes(self):
         runner = load_runner()
