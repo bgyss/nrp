@@ -73,9 +73,12 @@ Task 10: complete (commit c0e455f, review clean, no fix round)
   - implementer strengthened the checkpoint test against the REAL structure
     (dict with exactly config+state_dict) instead of the brief's guess
   - KNOWN LIMITATION: corner-exactness uses enc._index() as its own oracle, so a bug
-    inside _index's formula is masked there. Closed by Task 1's
-    test_hash_matches_reference_at_high_resolution, which checks _index against the
-    instant-ngp reference independently.
+    inside _index's formula is masked there. CORRECTED CLAIM (final whole-branch
+    review, fix 10): test_hash_matches_reference_at_high_resolution does NOT check
+    _index against the instant-ngp reference independently -- it re-types the
+    production expression and imports _PRIMES from production, so a wrong prime or
+    a changed hash design would pass it unchanged. It DOES genuinely discriminate
+    the '&'/'^' precedence defect, which is why it earns its place.
 
 DECISION (2026-08-26): G1 gains an absolute 15 dB PSNR floor alongside the 1.0 dB margin.
   Rationale + provenance in the spec (commit 7a58e98). 15 dB is INVENTED for this

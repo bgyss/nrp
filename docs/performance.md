@@ -2986,11 +2986,12 @@ cameras × 3 rotations):**
 
 `stop_reason`: "no arm passed G1 across all seeds, cameras, and orientations
 (world3d, world_normal_triplane, world_sparse); close as a characterized negative
-with the G5 decomposition." **No arm is promoted.** Every one of the 60 rows that
-fails does so for the reason `below_delta_threshold`; zero rows fail the 15 dB
-absolute floor, so the floor is non-binding here and the outcome is driven
-entirely by the 1.0 dB comparative-margin gate. A favorable mean is not evidence:
-G3 requires every seed to pass, and none does for any arm.
+with the G5 decomposition." **No arm is promoted.** Across the three arms' 180
+rows (60 per arm), 83 fail G1 (24 + 29 + 30, per the table above), and every one
+of those 83 failing rows fails for the reason `below_delta_threshold`; zero rows
+fail the 15 dB absolute floor, so the floor is non-binding here and the outcome
+is driven entirely by the 1.0 dB comparative-margin gate. A favorable mean is not
+evidence: G3 requires every seed to pass, and none does for any arm.
 
 **G4 — rotation breakdown (mean Δ by world rotation, dB):**
 
@@ -3014,6 +3015,11 @@ finest level for a never-seen vertex) is therefore **not** the limiting factor:
 the shortfall against the `pixel2d` baseline is uniform across in- and
 out-of-occupancy pixels, not concentrated in unseen geometry.
 
+Caveat: this comparison is paired across all 60 rows, but the out-of-occupancy
+set is small — a mean of ≈18 pixels out of 4,096 per row (minimum 3). Treat the
+24.44 dB vs 23.46 dB comparison as indicative rather than a matched test; it is
+not a statistically powered claim that out-of-occupancy pixels render better.
+
 **G2 — capacity (reported, not gated).** Arms A (`world3d`, occupancy-allocated)
 and B (`world_sparse`) share the identical resolution ladder `[4, 5, 8, 13, 19,
 28, 43, 64]` and land at the identical parameter count, 145,187, differing only
@@ -3028,11 +3034,11 @@ one plane per point rather than eight 3D corners.
 (chosen against measured trained-view quality of 19.17–22.16 dB at toy/kitchen
 scale, so it leaves room for genuine held-out-camera degradation while still
 rejecting a broken arm); the 1.0 dB comparative margin is inherited unchanged from
-the approved R2 ladder, not newly invented. Per-seed peak PSNR achievable on this
-cache (`peak_by_seed` in the report) ranges from 6.82 dB (seed 3) to 12.27 dB
-(seed 0) — these are diagnostic ceilings, not comparable to the held-out PSNRs
-above, which are measured against reconstructed images rather than this per-seed
-peak-signal figure.
+the approved R2 ladder, not newly invented. Per-seed PSNR reference peak (max
+GATHERLIGHT radiance over trained views, linear units — `peak_by_seed` in the
+report) ranges 6.82–12.27 (seed 3 lowest, seed 0 highest) — these are diagnostic
+ceilings, not comparable to the held-out PSNRs above, which are measured against
+reconstructed images rather than this per-seed peak-signal figure.
 
 **Observed noise versus gate stringency.** Standard deviation across the 60 rows
 is ≈1.9 dB for every arm, against a 1.0 dB per-row margin that must hold on all 60

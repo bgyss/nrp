@@ -15,8 +15,8 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 | R2 | One network, N cameras | **implemented pilot — honest negative; promotion blocked by R1 gate** | `out/r2-conditioned/report.json`, `docs/performance.md#r2-one-network-n-cameras` |
 | R3 | Novel-view interpolation | blocked by R1/R2; not attempted | — |
 | R4 | Real scene, real scale | blocked by R2; not attempted | — |
-| R5 | Camera in the WebGPU runtime | blocked by R4; not attempted | — |
-| R6 | Scene4D diagnostic-buffer bridge | blocked by R2; not attempted | — |
+| R5 | Camera in the WebGPU runtime | blocked by R4; not attempted. Also blocked by a known limitation: `TorchNRP.load` cannot reload occupancy-allocated arms (`world_sparse`, `world3d` with `allocation: "occupancy"`) outside the R1 runner, which reconstructs occupancy from `config["world_bounds"]`/`config["encoding"]` before loading — WebGPU export has no equivalent path today (see `docs/performance.md`). | — |
+| R6 | Scene4D diagnostic-buffer bridge | blocked by R2; not attempted. Also blocked by the same `TorchNRP.load` occupancy-allocated-arm limitation as R5 — see `docs/performance.md`. | — |
 
 R1 implemented `model.spatial_encoding: "world3d"` as a selectable alternative to
 the default `"pixel2d"` path. It uses the cache's first-hit world position, normalizes
@@ -182,7 +182,8 @@ across 5 seeds and 3 world rotations, with no averaging.
 | `world_normal_triplane` (arm C) | 29 | 0 | −2.25 dB (rotation 0°, seed 4) |
 | `world3d`, occupancy-allocated (arm A, control) | 30 | 0 | −1.51 dB |
 
-All 60 failing rows across all three arms fail for the reason
+83 rows fail G1 across all three arms (24 + 29 + 30, out of 60 rows per arm —
+180 rows total), and all 83 fail for the reason
 `below_delta_threshold` — none fails the 15 dB absolute floor, so the floor was
 not the binding constraint for any arm. Mean deltas are positive for every arm
 (+1.88, +1.40, +1.41 dB respectively), and every arm still fails because G3
