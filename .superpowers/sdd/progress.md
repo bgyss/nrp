@@ -117,3 +117,20 @@ PROBE (seed 0, rotation 0, all 3 arms) -- out/r1-encoding-redesign/probe.json
   MINOR (reporting): collision_by_arm dict is passed whole to every arm's g3, so a
     non-sparse arm's report echoes {"world_sparse": 0.0} while correctly reporting
     collision_assertions_checked=False. Noisy, not wrong.
+
+CAMPAIGN RUN 1 ABORTED at 18:10 (~40 min in) -- CONFOUND, not a crash.
+  ARM_ENCODING_CONFIG used empty dicts, so each arm fell back to its own encoder
+  CLASS defaults, which differ:
+    world_sparse          levels 8, finest 128, 108,057 params
+    world_normal_triplane levels 3, finest 255, 158,717 params
+    world3d               levels 8, finest 255, 330,567 params
+  Arm B (the probe's loser) was running at HALF the finest resolution and a THIRD the
+  parameters of arm A, so "sparse loses to hash" was inseparable from schedule and
+  capacity. Probe result is therefore NOT interpretable as a representation finding.
+  Cause: implementer replaced the plan's explicit per-arm configs with {} (good DRY
+  instinct, silently changed the experiment); review approved it as avoiding duplicated
+  literals. Neither was wrong locally -- the design intent lived only in my plan text.
+  RESOLUTION: the spec forbids matching PARAMETER budgets (that starved the original
+  world3d). It does NOT license differing RESOLUTION SCHEDULES. Corrected to a common
+  ladder (base 4, finest 64 == the 64^2 render resolution, ~one vertex per pixel, the
+  same relationship pixel2d has), capacity left unequal and reported by G2.
