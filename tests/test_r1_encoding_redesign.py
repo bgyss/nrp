@@ -14,8 +14,12 @@ from examples.r1_encoding_redesign import (  # noqa: E402
     camera_arc,
     campaign_peak,
     nearest_trained_camera,
+    rotated_light,
+    rotated_lights,
 )
-from nrp.lights import SphereLight  # noqa: E402
+from examples.r1_promotion import rotation_matrix_y, transform_cache  # noqa: E402
+from nrp.gather_light import gather_lights  # noqa: E402
+from nrp.lights import QuadLight, SphereLight  # noqa: E402
 from nrp.metrics import psnr  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.encoder_registry import encoder_schedule_params  # noqa: E402
@@ -191,6 +195,114 @@ class TestArmEncodingConfigSharesResolutionSchedule(unittest.TestCase):
             {64},
             f"arms disagree on finest_resolution: {schedules}",
         )
+
+
+class TestRotatedLight(unittest.TestCase):
+    """Pins the G4 fix: eval lights must rotate with the cache and camera, or a frame
+    change silently becomes a different physical setup (see `rotated_light`'s
+    docstring for the run this invalidated)."""
+
+    def test_sphere_center_rotates_radius_and_rgb_untouched(self):
+        light = SphereLight(center=[1.0, 2.0, 3.0], radius=0.25, rgb=[0.1, 0.2, 0.3])
+        rotation = rotation_matrix_y(90.0)
+
+        rotated = rotated_light(light, rotation)
+
+        # Independently derived expected center: a +90 degree right-handed rotation
+        # about Y sends (x, y, z) -> (z, y, -x) -- worked out from first principles,
+        # not by calling `rotation_matrix_y` output through the production helper's
+        # own matmul convention.
+        expected_center = np.array([3.0, 2.0, -1.0])
+        np.testing.assert_allclose(rotated.center, expected_center, atol=1e-10)
+        self.assertEqual(rotated.radius, light.radius)
+        np.testing.assert_allclose(rotated.rgb, light.rgb)
+
+    def test_rotated_lights_maps_over_a_list(self):
+        lights = [
+            SphereLight(center=[1.0, 0.0, 0.0], radius=0.1),
+            SphereLight(center=[0.0, 0.0, 1.0], radius=0.2),
+        ]
+        rotation = rotation_matrix_y(180.0)
+
+        out = rotated_lights(lights, rotation)
+
+        np.testing.assert_allclose(out[0].center, [-1.0, 0.0, 0.0], atol=1e-10)
+        np.testing.assert_allclose(out[1].center, [0.0, 0.0, -1.0], atol=1e-10)
+
+    def test_unhandled_light_type_raises_instead_of_passing_through_unrotated(self):
+        quad = QuadLight(center=[0.0, 0.0, 0.0], normal=[0.0, 1.0, 0.0], width=1.0, height=1.0)
+        with self.assertRaisesRegex(TypeError, "QuadLight"):
+            rotated_light(quad, rotation_matrix_y(90.0))
+
+
+def _non_axis_aligned_cache() -> PathCache:
+    """A tiny two-pixel, two-segment-per-pixel cache with off-axis geometry, so a 90
+    degree rotation about Y actually moves things instead of trivially fixing them.
+    """
+    d0 = np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)
+    d1 = np.array([1.0, -1.0, 0.5]) / np.linalg.norm([1.0, -1.0, 0.5])
+    return PathCache(
+        width=2,
+        height=1,
+        n_paths=np.array([1, 1], dtype=np.int64),
+        seg_pixel=np.array([0, 1], dtype=np.int64),
+        seg_origin=np.array([[0.2, 0.1, -0.3], [-0.4, 0.2, 0.1]]),
+        seg_dir=np.array([d0, d1]),
+        seg_tmax=np.array([0.8, 0.6]),
+        seg_throughput=np.array([[0.7, 0.6, 0.5], [0.3, 0.4, 0.2]]),
+        albedo=np.full((1, 2, 3), 0.5),
+        depth=np.ones((1, 2)),
+        normal=np.tile(np.array([0.0, 1.0, 0.0]), (1, 2, 1)),
+        position=np.array([[[0.5, 0.3, 0.1], [-0.2, 0.4, 0.3]]]),
+    )
+
+
+def _rendered_stats(cache: PathCache, light: SphereLight) -> tuple[float, float]:
+    image = gather_lights(cache, [light])
+    return float(image.mean()), float(image.max())
+
+
+class TestRotationPreservesPhysics(unittest.TestCase):
+    """The actual bug class: rotating the cache and the light together must render
+    the identical physics -- a frame change, not a different scene. Rotating the
+    cache while leaving the light behind is the mistake that produced 4.4 hours of
+    invalid G4 results (delta_db as bad as -18 dB at 180 degrees, scaling with the
+    rotation angle, versus a healthy 0 degree control)."""
+
+    def test_rotated_cache_and_rotated_light_match_unrotated_reference(self):
+        cache = _non_axis_aligned_cache()
+        light = SphereLight(center=[0.3, 0.2, 0.4], radius=0.6, rgb=[1.0, 0.8, 0.6])
+        rotation = rotation_matrix_y(90.0)
+
+        mean_before, max_before = _rendered_stats(cache, light)
+        self.assertGreater(max_before, 0.0, "fixture must actually produce a hit")
+
+        rotated_cache = transform_cache(cache, rotation)
+        light_correctly_rotated = rotated_light(light, rotation)
+        mean_after, max_after = _rendered_stats(rotated_cache, light_correctly_rotated)
+
+        np.testing.assert_allclose(mean_after, mean_before, rtol=1e-9, atol=1e-12)
+        np.testing.assert_allclose(max_after, max_before, rtol=1e-9, atol=1e-12)
+
+    def test_break_restore_demonstration_bug_leaves_light_unrotated(self):
+        """Demonstrates the actual bug: reusing the UNROTATED light against a rotated
+        cache changes the rendered result. This is the exact defect `rotated_light`
+        fixes; it must fail here to prove the covering test above is not vacuous."""
+        cache = _non_axis_aligned_cache()
+        light = SphereLight(center=[0.3, 0.2, 0.4], radius=0.6, rgb=[1.0, 0.8, 0.6])
+        rotation = rotation_matrix_y(90.0)
+
+        mean_before, max_before = _rendered_stats(cache, light)
+
+        rotated_cache = transform_cache(cache, rotation)
+        # Bug reproduction: pass the ORIGINAL unrotated light against the rotated
+        # cache, exactly what `main`'s rotation loop did before the fix.
+        mean_buggy, max_buggy = _rendered_stats(rotated_cache, light)
+
+        with self.assertRaises(AssertionError):
+            np.testing.assert_allclose(mean_buggy, mean_before, rtol=1e-9, atol=1e-12)
+        with self.assertRaises(AssertionError):
+            np.testing.assert_allclose(max_buggy, max_before, rtol=1e-9, atol=1e-12)
 
 
 if __name__ == "__main__":

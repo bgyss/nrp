@@ -167,6 +167,38 @@ def rotated_camera(camera: dict, rotation: np.ndarray) -> dict:
     return {"name": camera["name"], "origin": origin.tolist(), "target": target.tolist()}
 
 
+def rotated_light(light: SphereLight, rotation: np.ndarray) -> SphereLight:
+    """Rotate one virtual light's world-space parameters the same way `transform_cache`
+    and `rotated_camera` rotate the cache and camera.
+
+    G4's whole premise is that only the coordinate frame changes, not the physical
+    setup. A light left at its old world `center` while the cache and camera rotate
+    around it is a *different* physical configuration (the light is now in the wrong
+    place relative to the rotated scene), not a change of frame -- that gap is exactly
+    what invalidated the earlier G4 run (rotation-scaled PSNR damage: healthy at 0
+    degrees, catastrophic at 90/180 degrees). `radius` and `rgb` are scalars/emission
+    scale and are rotation-invariant, so only `center` needs transforming for a
+    `SphereLight`. Only `SphereLight` is ever produced by `frozen_lights` (the only
+    light constructor this runner uses), so other light types raise rather than
+    silently passing through unrotated -- a `QuadLight`, if one were ever plumbed in
+    here, would additionally need its `normal` rotated.
+    """
+    if not isinstance(light, SphereLight):
+        raise TypeError(
+            f"rotated_light: don't know how to rotate light type {type(light).__name__}; "
+            "add explicit handling for its direction/position attributes (e.g. "
+            "QuadLight.normal) rather than assuming rotation-invariance"
+        )
+    rotation = np.asarray(rotation, dtype=np.float64)
+    center = np.asarray(light.center, dtype=np.float64) @ rotation.T
+    return SphereLight(center=center, radius=light.radius, rgb=light.rgb)
+
+
+def rotated_lights(lights: list[SphereLight], rotation: np.ndarray) -> list[SphereLight]:
+    """Rotate every light in `lights` into a new world frame (see `rotated_light`)."""
+    return [rotated_light(light, rotation) for light in lights]
+
+
 def export_arc(cameras: list[dict], seed_dir: Path, args) -> dict[str, Path]:
     """Trace one cache per camera. Held-out caches are exported for evaluation only."""
     paths = {}
@@ -475,6 +507,15 @@ def main(argv: list[str] | None = None) -> int:
                 camera["name"]: rotated_camera(camera, rotation_matrix)
                 for camera in trained + held_out
             }
+            # G4 rotates the cache geometry and the camera into the new frame; the
+            # evaluation lights must move with them. A light left at its original
+            # world position turns a coordinate-frame change into a different physical
+            # setup (the light is now in the wrong place relative to the rotated
+            # scene) -- see `rotated_light` for the full rationale and the run this
+            # bug invalidated.
+            lights_in_frame = (
+                eval_lights if rotation == 0.0 else rotated_lights(eval_lights, rotation_matrix)
+            )
 
             trained_cache_paths: dict[str, Path] = {}
             manifest_entries = []
@@ -540,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
                         cameras_in_frame[camera["name"]],
                         caches[camera["name"]],
                         baseline_models[baseline_camera["name"]],
-                        eval_lights,
+                        lights_in_frame,
                         seed_peak,
                     )
                     row["seed"] = seed
