@@ -182,3 +182,18 @@ DEFERRED MINORS for final review triage:
      affects R5/R6 (task 11)
   8. collision_by_arm echoes world_sparse into non-sparse arms' reports (cosmetic)
   9. parameter_count absent from report.json; taken from run.log (task 12)
+
+FINAL WHOLE-BRANCH REVIEW (opus): "ready with fixes". Found a 14th unearned-pass
+  instance -- _sparse_collision_fraction returned 0.0 (the "verified zero collisions"
+  value) for an empty/malformed capacity report, feeding the one field the spec requires
+  arm B to ASSERT. It was the only untested function in the runner.
+  Also: registry broken in a cold interpreter (import side-effect only); zero-collision
+  contract keyed off the literal "world_sparse" in two files (fail-open by rename);
+  docs labelled a linear radiance peak as "peak PSNR ... dB"; arm C's aux[:,4:7] slice
+  untested despite 60 published rows resting on it.
+  All 10 fixes applied (39dd9c6, af6cacd, 107969e). 528 tests.
+FINAL RE-REVIEW: merge READY. No 15th instance; every new default checked for
+  direction, guarantees_zero_collisions defaults to the safe value. Doc figures
+  (83/180 failing rows, peaks 6.82-12.27) independently recomputed from report.json.
+  One Minor left: test_every_encoder_declares_the_interface doesn't assert the new
+  guarantees_zero_collisions flag is declared (safe default, completeness only).
