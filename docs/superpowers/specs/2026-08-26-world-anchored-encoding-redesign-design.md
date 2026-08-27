@@ -244,6 +244,13 @@ decomposition. No further tuning rounds.
 The prior R1 evidence is not discarded. The report reinterprets it: the ambient-3D
 negative is now explained by the measured ~19× allocation handicap.
 
+> **2026-08-27 note:** retracted. The Kitchen 128² fair-allocation
+> re-measurement shows `world3d`'s allocation-fair mean (−0.355 dB) reproduces
+> the original handicapped mean (−0.356 dB) almost exactly, and the 5.5×-slot
+> `world_sparse` arm performs worst — so the allocation handicap is not the
+> mechanism behind the negative. See
+> `docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128`.
+
 ## Verification
 
 **Unit tests (new).** Sparse index exactness — every occupied key resolves

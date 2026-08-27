@@ -1,0 +1,137 @@
+{
+  "levels": 8,
+  "base_resolution": 4,
+  "finest_resolution": 64,
+  "world_bounds": {
+    "min": [
+      0.2648575089302215,
+      0.0,
+      0.4110950000264565
+    ],
+    "max": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "per_level": [
+    {
+      "level": 0,
+      "resolution": 4,
+      "n_pixels": 4096,
+      "n_vertices": 95,
+      "vertices_per_pixel": 0.023193359375,
+      "median_support": 292.0,
+      "p75_support": 458.0,
+      "p90_support": 777.0,
+      "fraction_touched_by_le1_pixel": 0.0,
+      "fraction_touched_by_le2_pixels": 0.0,
+      "fraction_touched_by_le4_pixels": 0.031578947368421054
+    },
+    {
+      "level": 1,
+      "resolution": 5,
+      "n_pixels": 4096,
+      "n_vertices": 141,
+      "vertices_per_pixel": 0.034423828125,
+      "median_support": 216.0,
+      "p75_support": 303.0,
+      "p90_support": 427.0,
+      "fraction_touched_by_le1_pixel": 0.0,
+      "fraction_touched_by_le2_pixels": 0.0,
+      "fraction_touched_by_le4_pixels": 0.0
+    },
+    {
+      "level": 2,
+      "resolution": 8,
+      "n_pixels": 4096,
+      "n_vertices": 307,
+      "vertices_per_pixel": 0.074951171875,
+      "median_support": 90.0,
+      "p75_support": 133.0,
+      "p90_support": 176.40000000000003,
+      "fraction_touched_by_le1_pixel": 0.013029315960912053,
+      "fraction_touched_by_le2_pixels": 0.02280130293159609,
+      "fraction_touched_by_le4_pixels": 0.05537459283387622
+    },
+    {
+      "level": 3,
+      "resolution": 13,
+      "n_pixels": 4096,
+      "n_vertices": 777,
+      "vertices_per_pixel": 0.189697265625,
+      "median_support": 34.0,
+      "p75_support": 51.0,
+      "p90_support": 66.0,
+      "fraction_touched_by_le1_pixel": 0.02702702702702703,
+      "fraction_touched_by_le2_pixels": 0.04247104247104247,
+      "fraction_touched_by_le4_pixels": 0.059202059202059204
+    },
+    {
+      "level": 4,
+      "resolution": 19,
+      "n_pixels": 4096,
+      "n_vertices": 1564,
+      "vertices_per_pixel": 0.3818359375,
+      "median_support": 16.0,
+      "p75_support": 24.0,
+      "p90_support": 35.0,
+      "fraction_touched_by_le1_pixel": 0.030690537084398978,
+      "fraction_touched_by_le2_pixels": 0.04411764705882353,
+      "fraction_touched_by_le4_pixels": 0.08248081841432225
+    },
+    {
+      "level": 5,
+      "resolution": 28,
+      "n_pixels": 4096,
+      "n_vertices": 3209,
+      "vertices_per_pixel": 0.783447265625,
+      "median_support": 8.0,
+      "p75_support": 12.0,
+      "p90_support": 17.0,
+      "fraction_touched_by_le1_pixel": 0.02991586163913992,
+      "fraction_touched_by_le2_pixels": 0.05328762854471798,
+      "fraction_touched_by_le4_pixels": 0.23091305702711126
+    },
+    {
+      "level": 6,
+      "resolution": 43,
+      "n_pixels": 4096,
+      "n_vertices": 7242,
+      "vertices_per_pixel": 1.76806640625,
+      "median_support": 3.0,
+      "p75_support": 6.0,
+      "p90_support": 7.0,
+      "fraction_touched_by_le1_pixel": 0.07152720243026787,
+      "fraction_touched_by_le2_pixels": 0.3972659486329743,
+      "fraction_touched_by_le4_pixels": 0.6564484948909141
+    },
+    {
+      "level": 7,
+      "resolution": 64,
+      "n_pixels": 4096,
+      "n_vertices": 13727,
+      "vertices_per_pixel": 3.351318359375,
+      "median_support": 2.0,
+      "p75_support": 2.0,
+      "p90_support": 4.0,
+      "fraction_touched_by_le1_pixel": 0.33670867633131785,
+      "fraction_touched_by_le2_pixels": 0.8180228746266482,
+      "fraction_touched_by_le4_pixels": 0.9423763386027537
+    }
+  ],
+  "finest": {
+    "level": 7,
+    "resolution": 64,
+    "n_pixels": 4096,
+    "n_vertices": 13727,
+    "vertices_per_pixel": 3.351318359375,
+    "median_support": 2.0,
+    "p75_support": 2.0,
+    "p90_support": 4.0,
+    "fraction_touched_by_le1_pixel": 0.33670867633131785,
+    "fraction_touched_by_le2_pixels": 0.8180228746266482,
+    "fraction_touched_by_le4_pixels": 0.9423763386027537
+  },
+  "cache": "out/r1-encoding-redesign/seed0/train0.npz"
+}

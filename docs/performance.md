@@ -3086,18 +3086,22 @@ UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --i
 | `world3d` (occupancy-allocated) | +0.21, −0.04, +0.47, +0.02, +0.71 | +0.27 | [+0.03, +0.52] | **5/5** |
 
 All three world-anchored arms clear the −0.5 dB gate on every seed. Parameter
-and slot counts below were **recovered by loading each seed-0 checkpoint and
-summing trainable-float tensor `numel()`, not read from `report.json`'s own
-`parameter_count` field** — that field undercounts every arm by 6 parameters
-(likely an uncounted bias term) relative to what is actually in the checkpoint,
-so the checkpoint count is the one quoted here:
+and slot counts below are `report.json`'s own `parameter_count` and
+`capacity_report.total_slots` fields (`out/r1-parity/report.json`,
+`training_arms[*].parameter_count`), which count only `model.parameters()`.
+An earlier pass instead summed float tensor `numel()` over the checkpoint's
+`state_dict`, which also includes the non-trainable `world_min`/`world_extent`
+buffers (3 + 3 floats) that every world-anchored arm registers for its world
+bounds — `pixel2d` has no world bounds and so no such offset, which is why it
+alone showed no discrepancy. The counts below are the corrected,
+parameters-only figures:
 
 | arm | trainable params | grid slots |
 |---|---:|---:|
 | `pixel2d` (control) | 68,987 | 7,740 |
-| `world_sparse` | 107,637 | 27,062 |
-| `world3d` | 107,637 | 27,062 |
-| `world_normal_triplane` | 81,997 | 14,754 |
+| `world_sparse` | 107,631 | 27,062 |
+| `world3d` | 107,631 | 27,062 |
+| `world_normal_triplane` | 81,991 | 14,754 |
 
 ### Kitchen 128² — no arm passes
 
@@ -3113,9 +3117,9 @@ as toy.
 
 | arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | seeds passing −0.5 dB | trainable params | grid slots |
 |---|---|---:|---:|---:|---:|
-| `world_sparse` | +0.02, −0.36, −1.35, −0.17, −2.83 | **−0.935** | 3/5 | 343,533 | **145,010 (5.5× the control)** |
-| `world3d` (occupancy-allocated) | −1.26, −0.59, +0.56, +0.12, −0.61 | −0.355 | 2/5 | 187,109 | 66,926 (2.5×) |
-| `world_normal_triplane` | −0.47, +0.87, −0.65, −0.36, +0.28 | −0.064 | 4/5 | 162,043 | 54,777 (2.1×) |
+| `world_sparse` | +0.02, −0.36, −1.35, −0.17, −2.83 | **−0.935** | 3/5 | 343,527 | **145,010 (5.5× the control)** |
+| `world3d` (occupancy-allocated) | −1.26, −0.59, +0.56, +0.12, −0.61 | −0.355 | 2/5 | 187,103 | 66,926 (2.5×) |
+| `world_normal_triplane` | −0.47, +0.87, −0.65, −0.36, +0.28 | −0.064 | 4/5 | 162,037 | 54,777 (2.1×) |
 
 **No world arm passes.** All three fail at least one seed against the unchanged
 −0.5 dB gate, and `world_sparse` — with 5.5× the control's grid slots and zero
@@ -3149,13 +3153,22 @@ the handicap was not the mechanism producing the negative result.
 Toy 64² passes and Kitchen 128² fails under the identical arm implementations and
 the identical fair-allocation protocol. Measuring how many pixels touch each
 finest-level grid vertex — directly from the path caches, for each scene's own
-finest resolution — shows a large difference in how well-determined each finest
-vertex is:
+finest resolution, via `examples/vertex_support.py` (reuses
+`nrp.torch_backend.occupancy`'s `normalize_positions`/`level_resolutions` and its
+corner enumeration, so it describes the same grid the encoders query) — shows a
+large difference in how well-determined each finest vertex is. Regenerate with:
 
-| scene | vertices/pixel | median support | vertices touched by ≤1 pixel |
-|---|---:|---:|---:|
-| toy 64² | 3.35 | 2 px | 33.7% |
-| Kitchen 128² | 4.77 | 1 px | **59.1%** |
+```sh
+uv run python examples/vertex_support.py --cache out/r1-encoding-redesign/seed0/train0.npz \
+  --levels 8 --base-resolution 4 --finest-resolution 64 --out out/vertex-support/toy64.json
+uv run python examples/vertex_support.py --cache out/kitchen/path_cache.npz \
+  --levels 8 --base-resolution 4 --finest-resolution 128 --out out/vertex-support/kitchen128.json
+```
+
+| scene | vertices/pixel | median support | vertices touched by ≤1 pixel | source |
+|---|---:|---:|---:|---|
+| toy 64² | 3.35 | 2 px | 33.7% | `out/vertex-support/toy64.json` (`finest`) |
+| Kitchen 128² | 4.77 | 1 px | **59.1%** | `out/vertex-support/kitchen128.json` (`finest`) |
 
 On Kitchen, a majority of finest-level vertices are constrained by exactly one
 observed pixel: a free parameter fitted to a single sample, able to memorize that

@@ -1,9 +1,13 @@
 """Exact per-level queried-vertex sets for world-anchored spatial encodings.
 
-Rung R1's negative was caused by allocating table slots against a parameter budget
-rather than against the number of grid vertices the cache actually queries. This
-module makes that number a measured, tested quantity instead of an invisible one.
-It knows about caches; encoders do not.
+The original R1 experiment sized world-anchored encoding tables against a
+parameter budget rather than against the number of grid vertices the cache
+actually queries — a real methodological defect (see
+`docs/representation-track.md`'s R1 fair-allocation correction for the
+measurement showing this mismatch, on its own, does not explain R1's original
+negative). This module fixes that defect by making the queried-vertex count a
+measured, tested quantity instead of an invisible one, so table allocation can
+be sized against actual grid occupancy. It knows about caches; encoders do not.
 """
 
 from __future__ import annotations

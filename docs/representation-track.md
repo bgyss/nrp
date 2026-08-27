@@ -262,11 +262,14 @@ passes**: `world_sparse` 3/5 (mean −0.935 dB), `world3d` 2/5 (mean −0.355 dB
 gate either way — every number above is reported alongside its per-seed pass
 count, not in place of it.
 
-Toy capacity figures (trainable params / grid slots, recovered by summing
-checkpoint tensor `numel()` for float parameters — `report.json`'s own
-`parameter_count` field undercounts by 6 relative to the checkpoint, for
-reasons not further investigated) are: `pixel2d` 68,987 / 7,740; `world_sparse`
-and `world3d` 107,637 / 27,062; `world_normal_triplane` 81,997 / 14,754. On
+Toy capacity figures (trainable params / grid slots, from `report.json`'s own
+`parameter_count` and `capacity_report.total_slots` fields, i.e.
+`sum(p.numel() for p in model.parameters())`) are: `pixel2d` 68,987 / 7,740;
+`world_sparse` and `world3d` 107,631 / 27,062; `world_normal_triplane`
+81,991 / 14,754. (A checkpoint `state_dict`-tensor sum instead gives figures
+6 higher for every world-anchored arm, since it also includes the
+non-trainable `world_min`/`world_extent` buffers; `pixel2d` has no world
+bounds and so no such offset.) On
 Kitchen, `world_sparse` reaches 145,010 slots — 5.5× the 26,289-slot control —
 with zero hash collisions by construction, and still performs worst of the
 three arms.
@@ -281,10 +284,21 @@ description of a real defect in the original matching rule; it is not the
 mechanism behind the negative.
 
 **A hypothesis for the scene disagreement, not yet tested by intervention.**
-Measuring how many pixels touch each finest-level grid vertex, directly from
-each scene's own cache: toy 64² has 3.35 vertices/pixel (median support 2 px,
-33.7% of vertices touched by ≤1 pixel); Kitchen 128² has 4.77 vertices/pixel
-(median support **1 px**, **59.1%** touched by ≤1 pixel). A majority of
+Measuring how many pixels touch each finest-level grid vertex, reproducibly, via
+`examples/vertex_support.py` (reuses `occupancy.normalize_positions` and
+`level_resolutions`, so it queries the same grid the encoders do):
+
+```sh
+uv run python examples/vertex_support.py --cache out/r1-encoding-redesign/seed0/train0.npz \
+  --levels 8 --base-resolution 4 --finest-resolution 64 --out out/vertex-support/toy64.json
+uv run python examples/vertex_support.py --cache out/kitchen/path_cache.npz \
+  --levels 8 --base-resolution 4 --finest-resolution 128 --out out/vertex-support/kitchen128.json
+```
+
+`out/vertex-support/toy64.json`'s finest level (resolution 64) has 3.35
+vertices/pixel (median support 2 px, 33.7% of vertices touched by ≤1 pixel);
+`out/vertex-support/kitchen128.json`'s finest level (resolution 128) has 4.77
+vertices/pixel (median support **1 px**, **59.1%** touched by ≤1 pixel). A majority of
 Kitchen's finest-level world-space vertices are fit to a single observed pixel
 — free to memorize, with nothing forcing generalization to a neighbor — while
 `pixel2d` at `finest_resolution=128` on a 128² image guarantees uniform ~4×

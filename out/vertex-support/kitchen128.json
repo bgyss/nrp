@@ -1,0 +1,137 @@
+{
+  "levels": 8,
+  "base_resolution": 4,
+  "finest_resolution": 128,
+  "world_bounds": {
+    "min": [
+      -2.4913780614733696,
+      -0.020776000194018707,
+      -3.117299847304821
+    ],
+    "max": [
+      1.6632549464702606,
+      3.2275040596723557,
+      2.0601747445762157
+    ]
+  },
+  "per_level": [
+    {
+      "level": 0,
+      "resolution": 4,
+      "n_pixels": 16384,
+      "n_vertices": 123,
+      "vertices_per_pixel": 0.00750732421875,
+      "median_support": 1041.0,
+      "p75_support": 1461.5,
+      "p90_support": 1954.3999999999999,
+      "fraction_touched_by_le1_pixel": 0.0,
+      "fraction_touched_by_le2_pixels": 0.0,
+      "fraction_touched_by_le4_pixels": 0.0
+    },
+    {
+      "level": 1,
+      "resolution": 6,
+      "n_pixels": 16384,
+      "n_vertices": 297,
+      "vertices_per_pixel": 0.01812744140625,
+      "median_support": 380.0,
+      "p75_support": 588.0,
+      "p90_support": 893.6000000000004,
+      "fraction_touched_by_le1_pixel": 0.013468013468013467,
+      "fraction_touched_by_le2_pixels": 0.016835016835016835,
+      "fraction_touched_by_le4_pixels": 0.03367003367003367
+    },
+    {
+      "level": 2,
+      "resolution": 10,
+      "n_pixels": 16384,
+      "n_vertices": 870,
+      "vertices_per_pixel": 0.0531005859375,
+      "median_support": 122.0,
+      "p75_support": 201.0,
+      "p90_support": 345.0,
+      "fraction_touched_by_le1_pixel": 0.01264367816091954,
+      "fraction_touched_by_le2_pixels": 0.029885057471264367,
+      "fraction_touched_by_le4_pixels": 0.052873563218390804
+    },
+    {
+      "level": 3,
+      "resolution": 17,
+      "n_pixels": 16384,
+      "n_vertices": 2361,
+      "vertices_per_pixel": 0.14410400390625,
+      "median_support": 42.0,
+      "p75_support": 72.0,
+      "p90_support": 127.0,
+      "fraction_touched_by_le1_pixel": 0.016518424396442185,
+      "fraction_touched_by_le2_pixels": 0.042354934349851756,
+      "fraction_touched_by_le4_pixels": 0.08132147395171538
+    },
+    {
+      "level": 4,
+      "resolution": 28,
+      "n_pixels": 16384,
+      "n_vertices": 6554,
+      "vertices_per_pixel": 0.4000244140625,
+      "median_support": 15.0,
+      "p75_support": 26.0,
+      "p90_support": 47.0,
+      "fraction_touched_by_le1_pixel": 0.06225205981080256,
+      "fraction_touched_by_le2_pixels": 0.11428135489777236,
+      "fraction_touched_by_le4_pixels": 0.18767165090021362
+    },
+    {
+      "level": 5,
+      "resolution": 47,
+      "n_pixels": 16384,
+      "n_vertices": 17163,
+      "vertices_per_pixel": 1.04754638671875,
+      "median_support": 5.0,
+      "p75_support": 10.0,
+      "p90_support": 18.0,
+      "fraction_touched_by_le1_pixel": 0.11594709549612539,
+      "fraction_touched_by_le2_pixels": 0.2209403950358329,
+      "fraction_touched_by_le4_pixels": 0.43057740488259627
+    },
+    {
+      "level": 6,
+      "resolution": 78,
+      "n_pixels": 16384,
+      "n_vertices": 39558,
+      "vertices_per_pixel": 2.4144287109375,
+      "median_support": 2.0,
+      "p75_support": 4.0,
+      "p90_support": 7.0,
+      "fraction_touched_by_le1_pixel": 0.2693007735477021,
+      "fraction_touched_by_le2_pixels": 0.5344557358814904,
+      "fraction_touched_by_le4_pixels": 0.7914201931341321
+    },
+    {
+      "level": 7,
+      "resolution": 128,
+      "n_pixels": 16384,
+      "n_vertices": 78084,
+      "vertices_per_pixel": 4.765869140625,
+      "median_support": 1.0,
+      "p75_support": 2.0,
+      "p90_support": 3.0,
+      "fraction_touched_by_le1_pixel": 0.5912863070539419,
+      "fraction_touched_by_le2_pixels": 0.8404410634701092,
+      "fraction_touched_by_le4_pixels": 0.975577583115619
+    }
+  ],
+  "finest": {
+    "level": 7,
+    "resolution": 128,
+    "n_pixels": 16384,
+    "n_vertices": 78084,
+    "vertices_per_pixel": 4.765869140625,
+    "median_support": 1.0,
+    "p75_support": 2.0,
+    "p90_support": 3.0,
+    "fraction_touched_by_le1_pixel": 0.5912863070539419,
+    "fraction_touched_by_le2_pixels": 0.8404410634701092,
+    "fraction_touched_by_le4_pixels": 0.975577583115619
+  },
+  "cache": "out/kitchen/path_cache.npz"
+}

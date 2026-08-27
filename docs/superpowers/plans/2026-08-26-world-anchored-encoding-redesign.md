@@ -537,6 +537,14 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'nrp.torch_backend.occ
 
 Create `nrp/torch_backend/occupancy.py`:
 
+> **2026-08-27 note:** the docstring drafted below asserts that the allocation
+> mismatch *caused* R1's negative. The Kitchen 128² fair-allocation
+> re-measurement (`docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128`)
+> falsifies that causal claim (`world3d` reproduces the historical −0.356 dB
+> mean almost exactly even under fair allocation). The shipped module's
+> docstring was corrected accordingly; this plan is left as a historical
+> record of what was believed when it was written.
+
 ```python
 """Exact per-level queried-vertex sets for world-anchored spatial encodings.
 
@@ -2973,6 +2981,9 @@ a `## R1 redesign` section that states plainly:
 
 1. the previous negative is now explained by the measured ~19× allocation handicap
    (78,080 distinct vertices against 4,096 slots, versus 16,641 against 16,384);
+   [**2026-08-27:** retracted — the Kitchen fair-allocation re-measurement shows
+   `world3d` reproduces the original −0.356 dB mean almost exactly even without
+   the handicap; see `docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128`]
 2. the gate changed from single-view parity to held-out-camera generalization, and why —
    `pixel2d` at these settings is a per-pixel lookup table;
 3. the outcome of each arm against G1/G3/G4, per seed, with no averaging.
