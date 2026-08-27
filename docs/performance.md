@@ -2898,7 +2898,7 @@ paper hardware results.
 The remaining bounded ladder is
 `docs/plans/2026-07-27-r1-next-experiments.md`: matched allocation/fusion sweeps,
 coordinate-rotation robustness, localized error analysis, then a second real scene.
-R1A did not start R2; the later R2 implementation pilot is recorded separately as
+R2 remains blocked unless one world-anchored arm passes the unchanged −0.5 dB floor on every seed and both real scenes. R1A did not start R2; the later R2 implementation pilot is recorded separately as
 an honest negative. R2 remains blocked because the R1 promotion gate was not cleared.
 
 ### R1 promotion audit: R1C coordinate robustness and R1E independent scene
