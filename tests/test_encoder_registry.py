@@ -14,6 +14,7 @@ from nrp.torch_backend.encoder_registry import (  # noqa: E402
     SPATIAL_ENCODERS,
     build_encoder,
     encoder_schedule_params,
+    encoder_wants_occupancy,
 )
 from nrp.torch_backend.encoding import HashEncoding2D  # noqa: E402
 
@@ -43,6 +44,30 @@ class TestRegistry(unittest.TestCase):
             if getattr(cls, "needs_occupancy", False):
                 with self.assertRaises(ValueError, msg=name):
                     build_encoder(name, CONFIG, occupancy=None)
+
+
+class TestEncoderWantsOccupancy(unittest.TestCase):
+    def test_world_sparse_always_wants_occupancy(self):
+        self.assertTrue(encoder_wants_occupancy("world_sparse", {}))
+        self.assertTrue(encoder_wants_occupancy("world_sparse", None))
+
+    def test_world3d_uniform_allocation_does_not_want_occupancy(self):
+        self.assertFalse(encoder_wants_occupancy("world3d", {"allocation": "uniform"}))
+        self.assertFalse(encoder_wants_occupancy("world3d", {}))
+
+    def test_world3d_occupancy_allocation_wants_occupancy(self):
+        self.assertTrue(encoder_wants_occupancy("world3d", {"allocation": "occupancy"}))
+
+    def test_pixel2d_never_wants_occupancy(self):
+        self.assertFalse(encoder_wants_occupancy("pixel2d", {}))
+
+    def test_unknown_encoder_raises(self):
+        with self.assertRaises(ValueError):
+            encoder_wants_occupancy("does_not_exist", {})
+
+    def test_build_encoder_still_raises_on_unknown_name(self):
+        with self.assertRaises(ValueError):
+            build_encoder("does_not_exist", CONFIG)
 
 
 class TestEncoderScheduleParams(unittest.TestCase):

@@ -40,6 +40,7 @@ from nrp.torch_backend.sampling import sample_light, sample_positions  # noqa: E
 from nrp.torch_backend.train import (  # noqa: E402
     light_param_vector,
     load_config,
+    load_trained_model,
     train,
     validate_torch_config,
 )
@@ -368,6 +369,84 @@ class ModelTests(unittest.TestCase):
             report = train(cfg)
             model = TorchNRP.load(str(Path(tmp) / "out" / "model.pt"))
             cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
+            image = relight(model, cache, [light])
+        self.assertEqual(report["parameter_count"], model.parameter_count)
+        self.assertEqual(image.shape, (8, 8, 3))
+        self.assertTrue(np.isfinite(image).all())
+
+    def test_world_sparse_training_and_relight_smoke(self):
+        """world_sparse always needs occupancy; train() must build it, not just
+        world3d's opt-in occupancy allocation (see build_single_cache_occupancy)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 8, "height": 8, "spp": 2, "bounces": 1, "seed": 2},
+                "light_type": "sphere",
+                "light_bounds": {"radius_min": 0.05, "radius_max": 0.2},
+                "sampling": "segments",
+                "pool": {"size": 4, "replace_every": 5, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 10,
+                "batch_pixels": 64,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "spatial_encoding": "world_sparse",
+                    "encoding": {
+                        "levels": 2,
+                        "base_resolution": 2,
+                        "finest_resolution": 8,
+                    },
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+                "device": "cpu",
+            }
+            report = train(cfg)
+            cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            model = load_trained_model(str(Path(tmp) / "out" / "model.pt"), cache)
+            light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
+            image = relight(model, cache, [light])
+        self.assertEqual(report["parameter_count"], model.parameter_count)
+        self.assertEqual(image.shape, (8, 8, 3))
+        self.assertTrue(np.isfinite(image).all())
+
+    def test_world3d_occupancy_allocation_training_smoke(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "cache": str(Path(tmp) / "cache.npz"),
+                "out_dir": str(Path(tmp) / "out"),
+                "trace": {"width": 8, "height": 8, "spp": 2, "bounces": 1, "seed": 2},
+                "light_type": "sphere",
+                "light_bounds": {"radius_min": 0.05, "radius_max": 0.2},
+                "sampling": "segments",
+                "pool": {"size": 4, "replace_every": 5, "replace_count": 1},
+                "denoise": {"enabled": False},
+                "iters": 10,
+                "batch_pixels": 64,
+                "lr": 0.01,
+                "model": {
+                    "hidden_width": 16,
+                    "hidden_layers": 2,
+                    "spatial_encoding": "world3d",
+                    "encoding": {
+                        "levels": 2,
+                        "table_size_log2": 6,
+                        "base_resolution": 2,
+                        "finest_resolution": 8,
+                        "allocation": "occupancy",
+                    },
+                },
+                "n_val_lights": 2,
+                "seed": 0,
+                "device": "cpu",
+            }
+            report = train(cfg)
+            cache = trace_path_cache(8, 8, spp=2, max_bounces=1, seed=2)
+            model = load_trained_model(str(Path(tmp) / "out" / "model.pt"), cache)
             light = SphereLight(center=[0.5, 0.7, 0.5], radius=0.1)
             image = relight(model, cache, [light])
         self.assertEqual(report["parameter_count"], model.parameter_count)

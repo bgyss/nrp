@@ -65,25 +65,35 @@ def register_encoder(name: str):
     return wrap
 
 
-def build_encoder(name: str, config: dict | None = None, occupancy=None):
-    """Construct a spatial encoder, supplying occupancy only to arms that need it."""
+def encoder_wants_occupancy(name: str, config: dict | None = None) -> bool:
+    """Whether constructing `name` with `config` requires an occupancy argument.
+
+    True either because the encoder class always needs one (e.g. `world_sparse`,
+    whose exact index has no dense/hashed fallback) or because this particular
+    config opts a class with a uniform default into `allocation: "occupancy"`
+    (e.g. `world3d`). Shared by `build_encoder` and any caller (single-view
+    `train`, camera-conditioned `train_conditioned`) that must build occupancy
+    from a cache before construction.
+    """
     _ensure_loaded()
     if name not in SPATIAL_ENCODERS:
         raise ValueError(
             f"unknown spatial encoding {name!r}; expected one of {sorted(SPATIAL_ENCODERS)}"
         )
     cls = SPATIAL_ENCODERS[name]
+    config = config or {}
+    return bool(getattr(cls, "needs_occupancy", False) or config.get("allocation") == "occupancy")
+
+
+def build_encoder(name: str, config: dict | None = None, occupancy=None):
+    """Construct a spatial encoder, supplying occupancy only to arms that need it."""
+    _ensure_loaded()
     kwargs = dict(config or {})
-    # Arm A opts into occupancy through its config rather than a class flag, because
-    # allocation="uniform" must keep working with no cache available.
-    wants_occupancy = (
-        getattr(cls, "needs_occupancy", False) or kwargs.get("allocation") == "occupancy"
-    )
-    if wants_occupancy:
+    if encoder_wants_occupancy(name, kwargs):
         if occupancy is None:
             raise ValueError(f"spatial encoding {name!r} requires occupancy")
         kwargs["occupancy"] = occupancy
-    return cls(**kwargs)
+    return SPATIAL_ENCODERS[name](**kwargs)
 
 
 def encoder_schedule_params(name: str, config: dict | None = None) -> tuple[int, int, int]:
