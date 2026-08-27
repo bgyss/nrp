@@ -294,13 +294,16 @@ def evaluate_camera(
     cache: PathCache,
     baseline_model: TorchNRP,
     lights: list,
+    peak: float,
 ) -> dict:
     """One gate row: conditioned proxy vs the nearest trained view's pixel2d proxy.
 
     `camera` is the physical (unrotated-name-carrying) camera record used for row
     identity; `conditioned_camera` is the same camera expressed in whatever world
     frame `cache` itself is in (see `rotated_camera`) and is what the model's
-    view-direction input is computed from.
+    view-direction input is computed from. `peak` is the campaign-fixed PSNR peak
+    (see `campaign_peak`) applied to every PSNR computed here, so the absolute
+    numbers mean the same thing at every held-out camera.
     """
     reference = gather_lights(cache, lights)
     baseline = relight(baseline_model, cache, lights)
@@ -318,8 +321,8 @@ def evaluate_camera(
     row = {
         "arm": arm,
         "camera": camera["name"],
-        "psnr_db": psnr(predicted, reference),
-        "baseline_psnr_db": psnr(baseline, reference),
+        "psnr_db": psnr(predicted, reference, peak=peak),
+        "baseline_psnr_db": psnr(baseline, reference, peak=peak),
         "out_of_occupancy_fraction": 0.0,
         "in_occupancy_psnr_db": None,
         "out_occupancy_psnr_db": None,
@@ -336,10 +339,28 @@ def evaluate_camera(
         _, hit = encoder._lookup(pos0, level)
         mask = hit.numpy().reshape(cache.height, cache.width)
         if mask.any():
-            row["in_occupancy_psnr_db"] = psnr(predicted[mask], reference[mask])
+            row["in_occupancy_psnr_db"] = psnr(predicted[mask], reference[mask], peak=peak)
         if (~mask).any():
-            row["out_occupancy_psnr_db"] = psnr(predicted[~mask], reference[~mask])
+            row["out_occupancy_psnr_db"] = psnr(predicted[~mask], reference[~mask], peak=peak)
     return row
+
+
+def campaign_peak(trained_caches: list[PathCache], lights: list) -> float:
+    """The single fixed PSNR peak for one seed's whole campaign.
+
+    `psnr` defaults its peak to *the reference image's own max* (documented HDR
+    convention in `nrp/metrics.py`) -- fine for the comparative delta in G1, which is
+    peak-independent (prediction and baseline share the same reference at the same
+    camera, so the peak cancels exactly), but NOT fine for G1's absolute floor: a
+    held-out camera whose reference happens to contain one very bright pixel gets an
+    inflated per-image peak and clears the floor more easily than a dimmer camera, so
+    "15 dB absolute" would not mean the same thing at every camera. Fixing one peak
+    per seed -- the max GATHERLIGHT radiance over the *trained* cameras only, so the
+    held-out references never influence the scale the held-out cameras are judged on
+    -- makes the absolute floor comparable across cameras while leaving the delta
+    numerically unchanged (it never depended on the peak to begin with).
+    """
+    return max(float(gather_lights(cache, lights).max()) for cache in trained_caches)
 
 
 def _sparse_collision_fraction(capacity_report: dict) -> float:
@@ -385,10 +406,15 @@ def main(argv: list[str] | None = None) -> int:
     latest_capacity_report: dict[str, dict] = {}
     collision_by_arm: dict[str, float] = {}
 
+    peak_by_seed: dict[int, float] = {}
     for seed in args.seeds:
         seed_dir = out_path.parent / f"seed{seed}"
         cache_paths = export_arc(trained + held_out, seed_dir, args)
         eval_lights = frozen_lights(PathCache.load(str(cache_paths[trained[0]["name"]])), seed)
+        seed_peak = campaign_peak(
+            [PathCache.load(str(cache_paths[camera["name"]])) for camera in trained], eval_lights
+        )
+        peak_by_seed[seed] = seed_peak
 
         for rotation in args.rotations:
             rot_dir = seed_dir if rotation == 0.0 else seed_dir / f"rot{rotation:g}"
@@ -465,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
                         caches[camera["name"]],
                         baseline_models[baseline_camera["name"]],
                         eval_lights,
+                        seed_peak,
                     )
                     row["seed"] = seed
                     row["rotation_degrees"] = float(rotation)
@@ -506,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         "cameras": {"trained": trained, "held_out": held_out},
         "hardware": {"platform": sys.platform, "device": args.device},
         "absolute_floor_db": args.absolute_floor_db,
+        "peak_by_seed": {str(seed): peak for seed, peak in peak_by_seed.items()},
         "arms": arms_report,
         "g2_capacity_context": g2_capacity_context(capacity_rows),
         "promoted": False,

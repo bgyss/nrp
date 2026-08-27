@@ -12,6 +12,7 @@ from examples.r1_encoding_redesign import (  # noqa: E402
     camera_arc,
     nearest_trained_camera,
 )
+from nrp.metrics import psnr  # noqa: E402
 
 
 class TestCameraArc(unittest.TestCase):
@@ -57,6 +58,36 @@ class TestNearestTrainedCamera(unittest.TestCase):
         ]
         held = {"name": "h", "origin": [0.9, 0.0, 0.0], "target": [0.5, 0.5, 0.5]}
         self.assertEqual(nearest_trained_camera(held, trained)["name"], "b")
+
+
+class TestDeltaIsPeakInvariant(unittest.TestCase):
+    """Pins the property this runner's fixed-peak change relies on: G1's comparative
+    delta is peak-independent (the peak cancels in `10*log10(MSE_baseline/MSE_pred)`)
+    even though the absolute PSNR values it's built from are not."""
+
+    def test_delta_matches_across_two_peaks_while_absolute_psnr_differs(self):
+        rng = np.random.default_rng(0)
+        reference = rng.random((8, 8, 3)) + 0.1
+        prediction = reference + rng.normal(scale=0.05, size=reference.shape)
+        baseline = reference + rng.normal(scale=0.15, size=reference.shape)
+
+        peak_a, peak_b = 1.0, 5.0
+        self.assertNotEqual(peak_a, peak_b)
+
+        pred_psnr_a = psnr(prediction, reference, peak=peak_a)
+        base_psnr_a = psnr(baseline, reference, peak=peak_a)
+        delta_a = pred_psnr_a - base_psnr_a
+
+        pred_psnr_b = psnr(prediction, reference, peak=peak_b)
+        base_psnr_b = psnr(baseline, reference, peak=peak_b)
+        delta_b = pred_psnr_b - base_psnr_b
+
+        # The absolute numbers really do move with the peak...
+        self.assertNotAlmostEqual(pred_psnr_a, pred_psnr_b, places=6)
+        self.assertNotAlmostEqual(base_psnr_a, base_psnr_b, places=6)
+        # ...but the delta between them does not, which is what makes it safe for a
+        # fixed campaign peak to change the absolute floor without touching G1's win.
+        self.assertAlmostEqual(delta_a, delta_b, places=9)
 
 
 if __name__ == "__main__":
