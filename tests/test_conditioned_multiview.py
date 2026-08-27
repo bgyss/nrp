@@ -338,6 +338,21 @@ class OccupancyScheduleRegressionTests(unittest.TestCase):
             self.assertEqual(report["view_count"], 2)
             self.assertTrue(np.isfinite(report["loss_last"]))
 
+    def test_world_normal_triplane_trains_with_empty_encoding_config(self):
+        # FIX 5: nothing else in the suite constructs a TorchNRP with
+        # spatial_encoding="world_normal_triplane" through the real
+        # train_conditioned path, so arm C's aux[:, 4:7] normal slice and its
+        # `@ self.world_basis` rotation (model.py) were exercised only by the
+        # campaign itself. This end-to-end regression closes that gap the same
+        # way the sibling arms above do.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report = train_conditioned(
+                self._base_config(root, "world_normal_triplane", {})
+            )
+            self.assertEqual(report["view_count"], 2)
+            self.assertTrue(np.isfinite(report["loss_last"]))
+
 
 class InferenceTests(unittest.TestCase):
     def _manifest_and_model(self, root: Path) -> tuple[Path, Path]:

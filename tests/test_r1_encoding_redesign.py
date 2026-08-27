@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from examples.r1_encoding_redesign import (  # noqa: E402
     ARM_ENCODING_CONFIG,
     ARM_NAMES,
+    _sparse_collision_fraction,
     camera_arc,
     campaign_peak,
     nearest_trained_camera,
@@ -92,6 +93,31 @@ class TestCampaignPeakGuards(unittest.TestCase):
         nan_cache = _cache_with_throughput(float("nan"))
         with self.assertRaisesRegex(ValueError, "not finite"):
             campaign_peak([nan_cache], _COVERING_LIGHT, seed=9)
+
+
+class TestSparseCollisionFraction(unittest.TestCase):
+    def test_returns_the_worst_level(self):
+        report = {
+            "levels": [
+                {"collision_fraction": 0.0},
+                {"collision_fraction": 0.02},
+                {"collision_fraction": 0.01},
+            ]
+        }
+        self.assertEqual(_sparse_collision_fraction(report, "world_sparse"), 0.02)
+
+    def test_empty_levels_raises_naming_the_arm(self):
+        # FIX 1: an empty/differently-shaped capacity report must never be read as
+        # a verified zero-collision pass -- 0.0 is exactly what G3 reads as that.
+        with self.assertRaisesRegex(ValueError, "world_sparse"):
+            _sparse_collision_fraction({"levels": []}, "world_sparse")
+        with self.assertRaisesRegex(ValueError, "world_sparse"):
+            _sparse_collision_fraction({}, "world_sparse")
+
+    def test_level_missing_the_key_raises_naming_the_arm(self):
+        report = {"levels": [{"collision_fraction": 0.0}, {"resolution": 64}]}
+        with self.assertRaisesRegex(ValueError, "world_sparse"):
+            _sparse_collision_fraction(report, "world_sparse")
 
 
 class TestCameraArc(unittest.TestCase):

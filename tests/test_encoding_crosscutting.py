@@ -78,6 +78,55 @@ class TestCheckpointBackCompat(unittest.TestCase):
         torch.testing.assert_close(model(xy, aux, params), clone(xy, aux, params))
 
 
+class TestNormalSliceIsReadByArmC(unittest.TestCase):
+    """FIX 5: `TorchNRP.forward`'s aux[:, 4:7] normal slice for
+    spatial_encoding="world_normal_triplane" agrees with `pixel_tensors`' aux
+    layout only by comment, not by contract. Prove the slice is actually
+    consumed: permuting the aux block's normal columns must change the output.
+    """
+
+    def _model(self) -> TorchNRP:
+        # use_aux=False: aux is otherwise also concatenated raw into the MLP input
+        # (independent of spatial_encoding), which would let a permuted normal
+        # column change the output even if the encoding never reads it. Disabling
+        # that path isolates what this test is actually checking: does the
+        # encoding's own aux[:, 4:7] normal slice affect the result.
+        return TorchNRP(
+            light_type="sphere",
+            hidden_width=8,
+            hidden_layers=1,
+            encoding={
+                "levels": 2,
+                "features_per_level": 2,
+                "table_size_log2": 10,
+                "base_resolution": 4,
+                "finest_resolution": 8,
+            },
+            spatial_encoding="world_normal_triplane",
+            world_bounds={"min": [-1.0, -1.0, -1.0], "max": [2.0, 2.0, 2.0]},
+            use_aux=False,
+        )
+
+    def test_permuting_the_normal_columns_changes_the_output(self):
+        model = self._model()
+        xyz = torch.rand(6, 3)
+        params = torch.rand(6, 4)
+        # aux = albedo(3) + depth(1) + normal(3); make the normal block
+        # axis-aligned and distinct per row so permuting its three columns
+        # actually changes which plane each point selects.
+        aux = torch.rand(6, 7)
+        normals = torch.eye(3).repeat(2, 1)
+        aux[:, 4:7] = normals
+        permuted = aux.clone()
+        permuted[:, 4:7] = normals[:, [1, 2, 0]]  # rotate xyz -> yzx
+
+        with torch.no_grad():
+            out_original = model(xyz, aux, params)
+            out_permuted = model(xyz, permuted, params)
+
+        self.assertFalse(torch.allclose(out_original, out_permuted))
+
+
 class TestStreamedParity(unittest.TestCase):
     """S1 convention: the streamed path must agree with the in-memory path."""
 

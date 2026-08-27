@@ -91,6 +91,25 @@ class TestGradients(unittest.TestCase):
         selected = [t.grad for t in enc.planes[1].tables if t.grad is not None]
         self.assertTrue(any(bool(g.abs().sum() > 0) for g in selected))
 
+    def test_gradients_do_not_flow_to_the_non_selected_planes(self):
+        # FIX 6: arm C's defining claim is that a point reads ONE plane, not three.
+        # Non-zero gradient on the selected plane alone does not rule out gradient
+        # also leaking into the other two planes (e.g. from a bug that blends
+        # instead of selecting); this pins the exclusivity too.
+        enc = NormalAwareTriPlane(**CONFIG)
+        xyz = torch.rand(8, 3)
+        normals = torch.zeros(8, 3)
+        normals[:, 1] = 1.0
+        enc(xyz, normals).sum().backward()
+        for axis, plane in enumerate(enc.planes):
+            if axis == 1:
+                continue
+            for table in plane.tables:
+                self.assertIsNone(
+                    table.grad,
+                    f"plane {axis} received a gradient but only plane 1 was selected",
+                )
+
 
 class TestValidation(unittest.TestCase):
     def test_missing_normals_raises(self):

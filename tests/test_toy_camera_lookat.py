@@ -13,11 +13,25 @@ from nrp.toy_tracer import CAM_POS, _camera_rays, layer_ownership_mask  # noqa: 
 
 class TestBackwardCompatibility(unittest.TestCase):
     def test_default_is_bit_identical_to_the_committed_plus_z_camera(self):
-        # Committed toy caches and their tests depend on this exact ray set.
-        origins, dirs = _camera_rays(8, 8, None)
+        # Committed toy caches and their tests depend on this exact ray set. The
+        # pre-lookat formula is spelled out here literally (not read off any helper
+        # in toy_tracer.py), so a change to the lookat code path -- even one that
+        # still happens to leave a center ray with z > 0.9 -- would be caught by
+        # comparing every ray's direction, not just one pixel's z-component.
+        width = height = 8
+        fov_deg = 68.0
+        ys, xs = np.meshgrid(np.arange(height), np.arange(width), indexing="ij")
+        px = xs.reshape(-1).astype(np.float64)
+        py = ys.reshape(-1).astype(np.float64)
+        half = np.tan(np.radians(fov_deg) / 2.0)
+        u = ((px + 0.5) / width * 2.0 - 1.0) * half
+        v = -((py + 0.5) / height * 2.0 - 1.0) * half * (height / width)
+        expected_dirs = np.stack([u, v, np.ones_like(u)], axis=1)
+        expected_dirs /= np.linalg.norm(expected_dirs, axis=1, keepdims=True)
+
+        origins, dirs = _camera_rays(width, height, None)
         self.assertTrue(np.allclose(origins, CAM_POS))
-        centre = dirs[len(dirs) // 2 + 4]
-        self.assertGreater(float(centre[2]), 0.9)
+        np.testing.assert_allclose(dirs, expected_dirs, atol=1e-12)
 
     def test_explicit_target_along_plus_z_reproduces_the_default(self):
         a_o, a_d = _camera_rays(8, 8, None)

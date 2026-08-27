@@ -188,7 +188,9 @@ class TestG3(unittest.TestCase):
 
     def test_world_sparse_measured_and_zero_collision_passes(self):
         rows = [_row(seed=0, arm="world_sparse")]
-        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.0})
+        gate = g3_stability(
+            rows, collision_fractions={"world_sparse": 0.0}, zero_collision_arms={"world_sparse"}
+        )
         self.assertTrue(gate["collision_assertions_checked"])
         self.assertTrue(gate["collision_assertions_passed"])
 
@@ -197,19 +199,21 @@ class TestG3(unittest.TestCase):
         # world_sparse rows were produced, but no collision fraction was ever
         # recorded for it. A missing entry must NOT read as a pass.
         rows = [_row(seed=0, arm="world_sparse")]
-        gate = g3_stability(rows, collision_fractions={})
+        gate = g3_stability(rows, collision_fractions={}, zero_collision_arms={"world_sparse"})
         self.assertTrue(gate["collision_assertions_checked"])
         self.assertFalse(gate["collision_assertions_passed"])
 
     def test_world_sparse_measured_and_nonzero_collision_is_a_failure(self):
         rows = [_row(seed=0, arm="world_sparse")]
-        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.01})
+        gate = g3_stability(
+            rows, collision_fractions={"world_sparse": 0.01}, zero_collision_arms={"world_sparse"}
+        )
         self.assertTrue(gate["collision_assertions_checked"])
         self.assertFalse(gate["collision_assertions_passed"])
 
     def test_world_sparse_not_measured_is_reported_not_applicable(self):
         rows = [_row(seed=0, arm="world_normal_triplane")]
-        gate = g3_stability(rows, collision_fractions={})
+        gate = g3_stability(rows, collision_fractions={}, zero_collision_arms={"world_sparse"})
         self.assertFalse(gate["collision_assertions_checked"])
         # Not-applicable must never read as a pass either.
         self.assertFalse(gate["collision_assertions_passed"])
@@ -218,8 +222,34 @@ class TestG3(unittest.TestCase):
         # Every seed clears the delta threshold, but the sparse arm has a genuine
         # key-collision defect. `passed` must not ignore that.
         rows = [_row(seed=s, arm="world_sparse", delta_db=5.0) for s in range(3)]
-        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.02})
+        gate = g3_stability(
+            rows, collision_fractions={"world_sparse": 0.02}, zero_collision_arms={"world_sparse"}
+        )
         self.assertEqual(gate["seeds_passing"], gate["seeds_total"])
+        self.assertFalse(gate["collision_assertions_passed"])
+        self.assertFalse(gate["passed"])
+
+    def test_no_zero_collision_arms_declared_is_not_applicable(self):
+        # Even though world_sparse rows exist, if the caller declares no arm as
+        # zero-collision-guaranteeing (e.g. via a class-flag lookup that found
+        # nothing), the assertion must be not-applicable, never a silent pass.
+        rows = [_row(seed=0, arm="world_sparse")]
+        gate = g3_stability(rows, collision_fractions={"world_sparse": 0.0})
+        self.assertFalse(gate["collision_assertions_checked"])
+        self.assertFalse(gate["collision_assertions_passed"])
+
+    def test_renaming_the_guaranteeing_arm_does_not_silently_drop_the_assertion(self):
+        # FIX 3: the arm previously hardcoded as "world_sparse" is renamed to
+        # "world_exact_index". Because the gate is keyed off the caller-supplied
+        # zero_collision_arms set (derived from a class capability flag) rather than
+        # a string literal, the assertion still fires under the new name.
+        rows = [_row(seed=0, arm="world_exact_index")]
+        gate = g3_stability(
+            rows,
+            collision_fractions={"world_exact_index": 0.03},
+            zero_collision_arms={"world_exact_index"},
+        )
+        self.assertTrue(gate["collision_assertions_checked"])
         self.assertFalse(gate["collision_assertions_passed"])
         self.assertFalse(gate["passed"])
 
