@@ -10,8 +10,16 @@ nrp/torch_backend/train.py's tests.
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from nrp.path_cache import PathCache  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -325,6 +333,131 @@ class GateBindingTests(unittest.TestCase):
         runner = load_runner()
         with self.assertRaises(ValueError):
             runner.arm_gate_verdict([0.1] * 5, (0, 1, 2, 3, 4))
+
+
+def _tiny_cache() -> PathCache:
+    """A minimal one-pixel, one-segment cache. `run_sweep`'s real callers that would
+    read this cache's contents (training, evaluation, vertex-support measurement) are
+    monkeypatched away by `RunSweepGateBindingTest` below, so only `PathCache.validate`
+    (called implicitly by construction patterns elsewhere) needs a shape-correct
+    object -- the numeric content is never inspected.
+    """
+    return PathCache(
+        width=1,
+        height=1,
+        n_paths=np.array([1], dtype=np.int64),
+        seg_pixel=np.array([0], dtype=np.int64),
+        seg_origin=np.array([[0.0, 0.0, 0.0]]),
+        seg_dir=np.array([[0.0, 0.0, 1.0]]),
+        seg_tmax=np.array([1.0]),
+        seg_throughput=np.full((1, 3), 1.0),
+        albedo=np.full((1, 1, 3), 0.5),
+        depth=np.ones((1, 1)),
+        normal=np.tile(np.array([0.0, 1.0, 0.0]), (1, 1, 1)),
+        position=np.array([[[0.0, 0.0, 1.0]]]),
+    )
+
+
+class RunSweepGateBindingTest(unittest.TestCase):
+    """Regression test for the Critical defect `GateBindingTests` above does not
+    actually catch: those tests call `arm_gate_verdict` directly, a hand-copied
+    mirror of the call `run_sweep` makes at examples/r1_kitchen_k1.py:406. Reverting
+    that call to the buggy `arm_gate_verdict(seed_mean_deltas, seeds)` (dropping
+    `binding="per_seed"`) leaves the direct tests above passing, because they never
+    go through `run_sweep` at all.
+
+    This test drives `run_sweep` itself, with K1's documented 5-seed default (not a
+    scheduled equivalence look), so it fails if the real call site regresses. Real
+    training/evaluation/vertex-support measurement are monkeypatched to synthetic,
+    near-instant stand-ins -- constructing a real cache large enough to train on
+    would take minutes per seed, and the gate-binding bug lives entirely in
+    `run_sweep`'s post-training bookkeeping, not in training or evaluation
+    themselves. The monkeypatched pieces are exactly the ones `nrp/torch_backend`'s
+    own tests already cover independently (training, model loading, evaluation).
+    """
+
+    def _run(self, runner):
+        seeds = (0, 1, 2, 3, 4)
+        # Deterministic per-seed deltas the real per-light pairing math on the way to
+        # the gate call must reproduce exactly -- if `run_sweep`'s aggregation logic
+        # regressed this would also fail even though that is not what this test is for.
+        per_seed_delta = {0: 0.1, 1: -0.2, 2: 0.05, 3: -0.4, 4: 0.0}
+        control_light = {"radius": 0.1}
+        control_by_seed = {
+            seed: [{"light": control_light, "psnr_db_vs_raw": 20.0}] for seed in seeds
+        }
+        validation_sets = {seed: seed for seed in seeds}  # opaque marker, read back below
+
+        def fake_train(cfg):
+            return {"parameter_count": 1, "iters_per_second": 1.0, "train_seconds": 0.001}
+
+        class _FakeEncoding:
+            def capacity_report(self):
+                return None
+
+        class _FakeModel:
+            encoding = _FakeEncoding()
+
+        def fake_load_trained_model(path, cache):
+            return _FakeModel()
+
+        def fake_evaluate_model(model, cache, val_set):
+            seed = val_set
+            return [{"light": control_light, "psnr_db_vs_raw": 20.0 + per_seed_delta[seed]}]
+
+        def fake_cache_vertex_support(cache, levels, base_resolution, finest):
+            return {
+                "finest": {"median_support": 1.0, "fraction_touched_by_le1_pixel": 0.5},
+            }
+
+        cache = _tiny_cache()
+        with (
+            mock.patch.object(runner, "train", fake_train),
+            mock.patch.object(runner, "load_trained_model", fake_load_trained_model),
+            mock.patch.object(runner, "evaluate_model", fake_evaluate_model),
+            mock.patch.object(runner, "cache_vertex_support", fake_cache_vertex_support),
+        ):
+            with tempfile.TemporaryDirectory() as out_dir:
+                per_resolution = runner.run_sweep(
+                    runner.BASE_TRAIN_CONFIG,
+                    cache,
+                    root=ROOT,
+                    out_root=Path(out_dir),
+                    seeds=seeds,
+                    resolutions=(32,),
+                    base_resolution=4,
+                    control_by_seed=control_by_seed,
+                    validation_sets=validation_sets,
+                    resamples=10,
+                    bootstrap_seed=0,
+                )
+        return per_resolution, per_seed_delta
+
+    def test_run_sweep_binds_the_five_seed_gate_on_per_seed(self):
+        runner = load_runner()
+        per_resolution, per_seed_delta = self._run(runner)
+        self.assertEqual(len(per_resolution), 1)
+        gate = per_resolution[0]["gate"]
+        self.assertEqual(gate["binding"], "per_seed")
+        expected_pass = all(delta >= runner.GATE_DELTA_DB for delta in per_seed_delta.values())
+        self.assertEqual(gate["pass"], expected_pass)
+
+    def test_run_sweep_raises_if_the_default_equivalence_binding_is_used(self):
+        """Demonstrates the failure mode this test class exists to catch: with the
+        buggy call (`arm_gate_verdict(seed_mean_deltas, seeds)`, no `binding=`),
+        `run_sweep` would raise `ValueError` at 5 seeds instead of returning a report,
+        since 5 is not one of the equivalence gate's scheduled looks.
+        """
+        runner = load_runner()
+        real_arm_gate_verdict = runner.arm_gate_verdict
+
+        def buggy_arm_gate_verdict(seed_mean_deltas, seeds, *args, **kwargs):
+            kwargs.pop("binding", None)
+            return real_arm_gate_verdict(seed_mean_deltas, seeds, *args, **kwargs)
+
+        with mock.patch.object(runner, "arm_gate_verdict", buggy_arm_gate_verdict):
+            with self.assertRaises(ValueError):
+                self._run(runner)
 
 
 class SpearmanTests(unittest.TestCase):
