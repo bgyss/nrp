@@ -155,12 +155,40 @@ def seeds_needed(std_db: float, half_width_db: float, confidence: float) -> int:
     if std_db == 0.0:
         return 2
     quantile_p = 1.0 - (1.0 - confidence) / 2.0
-    n = 2
-    while t_ppf(quantile_p, n - 1) * std_db / math.sqrt(n) > half_width_db:
-        n += 1
-        if n > 100000:  # pragma: no cover - unreachable for any realistic spread
-            raise ValueError("seeds_needed did not converge; check std_db/half_width_db")
-    return n
+
+    def half_width_at(n: int) -> float:
+        return t_ppf(quantile_p, n - 1) * std_db / math.sqrt(n)
+
+    if half_width_at(2) <= half_width_db:
+        return 2
+
+    # Exponential bracket search: double a candidate n until the condition is
+    # met, then binary-search the bracket for the smallest satisfying n. This
+    # replaces a linear scan that could take millions of t_ppf evaluations for
+    # a single outlier seed -- each call recomputing a bisection root -- and
+    # that hit a fixed cap and raised instead of returning the (valid, if
+    # large) answer.
+    low, high = 2, 4
+    max_doublings = 64  # 2*2**64 vastly exceeds any seed count that matters
+    doublings = 0
+    while half_width_at(high) > half_width_db:
+        low = high
+        high *= 2
+        doublings += 1
+        if doublings > max_doublings:
+            raise ValueError(
+                f"seeds_needed could not bracket a solution for std_db={std_db}, "
+                f"half_width_db={half_width_db}, confidence={confidence}"
+            )
+
+    # Invariant: half_width_at(low) > half_width_db >= half_width_at(high).
+    while high - low > 1:
+        mid = (low + high) // 2
+        if half_width_at(mid) <= half_width_db:
+            high = mid
+        else:
+            low = mid
+    return high
 
 
 def per_seed_verdict(deltas, threshold_db: float = DEFAULT_THRESHOLD_DB) -> dict:

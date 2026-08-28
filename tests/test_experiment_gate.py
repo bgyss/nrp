@@ -218,6 +218,48 @@ class SeedsNeededTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             seeds_needed(1.0, 0.0, 0.99)
 
+    def test_matches_brute_force_linear_scan(self):
+        """Pin the bracket/binary search to the old linear scan's semantics.
+
+        The old implementation walked n = 2, 3, 4, ... and returned the first n
+        whose t-interval half-width cleared half_width_db. Reimplement that scan
+        independently here (not by calling seeds_needed) and check the new
+        search returns exactly the same integer for a range of spreads.
+        """
+        cases = [
+            (0.3, 0.5),
+            (0.73, 0.5),
+            (1.0, 0.5),
+            (1.67, 0.5),
+            (4.0, 0.5),
+            (1.0, 0.25),
+        ]
+        confidence = 1.0 - 0.05 / 6
+        quantile_p = 1.0 - (1.0 - confidence) / 2.0
+        for std_db, half_width_db in cases:
+            with self.subTest(std_db=std_db, half_width_db=half_width_db):
+                n = 2
+                while t_ppf(quantile_p, n - 1) * std_db / math.sqrt(n) > half_width_db:
+                    n += 1
+                self.assertEqual(seeds_needed(std_db, half_width_db, confidence), n)
+
+    def test_outlier_spread_returns_promptly_instead_of_hanging(self):
+        """A single-seed outlier (measured on Kitchen: one seed at -3.8 dB and
+        worse) used to make evaluate() walk a linear scan of millions of steps,
+        each recomputing a bisection root, and then raise past the n > 100000
+        guard instead of returning the verdict it had already decided. Both the
+        hang and the spurious raise are regressions this test guards against.
+        """
+        import time
+
+        deltas = [0.0] * 7 + [1000.0]
+        start = time.perf_counter()
+        result = EquivalenceGate().evaluate(deltas)
+        elapsed = time.perf_counter() - start
+        self.assertLess(elapsed, 5.0, "evaluate() regressed to a linear seeds_needed scan")
+        self.assertEqual(result["verdict"], "continue")
+        self.assertIsInstance(result["seeds_needed"], int)
+
 
 if __name__ == "__main__":
     unittest.main()
