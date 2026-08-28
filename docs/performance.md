@@ -3181,21 +3181,24 @@ slots, −0.064 dB) < `pixel2d` (26k slots, baseline 0 dB); and (c) why `pixel2d
 itself is strong on Kitchen — at `finest_resolution=128` on a 128² image, every
 finest-level vertex is shared by roughly 4 neighboring pixels *by construction*,
 so screen-space encoding guarantees uniform support while world-space encoding,
-which follows scene geometry rather than the pixel grid, does not. This hypothesis **has since been tested by intervention and rejected** — see
-"K1: finest-resolution sweep falsifies the vertex-support hypothesis" below. The
-support measurements in the table above stand; the causal reading of them does
-not. The falsifiable test was specified in advance in
-`docs/plans/2026-08-27-kitchen-parity-next-steps.md`.
+which follows scene geometry rather than the pixel grid, does not. This hypothesis **has since been tested by intervention, and the sweep gives it
+no support** — see "K1: finest-resolution sweep does not support the
+vertex-support hypothesis" below. The support measurements in the table above
+stand; the causal reading of them does not. The falsifiable test was specified in
+advance in `docs/plans/2026-08-27-kitchen-parity-next-steps.md`.
 
-## K1: finest-resolution sweep falsifies the vertex-support hypothesis (Kitchen 128²)
+## K1: finest-resolution sweep does not support the vertex-support hypothesis (Kitchen 128²)
 
 The vertex-support hypothesis above was explicitly labelled "not verified by
 intervention". `docs/plans/2026-08-27-kitchen-parity-next-steps.md` defined the
 intervention that would test it — K1 — together with its falsifier, in advance.
-**K1 has now run, and the prediction is falsified.** Per that plan's stop
-condition, K2–K4 (low-support vertex pruning, more supervision per vertex,
-feature-table regularization) **must not be run**: they were conditional on K1
-confirming the predicted direction.
+**K1 has now run.** The sweep gives no support for the predicted direction, and is
+underpowered to establish either direction: 5 points, Spearman ρ = +0.20
+(p ≈ 0.75), against per-seed noise (~1 dB run-to-run, see below) comparable to the
+0.5 dB effect the gate is judging. Per that plan's stop condition, K2–K4
+(low-support vertex pruning, more supervision per vertex, feature-table
+regularization) **must not be run**: they were conditional on K1 confirming the
+predicted direction, which it did not.
 
 Evidence: `out/r1-kitchen-parity-k1/report.json`. Runner:
 `examples/r1_kitchen_k1.py` (tests: `tests/test_r1_kitchen_k1.py`).
@@ -3221,7 +3224,7 @@ rebuilt held-out validation lights fingerprint identically to the control's.
 as `finest_resolution` falls, best near the resolution where median vertex
 support approaches `pixel2d`'s ~4 pixels/vertex.
 
-| finest res | per-seed Δ vs fixed `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB | vertices/pixel | median support | ≤1 px | params |
+| finest res | per-seed Δ vs fixed `pixel2d` (dB) | mean (dB) | 95% CI (dB, n=5 percentile bootstrap, descriptive only) | seeds passing −0.5 dB | vertices/pixel | median support | ≤1 px | params |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | 32 | −0.23, −0.47, −0.11, −0.19, −2.03 | −0.606 | [−1.33, −0.17] | 4/5 | 0.51 | 12 | 6.9% | 89,575 |
 | 48 | +0.08, +1.51, +0.53, −0.42, −1.02 | **+0.137** | [−0.58, +0.92] | 4/5 | 1.07 | 5 | 11.7% | 123,277 |
@@ -3229,22 +3232,35 @@ support approaches `pixel2d`'s ~4 pixels/vertex.
 | 96 | −0.48, −0.51, −0.31, −0.12, −0.21 | −0.329 | [−0.46, −0.20] | 4/5 | 3.29 | 2 | 39.2% | 252,709 |
 | 128 | +0.08, −0.19, +0.14, −0.65, −0.50 | −0.222 | [−0.50, +0.05] | 3/5 | 4.77 | 1 | **59.1%** | 343,527 |
 
-**No setting passes the unchanged 5/5-seed gate**, and the direction is wrong:
-Spearman rank correlation between `finest_resolution` and mean delta is
-**+0.20** where the prediction required a negative value, and the sequence is not
-monotonic in the predicted direction (`verdict` in the report). The two best
-settings (48 and 96) sit on either side of the worst (64); the setting with by
-far the *worst* vertex support (128, 59.1% of finest vertices touched by ≤1
-pixel) posts the second-best mean, and the setting with the *best* support (32,
-median 12 px/vertex) is third. Deliberately varying vertex support does not
-move the parity delta the way the hypothesis says it must.
+The 95% CI column is a percentile bootstrap over only 5 seeds — the same
+small-n caveat the equivalence-gate section below applies to bootstrap intervals
+at low seed counts — and is reported as descriptive context only; it is not what
+this section's conclusion rests on.
 
-The under-determination hypothesis is therefore **rejected as stated**. The
-measurements it rested on are not retracted — the toy/Kitchen support
-distributions in the table above are real, and Kitchen really does spread its
-pixel budget over more distinct surface positions — but support density is not
-the mechanism producing the Kitchen parity negative. The next step is
-re-diagnosis, not remediation.
+**No setting passes the unchanged 5/5-seed gate**, and the sweep gives no support
+for the predicted direction: Spearman rank correlation between
+`finest_resolution` and mean delta is **+0.20** (p ≈ 0.75) where the prediction
+required a negative value, and the sequence is not monotonic in the predicted
+direction (`verdict` in the report). The two best settings (48 and 96) sit on
+either side of the worst (64); the setting with by far the *worst* vertex
+support (128, 59.1% of finest vertices touched by ≤1 pixel) posts the
+second-best mean, and the setting with the *best* support (32, median 12
+px/vertex) is third. Deliberately varying vertex support does not move the
+parity delta the way the hypothesis says it must — but with only 5 points, a
+p-value around 0.75, and per-seed noise on this scene comparable to the 0.5 dB
+effect being tested (see "Run-to-run nondeterminism" and "Seed sensitivity"
+below), this sweep is also underpowered to establish the opposite direction.
+The honest reading is "not supported, and underpowered," not "falsified."
+
+The under-determination hypothesis is therefore **not supported by this sweep**,
+and the sweep cannot rule out the opposite direction either. The measurements it
+rested on are not retracted — the toy/Kitchen support distributions in the table
+above stand, and Kitchen really does spread its pixel budget over more distinct
+surface positions — but this data does not establish support density as the
+mechanism producing the Kitchen parity negative. What the sweep does establish,
+unchanged: no setting passed the gate at any resolution, and the practical
+recommendation is not to proceed to K2–K4 on this basis. K1 was measured before
+the OIDN determinism fix (see below) and has not been re-measured.
 
 ### Run-to-run nondeterminism exceeds the gate (affects K1 and the original Kitchen negative)
 
@@ -3396,7 +3412,8 @@ Promotion decisions on this track previously required every seed's paired PSNR
 delta to clear −0.5 dB. At the per-seed spreads measured on Country Kitchen under
 the deterministic denoiser, that rule rejects an arm sitting *exactly at parity*
 76–91% of the time, and its false-rejection rate rises with the seed count — a
-true-parity arm passes under 6% of the time at ten seeds. It punished sample size,
+true-parity arm passes under 7% of the time at ten seeds (measured 6.8% / 2.5% /
+0.8% at per-seed std 0.73 / 1.00 / 1.67). It punished sample size,
 so it could not be repaired by running more seeds.
 
 `nrp/experiment_gate.py` replaces it. The threshold is unchanged at −0.5 dB; the
