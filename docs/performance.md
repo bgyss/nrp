@@ -3181,6 +3181,100 @@ slots, −0.064 dB) < `pixel2d` (26k slots, baseline 0 dB); and (c) why `pixel2d
 itself is strong on Kitchen — at `finest_resolution=128` on a 128² image, every
 finest-level vertex is shared by roughly 4 neighboring pixels *by construction*,
 so screen-space encoding guarantees uniform support while world-space encoding,
-which follows scene geometry rather than the pixel grid, does not. This
-hypothesis has not been tested by intervention; see
-`docs/plans/2026-08-27-kitchen-parity-next-steps.md` for the falsifiable test.
+which follows scene geometry rather than the pixel grid, does not. This hypothesis **has since been tested by intervention and rejected** — see
+"K1: finest-resolution sweep falsifies the vertex-support hypothesis" below. The
+support measurements in the table above stand; the causal reading of them does
+not. The falsifiable test was specified in advance in
+`docs/plans/2026-08-27-kitchen-parity-next-steps.md`.
+
+## K1: finest-resolution sweep falsifies the vertex-support hypothesis (Kitchen 128²)
+
+The vertex-support hypothesis above was explicitly labelled "not verified by
+intervention". `docs/plans/2026-08-27-kitchen-parity-next-steps.md` defined the
+intervention that would test it — K1 — together with its falsifier, in advance.
+**K1 has now run, and the prediction is falsified.** Per that plan's stop
+condition, K2–K4 (low-support vertex pruning, more supervision per vertex,
+feature-table regularization) **must not be run**: they were conditional on K1
+confirming the predicted direction.
+
+Evidence: `out/r1-kitchen-parity-k1/report.json`. Runner:
+`examples/r1_kitchen_k1.py` (tests: `tests/test_r1_kitchen_k1.py`).
+Hardware: Apple M1 Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_kitchen_k1.py \
+  --cache out/kitchen/path_cache.npz --control-report out/r1-parity-kitchen/report.json \
+  --out-dir out/r1-kitchen-parity-k1 --seeds 0 1 2 3 4 \
+  --resolutions 32 48 64 96 128 --iters 3000 --base-resolution 4 --denoise-method oidn
+```
+
+K1 sweeps only `world_sparse`'s `finest_resolution`, holding base resolution,
+levels, iterations, pool, denoiser, and seeds fixed, and compares every setting
+against the **same fixed, already-committed `pixel2d` control** at
+`finest_resolution=128` (`out/r1-parity-kitchen/report.json`), read from that
+report rather than re-trained — lowering the world arm's resolution must not be
+allowed to weaken the screen-space baseline alongside it. The runner refuses to
+start unless the control's cache, base resolution, and denoiser match and the
+rebuilt held-out validation lights fingerprint identically to the control's.
+
+**Prediction** (from the plan): the delta improves monotonically, or close to it,
+as `finest_resolution` falls, best near the resolution where median vertex
+support approaches `pixel2d`'s ~4 pixels/vertex.
+
+| finest res | per-seed Δ vs fixed `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB | vertices/pixel | median support | ≤1 px | params |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 32 | −0.23, −0.47, −0.11, −0.19, −2.03 | −0.606 | [−1.33, −0.17] | 4/5 | 0.51 | 12 | 6.9% | 89,575 |
+| 48 | +0.08, +1.51, +0.53, −0.42, −1.02 | **+0.137** | [−0.58, +0.92] | 4/5 | 1.07 | 5 | 11.7% | 123,277 |
+| 64 | −0.63, −0.72, −0.50, −1.02, −1.26 | −0.825 | [−1.08, −0.60] | 1/5 | 1.76 | 3 | 18.1% | 163,671 |
+| 96 | −0.48, −0.51, −0.31, −0.12, −0.21 | −0.329 | [−0.46, −0.20] | 4/5 | 3.29 | 2 | 39.2% | 252,709 |
+| 128 | +0.08, −0.19, +0.14, −0.65, −0.50 | −0.222 | [−0.50, +0.05] | 3/5 | 4.77 | 1 | **59.1%** | 343,527 |
+
+**No setting passes the unchanged 5/5-seed gate**, and the direction is wrong:
+Spearman rank correlation between `finest_resolution` and mean delta is
+**+0.20** where the prediction required a negative value, and the sequence is not
+monotonic in the predicted direction (`verdict` in the report). The two best
+settings (48 and 96) sit on either side of the worst (64); the setting with by
+far the *worst* vertex support (128, 59.1% of finest vertices touched by ≤1
+pixel) posts the second-best mean, and the setting with the *best* support (32,
+median 12 px/vertex) is third. Deliberately varying vertex support does not
+move the parity delta the way the hypothesis says it must.
+
+The under-determination hypothesis is therefore **rejected as stated**. The
+measurements it rested on are not retracted — the toy/Kitchen support
+distributions in the table above are real, and Kitchen really does spread its
+pixel budget over more distinct surface positions — but support density is not
+the mechanism producing the Kitchen parity negative. The next step is
+re-diagnosis, not remediation.
+
+### Run-to-run nondeterminism exceeds the gate (affects K1 and the original Kitchen negative)
+
+While reading K1's 128 row, which re-measures the same arm and configuration the
+committed Kitchen parity run already reported, the two disagreed. Repeating that
+exact configuration — `world_sparse`, `finest_resolution=128`, seed 2, 3,000
+iterations, same cache, denoiser, pool, and hardware — produced a different
+result every time:
+
+| run | validation PSNR (dB) | Δ vs fixed control (dB) | source |
+|---|---:|---:|---|
+| committed Kitchen parity | 21.742 | −1.35 | `out/r1-parity-kitchen/report.json` |
+| K1 sweep | 23.238 | +0.14 | `out/r1-kitchen-parity-k1/report.json` |
+| K1 reproduction | 22.497 | −0.60 | `out/r1-kitchen-parity-k1-repro/report.json` |
+| single-threaded repeat A | 22.937 | −0.16 | `out/r1-k1-determinism/a/report.json` |
+| single-threaded repeat B | 22.382 | −0.71 | `out/r1-k1-determinism/b/report.json` |
+
+A ~1.5 dB spread across runs that share a seed — three times the −0.5 dB gate,
+and larger than every between-resolution difference in K1's table. Training seeds
+NumPy, `torch.manual_seed`, and the batch generator at entry
+(`nrp/torch_backend/train.py:405-441`), so a seed was assumed to pin a run; it
+does not. Pinning `OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1` (repeats A and B) does
+**not** remove the variation, so nondeterministic multi-threaded gradient
+accumulation is not the sole cause and the actual source is not yet identified.
+
+This does not change K1's verdict: a prediction about the direction of an effect
+cannot be rescued by noise this large, and no setting passed the gate under any
+run. What it does mean is that per-seed deltas in this track — K1's table above,
+and the per-seed structure of the original Kitchen parity result — carry
+substantially less signal than their reported precision suggests, since a "seed"
+does not identify a run. **Diagnosing and fixing this is a prerequisite for any
+further per-seed gating on this scene**, ahead of re-running K1 or re-reading the
+Kitchen negative.
