@@ -261,5 +261,87 @@ class SeedsNeededTests(unittest.TestCase):
         self.assertIsInstance(result["seeds_needed"], int)
 
 
+def simulate_experiment(gate, rng, true_mean, std):
+    """Run one adaptive experiment to a verdict, mimicking a runner's look loop."""
+    deltas = []
+    for look in gate.looks:
+        deltas.extend(rng.normal(true_mean, std, look - len(deltas)))
+        result = gate.evaluate(deltas)
+        if result["verdict"] in ("pass", "fail"):
+            return result["verdict"]
+    return "underpowered"
+
+
+def verdict_rates(gate, true_mean, std, trials, seed):
+    rng = np.random.default_rng(seed)
+    verdicts = [simulate_experiment(gate, rng, true_mean, std) for _ in range(trials)]
+    return {
+        "pass": verdicts.count("pass") / trials,
+        "fail": verdicts.count("fail") / trials,
+        "underpowered": verdicts.count("underpowered") / trials,
+    }
+
+
+class GatePowerTests(unittest.TestCase):
+    """The gate exists for these numbers; they are asserted, not argued.
+
+    Thresholds sit below the measured prototype rates (4,000 experiments per cell)
+    so ordinary Monte Carlo wobble at 600 trials cannot flip them.
+    """
+
+    TRIALS = 600
+
+    def test_at_parity_arm_with_tight_spread_is_promoted(self):
+        rates = verdict_rates(EquivalenceGate(), 0.0, 0.73, self.TRIALS, seed=101)
+        self.assertGreaterEqual(rates["pass"], 0.95)
+
+    def test_at_parity_arm_with_medium_spread_is_usually_promoted(self):
+        rates = verdict_rates(EquivalenceGate(), 0.0, 1.0, self.TRIALS, seed=102)
+        # Measured 0.798 over 4,000 experiments; 0.70 clears 600-trial Monte Carlo
+        # wobble (se ~0.016) with room to spare.
+        self.assertGreaterEqual(rates["pass"], 0.70)
+
+    def test_clearly_worse_arm_is_essentially_never_promoted(self):
+        for index, std in enumerate((0.73, 1.0, 1.67)):
+            with self.subTest(std=std):
+                rates = verdict_rates(EquivalenceGate(), -1.5, std, self.TRIALS, seed=200 + index)
+                self.assertLessEqual(rates["pass"], 0.01)
+                # Measured 1.000 / 1.000 / 0.927 at std 0.73 / 1.00 / 1.67.
+                self.assertGreaterEqual(rates["fail"], 0.85)
+
+    def test_gate_refuses_to_certify_a_spread_the_cap_cannot_resolve(self):
+        """world3d's spread needs ~82 seeds; at cap 48 the honest answer is 'unknown'."""
+        rates = verdict_rates(EquivalenceGate(), 0.0, 1.67, self.TRIALS, seed=103)
+        self.assertGreaterEqual(rates["underpowered"], 0.50)
+        self.assertEqual(rates["fail"], 0.0)
+
+    def test_legacy_per_seed_rule_rejects_at_parity_arms(self):
+        """Regression test on the diagnosis: the old rule fails a perfect arm."""
+        rng = np.random.default_rng(104)
+        passes = 0
+        for _ in range(self.TRIALS):
+            deltas = rng.normal(0.0, 1.0, 5)
+            if per_seed_verdict(deltas)["pass"]:
+                passes += 1
+        self.assertLessEqual(passes / self.TRIALS, 0.30)
+
+    def test_legacy_rule_gets_worse_with_more_seeds_and_the_gate_does_not(self):
+        """The structural defect: the old rule punishes sample size."""
+        rng = np.random.default_rng(105)
+        rates = {}
+        for n in (5, 10):
+            passes = sum(
+                1 for _ in range(self.TRIALS) if per_seed_verdict(rng.normal(0.0, 1.0, n))["pass"]
+            )
+            rates[n] = passes / self.TRIALS
+        self.assertLess(rates[10], rates[5])
+
+        gate_small = verdict_rates(EquivalenceGate(looks=(8,)), 0.0, 0.73, self.TRIALS, seed=106)
+        gate_large = verdict_rates(
+            EquivalenceGate(looks=(8, 16, 24, 32, 40, 48)), 0.0, 0.73, self.TRIALS, seed=106
+        )
+        self.assertGreaterEqual(gate_large["pass"], gate_small["pass"])
+
+
 if __name__ == "__main__":
     unittest.main()
