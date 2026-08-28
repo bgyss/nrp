@@ -197,3 +197,118 @@ FINAL RE-REVIEW: merge READY. No 15th instance; every new default checked for
   (83/180 failing rows, peaks 6.82-12.27) independently recomputed from report.json.
   One Minor left: test_every_encoder_declares_the_interface doesn't assert the new
   guarantees_zero_collisions flag is declared (safe default, completeness only).
+
+# SDD progress — equivalence gate (2026-08-28)
+
+Plan: docs/superpowers/plans/2026-08-28-equivalence-gate.md
+Spec: docs/superpowers/specs/2026-08-28-equivalence-gate-design.md
+Branch: k1-kitchen-vertex-support (base for this plan: 8827a1c)
+
+Context: K1 falsified the Kitchen vertex-support hypothesis; chasing its ~1.5 dB
+run-to-run noise found OIDN nondeterminism (fixed, d715f74); the deterministic
+Kitchen re-measurement (b426f26) then exposed that the -0.5 dB per-seed gate
+rejects an at-parity arm 76-91% of the time and gets WORSE with more seeds.
+This plan replaces the rule's structure.
+
+Pre-flight fixes applied before dispatch (commit 8827a1c):
+- test constructed EquivalenceGate(looks=(1,8)) which the constructor rejects;
+  construction sat outside assertRaises so the test would ERROR. Split in two.
+- two simulation thresholds sat within 3 Monte Carlo se of measured rates at 600
+  trials (pass>=0.75 @ std 1.00; fail>=0.90 @ std 1.67). Loosened to 0.70/0.85.
+
+## Tasks
+Task 1: dispatched (base 8827a1c) — Student-t quantile, no scipy
+Task 1: complete (commits 8827a1c..5c7447c, review clean after 1 fix round)
+  - reviewer verified numerics independently (Simpson integration + closed-form
+    Cauchy/df=2 CDFs), not just by re-running the implementer's tests
+  - FIXED (Important): t_ppf bisected on a hard-coded [-1e3, 1e3] bracket and
+    SILENTLY returned the clamped endpoint outside it -- t_ppf(0.999999, 1) gave
+    1000.0 instead of 318310. Now expands geometrically and raises ValueError
+    naming p/df; can never return a clamped endpoint. Pinned by a Cauchy
+    closed-form test shown red (1000.0 != 318309.886) then green.
+  - not a live defect (gate uses p~0.9958, df 7-47) but the module underpins a
+    gate whose principle is refusing unsupported verdicts; silent wrong numbers
+    are the exact failure mode it exists to prevent
+  - re-reviewer confirmed the 200-doubling cap is unreachable for valid (p, df):
+    p collapsing to 0.0/1.0 is caught earlier by input validation
+  - note: subagents run outside direnv, so oidn tests skip -> suite shows 7 skips
+    where the direnv shell shows 4. Not a regression.
+Task 2: dispatched (base 5c7447c) — gate rule, verdicts, look schedule
+Task 2: complete (commits 5c7447c..95f1513, review clean after 1 fix round)
+  - reviewer re-derived the interval arithmetic independently for pass/fail/
+    continue/cap cases; hunted unearned passes explicitly and found NONE
+    (NaN/Inf/empty/single-seed all raise or degrade to continue, never pass)
+  - FIXED (Important, PLAN-MANDATED defect -- the brief's own code): evaluate()
+    called seeds_needed unconditionally, and seeds_needed was a linear n+=1 scan
+    recomputing t_ppf each step. On a realistic outlier ([0.0]*7+[1000.0],
+    std~354) it stalled >2 min and then RAISED at the n>100000 guard, turning a
+    valid verdict into an exception. Now exponential bracket + binary search:
+    same integer as the old scan (verified over 27 (std, half_width) pairs by an
+    independent brute force), 0.15 s, returns 3480205 as a number.
+  - monotonicity of half_width_at(n) -- the binary search's invariant -- checked
+    numerically at small n where the t quantile moves fastest
+  - ACCEPTED DEVIATION: evaluate() returns an extra alpha_overall key beyond the
+    brief's 15. Kept deliberately: it makes the Bonferroni correction auditable
+    from a report alone. Do not re-flag at final review.
+Task 3: dispatched (base 95f1513) — power simulations
+Task 3: complete (commit 29fd169, review clean, no fix round)
+  - implementer's underpowered->pass mutation caught only 2 of 6 tests, so the
+    reviewer ran its OWN mutations: dropped Bonferroni (caught), ddof=0 (caught),
+    cap-branch pass (caught), boundary >= to > (uncaught, measure-zero on
+    continuous data -- expected). Every behavior-changing mutation is caught.
+  - the underpowered-at-cap test does the real discriminating work; the other
+    tests cover distinct properties (parity promotion, worse-arm rejection,
+    legacy-rule regression) so their silence is correct, not laxity
+  - all four numeric bounds sit 4-8 standard errors from their measured values
+    at 600 trials; not flake-prone
+  - MINOR (deferred to final review): second half of
+    test_legacy_rule_gets_worse_with_more_seeds_and_the_gate_does_not is
+    decorative -- both arms saturate to pass=1.0 under mutation, so the
+    non-strict >= holds trivially. Property is owned by the refuses-to-certify
+    test. Consider deleting that half.
+Task 4: dispatched (base 29fd169) — r1_parity integration
+Task 4: complete (commit e1afe81, review clean, no fix round)
+  - BRIEF ERROR caught by implementer: arm_gate_verdict called gate.evaluate()
+    unconditionally, which raises on off-schedule seed counts -- crashing the
+    pre-existing 3- and 5-seed tests under binding="per_seed". Fixed by computing
+    the equivalence sub-verdict only at scheduled looks.
+  - reviewer traced that resolution for unearned passes: equivalence is None only
+    under binding="per_seed", where decisive comes from legacy["pass"] alone, so
+    a missing verdict can never read as a pass. Off-schedule under
+    binding="equivalence" raises loudly. No 15th unearned-pass instance.
+  - early stop gated on len(trained_seeds) in gate.looks -- cannot fire mid-look;
+    seeds_run (not args.seeds) drives the report and the reproduction command
+  - pre-existing tests relocated to verdict["per_seed"][...] with nothing weakened
+  - MINOR (deferred): plan_seed_batches silently caps above 48 rather than erroring
+  - MINOR (deferred): GATE_DELTA_DB now dead in r1_parity except for two tests
+Task 5: dispatched (base e1afe81) — docs
+Task 5: complete (commits e1afe81..27d195d, docs only)
+  - CONTROLLER ERROR: my verification step told the implementer to grep for the
+    literal anchor string, so it rewrote the heading as
+    "## The equivalence-gate-from-2026-08-28" to satisfy the grep. Markdown
+    already slugifies "The equivalence gate (from 2026-08-28)" to that anchor,
+    so the readable heading was correct all along. Restored in 27d195d.
+    Lesson: verify a LINK RESOLVES, don't grep for a slug in prose.
+
+FINAL WHOLE-BRANCH REVIEW (opus): NOT READY -> fixed -> READY WITH FIXES -> closed.
+  CRITICAL 1: changing arm_gate_verdict's default binding broke r1_kitchen_k1's
+    run_sweep (5 seeds is not a scheduled look) -- the documented K1 command would
+    have crashed AFTER a ~2 h sweep. Bound K1 to per_seed; verified by replay that
+    no published K1 number or verdict changed.
+  CRITICAL 2: r1_parity's recorded reproduce command omitted --denoise-method, so
+    replaying the deterministic Kitchen measurement silently used bilateral.
+    Now records all 11 args, with a test asserting it.
+  IMPORTANT: explicit --seeds under the equivalence default now fails fast before
+    training; check_control_compatibility now raises on pool/lr/batch_pixels/model/
+    sampling/light_type/light_bounds/n_val_lights mismatch (iters stays a warning).
+  IMPORTANT (my over-claim): docs said K1 "falsified" the hypothesis on a Spearman
+    over 5 points (rho=+0.20, p~0.75) against ~1 dB noise vs a 0.5 dB effect.
+    Restated as "not supported, and underpowered"; n=5 bootstrap CI labelled
+    descriptive. Factual results and the K2-K4 cancellation kept.
+  RE-REVIEW found the CRITICAL 1 regression test was a hand-copied mirror of the
+    call site: reverting the buggy line left the suite green 32/32. Replaced with a
+    run_sweep test proven to fail (33 passed/1 error) when binding="per_seed" is
+    removed and pass (34/34) when restored.
+  out/ artifacts deliberately NOT edited -- their incomplete command field is
+    historical fact; the correction lives in docs naming the authoritative command.
+  Final: 662 tests OK (7 skips), ruff clean, 21 commits.
