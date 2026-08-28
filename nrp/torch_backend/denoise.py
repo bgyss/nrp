@@ -64,7 +64,9 @@ def joint_bilateral_denoise(
 
 @functools.cache
 def _oidn_module():
-    """Import oidn once; returns (module, set_filter_bool) or raises ImportError."""
+    """Import oidn once; returns (module, set_filter_bool, set_device_int).
+
+    Raises ImportError when the optional dependency is missing."""
     import oidn  # noqa: PLC0415 - optional dependency
 
     # The 0.2.x wrapper does not expose the boolean parameter setter needed for HDR
@@ -82,7 +84,16 @@ def _oidn_module():
         set_bool = lambda handle, name, value: lib.oidnSetFilter1b(  # noqa: E731
             ctypes.c_void_p(handle), name.encode(), value
         )
-    return oidn, set_bool
+    # Same story for the device-level int setter, needed to pin OIDN's thread count
+    # (see `oidn_denoise`'s determinism note).
+    set_device_int = None
+    if lib is not None and hasattr(lib, "oidnSetDevice1i"):
+        lib.oidnSetDevice1i.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        lib.oidnSetDevice1i.restype = None
+        set_device_int = lambda handle, name, value: lib.oidnSetDevice1i(  # noqa: E731
+            ctypes.c_void_p(handle), name.encode(), value
+        )
+    return oidn, set_bool, set_device_int
 
 
 def oidn_available() -> bool:
@@ -93,9 +104,26 @@ def oidn_available() -> bool:
         return False
 
 
-def oidn_denoise(image: np.ndarray, albedo: np.ndarray, normal: np.ndarray) -> np.ndarray:
-    """Denoise an (H,W,3) HDR image with OIDN's RT filter, guided by albedo + normal."""
-    oidn, set_bool = _oidn_module()
+def oidn_denoise(
+    image: np.ndarray, albedo: np.ndarray, normal: np.ndarray, deterministic: bool = True
+) -> np.ndarray:
+    """Denoise an (H,W,3) HDR image with OIDN's RT filter, guided by albedo + normal.
+
+    `deterministic` (default) pins OIDN to a single thread, because its default
+    multi-threaded execution is NOT reproducible: repeating one filter execution on
+    identical input returned three distinct outputs in twelve repeats on an M1 Max,
+    differing by ~5e-7 per pixel. That is invisible in a denoised image and fatal to
+    a seeded experiment -- every pool target is denoised, so the perturbation enters
+    training at iteration 0 and 3,000 Adam steps amplified it into up to 1.5 dB of
+    held-out PSNR variation at a FIXED seed, three times the representation track's
+    -0.5 dB parity gate (docs/performance.md, K1 nondeterminism section). Note that
+    OIDN threads through TBB, so OMP_NUM_THREADS does not affect it; the thread count
+    must be set on the OIDN device itself.
+
+    Pass `deterministic=False` for the faster multi-threaded path when the output
+    does not feed a seeded, gated measurement.
+    """
+    oidn, set_bool, set_device_int = _oidn_module()
     h, w, _ = image.shape
     color = np.ascontiguousarray(image, dtype=np.float32)
     alb = np.ascontiguousarray(np.clip(albedo, 0.0, 1.0), dtype=np.float32)
@@ -103,6 +131,14 @@ def oidn_denoise(image: np.ndarray, albedo: np.ndarray, normal: np.ndarray) -> n
     out = np.zeros_like(color)
 
     device = oidn.NewDevice()
+    if deterministic:
+        if set_device_int is None:
+            raise RuntimeError(
+                "this oidn build exposes no oidnSetDevice1i, so its thread count cannot "
+                "be pinned and its output is not reproducible; pass deterministic=False "
+                "to accept run-to-run variation"
+            )
+        set_device_int(device, "numThreads", 1)
     oidn.CommitDevice(device)
     try:
         flt = oidn.NewFilter(device, "RT")
@@ -139,7 +175,7 @@ def denoise_image(
 ) -> np.ndarray:
     """Dispatch on the configured denoiser method ("bilateral" or "oidn")."""
     if method == "oidn":
-        return oidn_denoise(image, albedo, normal)
+        return oidn_denoise(image, albedo, normal, **kwargs)
     if method == "bilateral":
         return joint_bilateral_denoise(image, albedo, normal, depth, **kwargs)
     raise ValueError(f"unknown denoise method {method!r}")

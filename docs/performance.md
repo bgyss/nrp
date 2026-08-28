@@ -3076,7 +3076,7 @@ each arm is sized by how many grid vertices it actually needs, `pixel2d` include
 ### Toy 64² — all three world arms pass
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --gate per-seed
 ```
 
 | arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB |
@@ -3106,7 +3106,7 @@ parameters-only figures:
 ### Kitchen 128² — no arm passes
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 --gate per-seed
 ```
 
 The control was verified to reproduce `examples/kitchen_torch.json` exactly:
@@ -3181,6 +3181,283 @@ slots, −0.064 dB) < `pixel2d` (26k slots, baseline 0 dB); and (c) why `pixel2d
 itself is strong on Kitchen — at `finest_resolution=128` on a 128² image, every
 finest-level vertex is shared by roughly 4 neighboring pixels *by construction*,
 so screen-space encoding guarantees uniform support while world-space encoding,
-which follows scene geometry rather than the pixel grid, does not. This
-hypothesis has not been tested by intervention; see
-`docs/plans/2026-08-27-kitchen-parity-next-steps.md` for the falsifiable test.
+which follows scene geometry rather than the pixel grid, does not. This hypothesis **has since been tested by intervention, and the sweep gives it
+no support** — see "K1: finest-resolution sweep does not support the
+vertex-support hypothesis" below. The support measurements in the table above
+stand; the causal reading of them does not. The falsifiable test was specified in
+advance in `docs/plans/2026-08-27-kitchen-parity-next-steps.md`.
+
+## K1: finest-resolution sweep does not support the vertex-support hypothesis (Kitchen 128²)
+
+The vertex-support hypothesis above was explicitly labelled "not verified by
+intervention". `docs/plans/2026-08-27-kitchen-parity-next-steps.md` defined the
+intervention that would test it — K1 — together with its falsifier, in advance.
+**K1 has now run.** The sweep gives no support for the predicted direction, and is
+underpowered to establish either direction: 5 points, Spearman ρ = +0.20
+(p ≈ 0.75), against per-seed noise (~1 dB run-to-run, see below) comparable to the
+0.5 dB effect the gate is judging. Per that plan's stop condition, K2–K4
+(low-support vertex pruning, more supervision per vertex, feature-table
+regularization) **must not be run**: they were conditional on K1 confirming the
+predicted direction, which it did not.
+
+Evidence: `out/r1-kitchen-parity-k1/report.json`. Runner:
+`examples/r1_kitchen_k1.py` (tests: `tests/test_r1_kitchen_k1.py`).
+Hardware: Apple M1 Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_kitchen_k1.py \
+  --cache out/kitchen/path_cache.npz --control-report out/r1-parity-kitchen/report.json \
+  --out-dir out/r1-kitchen-parity-k1 --seeds 0 1 2 3 4 \
+  --resolutions 32 48 64 96 128 --iters 3000 --base-resolution 4 --denoise-method oidn
+```
+
+K1 sweeps only `world_sparse`'s `finest_resolution`, holding base resolution,
+levels, iterations, pool, denoiser, and seeds fixed, and compares every setting
+against the **same fixed, already-committed `pixel2d` control** at
+`finest_resolution=128` (`out/r1-parity-kitchen/report.json`), read from that
+report rather than re-trained — lowering the world arm's resolution must not be
+allowed to weaken the screen-space baseline alongside it. The runner refuses to
+start unless the control's cache, base resolution, and denoiser match and the
+rebuilt held-out validation lights fingerprint identically to the control's.
+
+**Prediction** (from the plan): the delta improves monotonically, or close to it,
+as `finest_resolution` falls, best near the resolution where median vertex
+support approaches `pixel2d`'s ~4 pixels/vertex.
+
+| finest res | per-seed Δ vs fixed `pixel2d` (dB) | mean (dB) | 95% CI (dB, n=5 percentile bootstrap, descriptive only) | seeds passing −0.5 dB | vertices/pixel | median support | ≤1 px | params |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 32 | −0.23, −0.47, −0.11, −0.19, −2.03 | −0.606 | [−1.33, −0.17] | 4/5 | 0.51 | 12 | 6.9% | 89,575 |
+| 48 | +0.08, +1.51, +0.53, −0.42, −1.02 | **+0.137** | [−0.58, +0.92] | 4/5 | 1.07 | 5 | 11.7% | 123,277 |
+| 64 | −0.63, −0.72, −0.50, −1.02, −1.26 | −0.825 | [−1.08, −0.60] | 1/5 | 1.76 | 3 | 18.1% | 163,671 |
+| 96 | −0.48, −0.51, −0.31, −0.12, −0.21 | −0.329 | [−0.46, −0.20] | 4/5 | 3.29 | 2 | 39.2% | 252,709 |
+| 128 | +0.08, −0.19, +0.14, −0.65, −0.50 | −0.222 | [−0.50, +0.05] | 3/5 | 4.77 | 1 | **59.1%** | 343,527 |
+
+The 95% CI column is a percentile bootstrap over only 5 seeds — the same
+small-n caveat the equivalence-gate section below applies to bootstrap intervals
+at low seed counts — and is reported as descriptive context only; it is not what
+this section's conclusion rests on.
+
+**No setting passes the unchanged 5/5-seed gate**, and the sweep gives no support
+for the predicted direction: Spearman rank correlation between
+`finest_resolution` and mean delta is **+0.20** (p ≈ 0.75) where the prediction
+required a negative value, and the sequence is not monotonic in the predicted
+direction (`verdict` in the report). The two best settings (48 and 96) sit on
+either side of the worst (64); the setting with by far the *worst* vertex
+support (128, 59.1% of finest vertices touched by ≤1 pixel) posts the
+second-best mean, and the setting with the *best* support (32, median 12
+px/vertex) is third. Deliberately varying vertex support does not move the
+parity delta the way the hypothesis says it must — but with only 5 points, a
+p-value around 0.75, and per-seed noise on this scene comparable to the 0.5 dB
+effect being tested (see "Run-to-run nondeterminism" and "Seed sensitivity"
+below), this sweep is also underpowered to establish the opposite direction.
+The honest reading is "not supported, and underpowered," not "falsified."
+
+The under-determination hypothesis is therefore **not supported by this sweep**,
+and the sweep cannot rule out the opposite direction either. The measurements it
+rested on are not retracted — the toy/Kitchen support distributions in the table
+above stand, and Kitchen really does spread its pixel budget over more distinct
+surface positions — but this data does not establish support density as the
+mechanism producing the Kitchen parity negative. What the sweep does establish,
+unchanged: no setting passed the gate at any resolution, and the practical
+recommendation is not to proceed to K2–K4 on this basis. K1 was measured before
+the OIDN determinism fix (see below) and has not been re-measured.
+
+### Run-to-run nondeterminism exceeds the gate (affects K1 and the original Kitchen negative)
+
+While reading K1's 128 row, which re-measures the same arm and configuration the
+committed Kitchen parity run already reported, the two disagreed. Repeating that
+exact configuration — `world_sparse`, `finest_resolution=128`, seed 2, 3,000
+iterations, same cache, denoiser, pool, and hardware — produced a different
+result every time:
+
+| run | validation PSNR (dB) | Δ vs fixed control (dB) | source |
+|---|---:|---:|---|
+| committed Kitchen parity | 21.742 | −1.35 | `out/r1-parity-kitchen/report.json` |
+| K1 sweep | 23.238 | +0.14 | `out/r1-kitchen-parity-k1/report.json` |
+| K1 reproduction | 22.497 | −0.60 | `out/r1-kitchen-parity-k1-repro/report.json` |
+| single-threaded repeat A | 22.937 | −0.16 | `out/r1-k1-determinism/a/report.json` |
+| single-threaded repeat B | 22.382 | −0.71 | `out/r1-k1-determinism/b/report.json` |
+
+A ~1.5 dB spread across runs that share a seed — three times the −0.5 dB gate,
+and larger than every between-resolution difference in K1's table. Training seeds
+NumPy, `torch.manual_seed`, and the batch generator at entry
+(`nrp/torch_backend/train.py:405-441`), so a seed was assumed to pin a run; it did
+not. Pinning `OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1` (repeats A and B) did not
+remove the variation either.
+
+**Root cause (found and fixed): the OIDN denoiser.** Hashing every pipeline stage
+across two processes at one seed showed everything bit-identical — cache arrays,
+light sampling from the seeded RNG, GATHERLIGHT, spatial/aux tensors, world
+bounds, the occupancy vertex set, and model initialization — except the denoise
+step. Repeating one OIDN filter execution on byte-identical input returned three
+distinct outputs in twelve repeats, differing by ~5e-7 per pixel. `OMP_NUM_THREADS`
+had no effect because **OIDN threads through TBB, not OpenMP**, so the thread count
+has to be set on the OIDN device itself.
+
+Four trainings at a fixed seed isolate it end to end (`world_sparse`, finest 128,
+seed 2, 300 iterations, hash over the final `state_dict`):
+
+| denoiser | final-parameter hash | final loss | held-out PSNR |
+|---|---|---:|---:|
+| bilateral, run 1 | `4795abf900ee35c2` | 0.267957 | 18.075061 |
+| bilateral, run 2 | `4795abf900ee35c2` | 0.267957 | 18.075061 |
+| OIDN, run 1 | `e52b9cb3929c322f` | 0.345754 | 17.912648 |
+| OIDN, run 2 | `a74665bd40d27ed9` | 0.611123 | 17.329541 |
+
+The bilateral pair is bit-identical, so the training loop, the optimizer, and the
+CPU kernels are all deterministic; the OIDN pair diverges by 0.58 dB after only
+300 iterations. Every pool target is denoised, so the perturbation enters at
+iteration 0 and Adam amplifies it.
+
+The trigger is dynamic range, not resolution: against the unpinned filter,
+log-uniform HDR input (1e-6…1e3) gave 3–4 distinct outputs in 8–12 repeats and a
+heavy-tailed image 2, while Gaussian noise and a mostly-zero image gave 1 at every
+size from 64² to 256². A gather image spans many orders of magnitude, which is why
+real Kitchen targets reproduced it and synthetic noise did not.
+
+**Fix:** `nrp/torch_backend/denoise.py` now pins the OIDN device to a single thread
+by default (`oidn_denoise(..., deterministic=True)`, threaded through
+`denoise_image`'s kwargs), and raises rather than silently returning irreproducible
+output on an oidn build that exposes no `oidnSetDevice1i`. `deterministic=False`
+keeps the multi-threaded path for output that does not feed a seeded, gated
+measurement. Measured cost at 128²: **5.6 ms/image vs 5.4 ms/image** (20 repeats),
+and pool-build time is unchanged at 4.8–5.2 s for 64 images. Regression test:
+`tests/test_exporter_denoise_bench.py::OIDNTests::test_repeated_denoise_of_one_input_is_bit_identical`
+— eight repeats of a log-uniform 128² input must be bit-identical; the same input
+produced four distinct outputs in eight repeats before the fix. Verification: the
+two OIDN trainings above, repeated with the fix, now agree bit-for-bit
+(`466ca022430f1989`, loss 0.462583, PSNR 18.113793, both runs).
+
+**What this does and does not change.** K1's verdict stands: a prediction about
+the direction of an effect cannot be rescued by noise, and no setting passed the
+gate under any run. But every per-seed number measured before this fix — K1's
+table above, and the per-seed structure of the original Kitchen parity result —
+was measured with a denoiser that perturbed its own targets, so those deltas carry
+~1 dB of run-to-run noise that their reported precision does not show. The Kitchen
+parity result has since been re-measured under the fixed denoiser — see "Kitchen
+parity re-measured under the deterministic denoiser" below: the negative stands
+and is now reproducible, while the original run's per-seed values and arm ranking
+do not survive. K1's own table has **not** been re-measured and should be read
+with the same caution.
+
+## Kitchen parity re-measured under the deterministic denoiser
+
+The Kitchen result above (`out/r1-parity-kitchen/report.json`) and K1's sweep were
+both measured before the OIDN nondeterminism was found, so their per-seed numbers
+carry run-to-run noise the reports do not show. This section re-measures the
+Kitchen parity question under the identical protocol with only the denoiser fix
+in place. Evidence: `out/r1-parity-kitchen-det/report.json`. Hardware: Apple M1
+Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
+  --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-det \
+  --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 \
+  --denoise-method oidn --gate per-seed
+```
+
+Note: the `command` field recorded inside `out/r1-parity-kitchen-det/report.json`,
+`out/r1-parity-kitchen/report.json`, and `out/r1-parity/report.json` is incomplete —
+those reports were generated before this fix, so the recorded string omits
+`--denoise-method` (and `--gate`, which did not exist yet). Those `command` fields
+are historical evidence and are not edited retroactively. The command shown above
+(and elsewhere in this document) is the authoritative one for reproducing each run;
+the code now records every result-affecting argument in `command`.
+
+Nothing else changed: same cache, arms, ladder, iteration count, pool, seeds, and
+the unchanged −0.5 dB per-seed gate. Parameter and slot counts are identical to
+the original run (`pixel2d` 106,085/26,289; `world_sparse` 343,527/145,010;
+`world_normal_triplane` 162,037/54,777; `world3d` 187,103/66,926), as they must be
+— the fix touches only the denoiser.
+
+| arm | run | per-seed Δ vs `pixel2d` (dB) | mean | std | 95% CI | seeds passing |
+|---|---|---|---:|---:|---:|---:|
+| `world_sparse` | original | +0.02, −0.36, −1.35, −0.17, −2.83 | −0.935 | 1.058 | [−1.96, −0.13] | 3/5 |
+| | **deterministic** | +0.24, −2.43, −0.44, +0.09, +0.11 | **−0.485** | 0.999 | [−1.42, +0.16] | 4/5 |
+| `world_normal_triplane` | original | −0.46, +0.87, −0.65, −0.36, +0.28 | −0.064 | 0.563 | [−0.52, +0.49] | 4/5 |
+| | **deterministic** | −0.34, −1.39, −0.69, −0.50, +0.85 | **−0.414** | 0.726 | [−1.00, +0.30] | 2/5 |
+| `world3d` | original | −1.26, −0.58, +0.56, +0.12, −0.61 | −0.355 | — | — | 2/5 |
+| | **deterministic** | −0.19, −3.35, −0.42, −0.01, −3.82 | **−1.559** | 1.666 | [−3.00, −0.17] | 3/5 |
+
+**The conclusion is unchanged: no world-anchored arm passes.** All three still
+fail at least one seed against the unchanged gate, on a scene where all three pass
+5/5 on toy 64². That finding is now reproducible rather than merely reported.
+
+**The per-seed structure it was built from does not survive.** Individual deltas
+moved by up to 2.9 dB (`world_sparse` seed 4: −2.83 → +0.11; `world3d` seed 4:
+−0.61 → −3.82), the set of passing seeds changed for every arm, and the ranking of
+arms by mean reordered completely — `world_normal_triplane` was the best arm at
+−0.064 dB and is now second at −0.414, while `world_sparse` went from worst
+(−0.935) to best (−0.485). Any statement that rested on *which* arm or *which*
+seed did better in the original run should be treated as retracted; only the
+aggregate verdict carries over.
+
+Reproducibility verified rather than assumed: re-running seed 0 through the same
+command (`out/r1-parity-kitchen-det-recheck/report.json`) reproduces all four arms
+to every recorded digit — `pixel2d` 23.618277844, `world_sparse` 23.862641803,
+`world_normal_triplane` 23.280073927, `world3d` 23.424832101 dB in both runs.
+
+### Seed sensitivity is real, and larger than the gate
+
+With the measurement noise removed, what remains is genuine per-seed variation,
+and it is large: `world3d` spans −0.01 to −3.82 dB across five reproducible runs
+(std 1.67), and every arm's 95% CI is wider than the ±0.5 dB gate it is being
+judged against. This is not a denoiser artifact — these runs are bit-reproducible
+— it is real sensitivity of these arms to initialization and light sampling on
+this scene.
+
+Consequence for future work on this scene: a five-seed per-seed gate at ±0.5 dB is
+underpowered against per-seed spreads of this size, and a single failing seed can
+decide an arm's verdict. Any further gated comparison on Kitchen should either
+raise the seed count enough to resolve differences of the size being claimed, or
+state a gate on the aggregate with its interval rather than on every seed
+individually. That is a question about experimental design, not about the
+denoiser, and it is unresolved.
+
+## The equivalence gate (from 2026-08-28)
+
+Promotion decisions on this track previously required every seed's paired PSNR
+delta to clear −0.5 dB. At the per-seed spreads measured on Country Kitchen under
+the deterministic denoiser, that rule rejects an arm sitting *exactly at parity*
+76–91% of the time, and its false-rejection rate rises with the seed count — a
+true-parity arm passes under 7% of the time at ten seeds (measured 6.8% / 2.5% /
+0.8% at per-seed std 0.73 / 1.00 / 1.67). It punished sample size,
+so it could not be repaired by running more seeds.
+
+`nrp/experiment_gate.py` replaces it. The threshold is unchanged at −0.5 dB; the
+rule's structure is what changed:
+
+| verdict | condition |
+|---|---|
+| `pass` | CI lower bound ≥ −0.5 dB |
+| `fail` | CI upper bound < −0.5 dB |
+| `underpowered` | interval straddles −0.5 dB at the 48-seed cap |
+
+`underpowered` is never a pass. The interval is a Student-t interval (binding);
+the percentile bootstrap is still reported but is descriptive only, because its
+coverage at n=8 and 99.17% confidence is unreliable. Seeds accumulate to six
+pre-registered looks (n = 8, 16, 24, 32, 40, 48) with α = 0.05 split six ways, so
+adaptive stopping cannot inflate the false-pass rate; evaluating off schedule
+raises.
+
+Measured behavior (4,000 simulated experiments per cell, cap 48):
+
+| true mean | std | pass | fail | underpowered | median n |
+|---|---:|---:|---:|---:|---:|
+| 0.0 (at parity) | 0.73 | 0.977 | 0.000 | 0.023 | 24 |
+| 0.0 | 1.00 | 0.798 | 0.000 | 0.202 | 32 |
+| 0.0 | 1.67 | 0.341 | 0.000 | 0.659 | 48 |
+| −1.5 (clearly worse) | 0.73 / 1.00 / 1.67 | 0.000 | 1.00 / 1.00 / 0.93 | ≤0.07 | 8–24 |
+
+Certifying parity at `world3d`'s spread (1.67) needs ~82 seeds; the cap stays at
+48, and every `underpowered` verdict reports the `seeds_needed` figure so the cost
+of a definitive answer is stated rather than guessed. Failure detection is
+unaffected by the cap — a clearly worse arm is caught at every spread, usually by
+seed 24.
+
+Not corrected: multiplicity across arms. Each arm is one pre-registered question
+against a fixed control; a future "promote whichever of N arms passes" selection
+would need its own correction.
+
+Verdicts recorded before 2026-08-28 used the per-seed rule and are labelled as
+such in their reports.

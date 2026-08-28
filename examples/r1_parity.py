@@ -31,8 +31,22 @@ Design (single view, no camera arc, no rotations):
     a favourable mean never rescues a failing seed.
 
 Usage:
-  uv run python examples/r1_parity.py --seeds 0 --iters 50 --out-dir out/r1-parity-smoke
   uv run python examples/r1_parity.py --out-dir out/r1-parity
+  # --seeds bypasses the look schedule and needs --gate per-seed (an explicit seed
+  # count is not a scheduled look under the default --gate equivalence, which fails
+  # fast rather than raising only after training finishes):
+  uv run python examples/r1_parity.py --seeds 0 --iters 50 --gate per-seed \\
+      --out-dir out/r1-parity-smoke
+  uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --gate per-seed \\
+      --out-dir out/r1-parity
+
+Exit codes: 0 if any world arm passed; 3 if no arm passed but every non-passing
+arm's verdict is `underpowered` (the equivalence gate needs more seeds to answer
+either way); 2 for any other non-pass (a real `fail`, or a non-equivalence binding
+rule with no `underpowered` concept). CI can therefore tell "no" from "unknown".
+1 for argument-validation failures (e.g. a missing cache, duplicate --seeds, or an
+explicit --seeds list that is not a scheduled look under --gate equivalence) --
+these fail before training starts.
 """
 
 from __future__ import annotations
@@ -58,6 +72,7 @@ from examples.r1a_variance import (  # noqa: E402
     summarize_values,
     validation_fingerprint,
 )
+from nrp.experiment_gate import EquivalenceGate, per_seed_verdict  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.train import (  # noqa: E402
@@ -185,8 +200,39 @@ def make_arm_config(
     return cfg
 
 
-def arm_gate_verdict(per_seed_deltas: list[float] | np.ndarray, seeds: tuple[int, ...]) -> dict:
-    """Per-seed pass/fail against the unchanged -0.5 dB gate.
+def plan_seed_batches(gate: EquivalenceGate, max_seeds: int) -> list[tuple[int, ...]]:
+    """Seed batches, one per scheduled look, in fixed ascending order.
+
+    Ascending order matters: it makes an n=16 run a strict prefix of an n=48 run, so
+    a longer run reuses a shorter one's trainings and two runs at different caps stay
+    comparable.
+    """
+    if max_seeds < gate.looks[0]:
+        raise ValueError(
+            f"max_seeds={max_seeds} is below the first look ({gate.looks[0]}); the gate "
+            "cannot reach a verdict"
+        )
+    batches = []
+    previous = 0
+    for look in gate.looks:
+        if look > max_seeds:
+            break
+        batches.append(tuple(range(previous, look)))
+        previous = look
+    return batches
+
+
+def arm_gate_verdict(
+    per_seed_deltas: list[float] | np.ndarray,
+    seeds: tuple[int, ...],
+    gate: EquivalenceGate | None = None,
+    binding: str = "equivalence",
+) -> dict:
+    """Both gate verdicts for one arm, with `binding` naming the decisive one.
+
+    Reporting both is nearly free and lets any report be read against either
+    convention; naming the binding rule explicitly keeps a reader from having to
+    infer which number decided the promotion.
 
     Raises rather than silently reporting a pass when there is nothing to gate:
     zero seeds, or a seed/delta count mismatch. A gate that reports a pass with no
@@ -194,24 +240,85 @@ def arm_gate_verdict(per_seed_deltas: list[float] | np.ndarray, seeds: tuple[int
     """
     if len(seeds) == 0:
         raise ValueError("cannot compute a gate verdict with zero seeds")
-    deltas = list(per_seed_deltas)
+    deltas = [float(d) for d in per_seed_deltas]
     if len(deltas) != len(seeds):
         raise ValueError(
             f"per_seed_deltas has {len(deltas)} entries, expected one per seed ({len(seeds)})"
         )
-    per_seed_pass = [bool(delta >= GATE_DELTA_DB) for delta in deltas]
+    if binding not in ("equivalence", "per_seed"):
+        raise ValueError(f"unknown binding rule {binding!r}")
+    gate = gate or EquivalenceGate()
+    # The equivalence verdict is only defined AT a scheduled look (EquivalenceGate.evaluate
+    # raises off schedule -- that is the alpha correction's whole point). The legacy
+    # per-seed rule has no such restriction and is the only rule the historical
+    # `--seeds` mode (arbitrary seed counts, e.g. 5) can use, so it must not be blocked
+    # by an off-schedule n. Reporting both stays "nearly free" only on schedule; off
+    # schedule, equivalence is reported as unavailable rather than raised past the
+    # caller when it isn't the binding rule.
+    if len(seeds) in gate.looks:
+        equivalence = gate.evaluate(deltas)
+    elif binding == "equivalence":
+        raise ValueError(
+            f"n={len(seeds)} is not a scheduled look {gate.looks}; the equivalence rule "
+            "cannot be binding off schedule"
+        )
+    else:
+        equivalence = None
+    legacy = per_seed_verdict(deltas, threshold_db=gate.threshold_db)
+    decisive = equivalence["verdict"] == "pass" if binding == "equivalence" else legacy["pass"]
     return {
-        "threshold_db": GATE_DELTA_DB,
-        "seed_count": len(seeds),
-        "passing_seed_count": int(sum(per_seed_pass)),
-        "per_seed_pass": per_seed_pass,
-        "per_seed_delta_db": [float(d) for d in deltas],
-        "pass": bool(all(per_seed_pass)),
-        "definition": (
-            "every seed's paired mean PSNR delta versus the same-run pixel2d control "
-            "must be at least -0.5 dB (the unchanged original R1 gate)"
-        ),
+        "binding": binding,
+        "equivalence": equivalence,
+        "per_seed": legacy,
+        "pass": bool(decisive),
     }
+
+
+def check_seed_binding_compatibility(
+    forced_seeds: tuple[int, ...] | None, binding: str, gate: EquivalenceGate
+) -> None:
+    """Fail fast when an explicit seed list can never reach a verdict under `binding`.
+
+    `--seeds` bypasses the look schedule entirely (`run_experiment` trains exactly
+    that one batch), so under `binding="equivalence"` the run trains every arm and
+    only then discovers, inside `arm_gate_verdict`, that the seed count is not a
+    scheduled look and the equivalence rule cannot be binding off schedule -- after
+    however many hours of training that took. Raise here, before any training
+    starts, instead. `binding="per_seed"` has no such restriction and is unaffected.
+    """
+    if forced_seeds is None or binding != "equivalence":
+        return
+    if len(forced_seeds) not in gate.looks:
+        raise ValueError(
+            f"--seeds has {len(forced_seeds)} seeds, which is not a scheduled look "
+            f"{gate.looks}, but --gate equivalence (the default) is selected; the "
+            "equivalence rule cannot be evaluated off schedule. Either pass "
+            "--gate per-seed, or choose a --seeds count matching one of the "
+            f"scheduled looks {gate.looks}."
+        )
+
+
+def reproduce_command(args: argparse.Namespace, seeds: tuple[int, ...]) -> str:
+    """The exact command line that reproduces this run.
+
+    Must record every argument that distinguishes this run's RESULT, not merely
+    its output location -- --cache and --out-dir locate the run, but
+    --denoise-method, --bootstrap-seed, and --bootstrap-resamples change the
+    numbers themselves. A command string missing any of those replays a
+    DIFFERENT measurement (e.g. the bilateral-denoiser default instead of the
+    oidn run actually made) while appearing to reproduce this one.
+    """
+    return (
+        "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
+        f"--cache {args.cache} --out-dir {args.out_dir} "
+        f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters} "
+        f"--finest-resolution {args.finest_resolution} "
+        f"--base-resolution {args.base_resolution} "
+        f"--denoise-method {args.denoise_method} "
+        f"--gate {args.gate} --max-seeds {args.max_seeds} "
+        f"--bootstrap-seed {args.bootstrap_seed} "
+        f"--bootstrap-resamples {args.bootstrap_resamples}"
+    )
 
 
 def any_world_arm_passes(world_gates: dict[str, dict]) -> bool:
@@ -225,6 +332,32 @@ def any_world_arm_passes(world_gates: dict[str, dict]) -> bool:
     if not world_gates:
         raise ValueError("no world arms were evaluated")
     return any(gate["pass"] for gate in world_gates.values())
+
+
+def gate_exit_code(world_gates: dict[str, dict]) -> int:
+    """0 if any world arm passed; 3 if every non-passing arm is `underpowered`
+    (CI's `equivalence` verdict); 2 for a real failure (at least one arm's
+    equivalence verdict is `fail`, or the binding rule has no `underpowered`
+    concept, e.g. `per_seed`).
+
+    Distinguishing 2 from 3 lets CI tell "no" (a clear failure) from "unknown"
+    (every arm needs more seeds to say either way) instead of collapsing both
+    into the same exit code.
+    """
+    if any_world_arm_passes(world_gates):
+        return 0
+    verdicts = []
+    for gate in world_gates.values():
+        equivalence = gate.get("equivalence")
+        if equivalence is None:
+            # No equivalence verdict was computed (e.g. off-schedule under
+            # `per_seed` binding) -- nothing to call "underpowered", so this is a
+            # plain failure.
+            return 2
+        verdicts.append(equivalence["verdict"])
+    if verdicts and all(verdict == "underpowered" for verdict in verdicts):
+        return 3
+    return 2
 
 
 def build_report(
@@ -267,58 +400,110 @@ def _relative_path(path: str | Path, root: Path) -> str:
         return str(path)
 
 
+def seed_mean_delta(control_metrics: list[dict], candidate_metrics: list[dict]) -> float:
+    """Mean paired PSNR delta over the validation lights, for one arm and one seed."""
+    per_light = pair_validation_metrics(control_metrics, candidate_metrics)
+    return float(np.mean([row["delta_db"] for row in per_light]))
+
+
 def run_experiment(
     base_cfg: dict,
     cache: PathCache,
     *,
     root: Path,
     out_root: Path,
-    seeds: tuple[int, ...],
+    seeds: tuple[int, ...] | None = None,
     resamples: int,
     bootstrap_seed: int,
     arm_models: dict[str, dict] = ARM_MODELS,
+    gate: EquivalenceGate | None = None,
+    binding: str = "equivalence",
+    max_seeds: int | None = None,
 ) -> dict:
-    validation_sets, validation_specs = build_frozen_validation_sets(cache, base_cfg, seeds)
+    """Train every arm over the gate's look schedule, stopping at the first verdict.
+
+    `seeds` forces an explicit seed list (the per-seed rule's mode, and how a caller
+    reproduces a historical run); otherwise seeds come from the look schedule. Early
+    stopping only ever happens AT a look, which is what keeps the alpha correction
+    honest.
+    """
+    gate = gate or EquivalenceGate()
+    if seeds is not None:
+        seed_batches = [tuple(seeds)]
+    else:
+        seed_batches = plan_seed_batches(gate, max_seeds or gate.cap)
+
+    validation_sets: dict[int, list[dict]] = {}
+    validation_specs: dict[str, list[dict]] = {}
     metrics_by_arm: dict[tuple[str, int], list[dict]] = {}
     training_arms: list[dict] = []
+    trained_seeds: list[int] = []
+    # One definition of "this arm's mean delta at this seed" (`seed_mean_delta`),
+    # computed once per (arm, seed) and shared between the look-boundary check and
+    # the final summary below instead of each recomputing it independently.
+    mean_delta_cache: dict[tuple[str, int], float] = {}
 
-    for seed in seeds:
-        for arm in ARMS:
-            arm_dir = out_root / "train" / arm / f"seed{seed}"
-            arm_cfg = make_arm_config(base_cfg, arm, seed, arm_dir, arm_models=arm_models)
-            train_report = train(arm_cfg)
-            model_path = arm_dir / "model.pt"
-            model = load_trained_model(str(model_path), cache)
-            metrics = evaluate_model(model, cache, validation_sets[seed])
-            metrics_by_arm[(arm, seed)] = metrics
-            capacity_report = model.encoding.capacity_report() if model.encoding else None
-            psnrs = np.asarray([row["psnr_db_vs_raw"] for row in metrics], dtype=np.float64)
-            training_arms.append(
-                {
-                    "arm": arm,
-                    "seed": seed,
-                    "parameter_count": int(train_report["parameter_count"]),
-                    "capacity_report": capacity_report,
-                    "iters_per_second": train_report["iters_per_second"],
-                    "train_seconds": train_report["train_seconds"],
-                    "report": _relative_path(arm_dir / "torch_train_report.json", root),
-                    "validation": metrics,
-                    "validation_psnr_db_mean": float(psnrs.mean()),
-                    "validation_psnr_db_std": float(psnrs.std()),
-                }
+    def cached_mean_delta(arm: str, seed: int) -> float:
+        key = (arm, seed)
+        if key not in mean_delta_cache:
+            mean_delta_cache[key] = seed_mean_delta(
+                metrics_by_arm[(CONTROL_ARM, seed)], metrics_by_arm[(arm, seed)]
             )
-            print(
-                f"{arm} seed {seed}: {psnrs.mean():.2f} dB, "
-                f"{train_report['parameter_count']} params"
-            )
-            del model
+        return mean_delta_cache[key]
 
+    for batch in seed_batches:
+        batch_sets, batch_specs = build_frozen_validation_sets(cache, base_cfg, batch)
+        validation_sets.update(batch_sets)
+        validation_specs.update(batch_specs)
+
+        for seed in batch:
+            for arm in ARMS:
+                arm_dir = out_root / "train" / arm / f"seed{seed}"
+                arm_cfg = make_arm_config(base_cfg, arm, seed, arm_dir, arm_models=arm_models)
+                train_report = train(arm_cfg)
+                model_path = arm_dir / "model.pt"
+                model = load_trained_model(str(model_path), cache)
+                metrics = evaluate_model(model, cache, validation_sets[seed])
+                metrics_by_arm[(arm, seed)] = metrics
+                capacity_report = model.encoding.capacity_report() if model.encoding else None
+                psnrs = np.asarray([row["psnr_db_vs_raw"] for row in metrics], dtype=np.float64)
+                training_arms.append(
+                    {
+                        "arm": arm,
+                        "seed": seed,
+                        "parameter_count": int(train_report["parameter_count"]),
+                        "capacity_report": capacity_report,
+                        "iters_per_second": train_report["iters_per_second"],
+                        "train_seconds": train_report["train_seconds"],
+                        "report": _relative_path(arm_dir / "torch_train_report.json", root),
+                        "validation": metrics,
+                        "validation_psnr_db_mean": float(psnrs.mean()),
+                        "validation_psnr_db_std": float(psnrs.std()),
+                    }
+                )
+                print(
+                    f"{arm} seed {seed}: {psnrs.mean():.2f} dB, "
+                    f"{train_report['parameter_count']} params"
+                )
+                del model
+            trained_seeds.append(seed)
+
+        # Look boundary: stop as soon as every world arm has a terminal verdict.
+        if binding == "equivalence" and len(trained_seeds) in gate.looks:
+            verdicts = []
+            for arm in WORLD_ARMS:
+                deltas = [cached_mean_delta(arm, seed) for seed in trained_seeds]
+                verdicts.append(gate.evaluate(deltas)["verdict"])
+            if all(verdict in ("pass", "fail") for verdict in verdicts):
+                break
+
+    seeds_run = tuple(trained_seeds)
     world_gates = {}
     per_arm_comparisons = {}
     for arm_index, arm in enumerate(WORLD_ARMS):
         per_seed = []
         seed_mean_deltas = []
-        for seed_index, seed in enumerate(seeds):
+        for seed_index, seed in enumerate(seeds_run):
             control = metrics_by_arm[(CONTROL_ARM, seed)]
             candidate = metrics_by_arm[(arm, seed)]
             per_light = pair_validation_metrics(control, candidate)
@@ -327,6 +512,8 @@ def run_experiment(
                 {
                     "seed": seed,
                     "per_light_deltas": per_light,
+                    # Bootstrap stays in the report as a DESCRIPTIVE statistic; the
+                    # gate's Student-t interval is what binds (see the module docstring).
                     "summary": summarize_values(
                         deltas,
                         resamples=resamples,
@@ -334,20 +521,21 @@ def run_experiment(
                     ),
                 }
             )
-            seed_mean_deltas.append(float(deltas.mean()))
-        gate = arm_gate_verdict(seed_mean_deltas, seeds)
-        gate["across_seed_summary"] = summarize_values(
+            seed_mean_deltas.append(cached_mean_delta(arm, seed))
+        verdict = arm_gate_verdict(seed_mean_deltas, seeds_run, gate=gate, binding=binding)
+        verdict["across_seed_summary"] = summarize_values(
             np.asarray(seed_mean_deltas, dtype=np.float64),
             resamples=resamples,
             bootstrap_seed=bootstrap_seed + 1000 + arm_index,
         )
-        world_gates[arm] = gate
+        world_gates[arm] = verdict
         per_arm_comparisons[arm] = per_seed
 
     return {
+        "seeds_run": list(seeds_run),
         "validation_specs": validation_specs,
         "validation_fingerprints": {
-            str(seed): validation_fingerprint(validation_specs[str(seed)]) for seed in seeds
+            str(seed): validation_fingerprint(validation_specs[str(seed)]) for seed in seeds_run
         },
         "training_arms": training_arms,
         "world_gates": world_gates,
@@ -359,7 +547,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--cache", default=DEFAULT_CACHE)
     parser.add_argument("--out-dir", default="out/r1-parity")
-    parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
+    parser.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        default=None,
+        help="Force an explicit seed list, bypassing the look schedule (how a caller "
+        "reproduces a historical run; the only mode --gate per-seed uses). Omit to "
+        "draw seeds from the look schedule under --gate equivalence.",
+    )
     parser.add_argument("--iters", type=int, default=BASE_TRAIN_CONFIG["iters"])
     parser.add_argument("--bootstrap-resamples", type=int, default=BOOTSTRAP_RESAMPLES)
     parser.add_argument("--bootstrap-seed", type=int, default=BOOTSTRAP_SEED)
@@ -381,6 +577,19 @@ def main() -> None:
         default=BASE_TRAIN_CONFIG["denoise"]["method"],
         choices=["bilateral", "oidn"],
         help="Pool/validation-target denoiser (default: bilateral).",
+    )
+    parser.add_argument(
+        "--gate",
+        default="equivalence",
+        choices=["equivalence", "per-seed"],
+        help="Which rule is binding for promotion (default: equivalence). Both verdicts "
+        "are always recorded in the report.",
+    )
+    parser.add_argument(
+        "--max-seeds",
+        type=int,
+        default=EquivalenceGate().cap,
+        help="Seed cap for the adaptive look schedule (default: 48).",
     )
     args = parser.parse_args()
 
@@ -405,8 +614,8 @@ def main() -> None:
         out_root = root / out_root
     out_root.mkdir(parents=True, exist_ok=True)
 
-    seeds = tuple(args.seeds)
-    if len(set(seeds)) != len(seeds):
+    forced_seeds = tuple(args.seeds) if args.seeds else None
+    if forced_seeds is not None and len(set(forced_seeds)) != len(forced_seeds):
         raise SystemExit("--seeds must not contain duplicates")
     if args.bootstrap_resamples < 1:
         raise SystemExit("--bootstrap-resamples must be positive")
@@ -419,16 +628,27 @@ def main() -> None:
         base_resolution=args.base_resolution, finest_resolution=args.finest_resolution
     )
 
+    gate = EquivalenceGate()
+    binding = args.gate.replace("-", "_")
+    try:
+        check_seed_binding_compatibility(forced_seeds, binding, gate)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
     result = run_experiment(
         base_cfg,
         cache,
         root=root,
         out_root=out_root,
-        seeds=seeds,
+        seeds=forced_seeds,
         resamples=args.bootstrap_resamples,
         bootstrap_seed=args.bootstrap_seed,
         arm_models=arm_models,
+        gate=gate,
+        binding=binding,
+        max_seeds=args.max_seeds,
     )
+    seeds = tuple(result["seeds_run"])
 
     report = build_report(
         seeds=seeds,
@@ -443,16 +663,7 @@ def main() -> None:
             "device": "cpu",
         },
         extra={
-            # Record every argument that distinguishes this run, including --cache and
-            # --out-dir. A command string missing those silently reproduces a DIFFERENT
-            # scene while appearing to reproduce this one.
-            "command": (
-                "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
-                f"--cache {args.cache} --out-dir {args.out_dir} "
-                f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters} "
-                f"--finest-resolution {args.finest_resolution} "
-                f"--base-resolution {args.base_resolution}"
-            ),
+            "command": reproduce_command(args, seeds),
             "cache": _relative_path(cache_path, root),
             "resolution": [cache.width, cache.height],
             "segments": cache.segment_count,
@@ -471,6 +682,13 @@ def main() -> None:
                 "fingerprints": result["validation_fingerprints"],
             },
             "comparisons": result["comparisons"],
+            "gate_rule": binding,
+            "gate_schedule": {
+                "looks": list(gate.looks),
+                "cap": gate.cap,
+                "alpha_overall": gate.alpha,
+                "confidence_per_look": gate.confidence_per_look,
+            },
         },
     )
 
@@ -479,7 +697,7 @@ def main() -> None:
     print(json.dumps({"gate": {arm: g["pass"] for arm, g in report["gate"].items()}}, indent=2))
     print(f"wrote {report_path}")
     if not report["any_world_arm_pass"]:
-        raise SystemExit(2)
+        raise SystemExit(gate_exit_code(report["gate"]))
 
 
 if __name__ == "__main__":

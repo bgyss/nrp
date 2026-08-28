@@ -1,5 +1,21 @@
 # Kitchen Parity Next Steps — Testing the Vertex-Support Hypothesis
 
+> **Outcome (2026-08-27): K1 ran and gives NO SUPPORT for the hypothesis (and is
+> underpowered to establish either direction). K2, K3, and K4 are cancelled**
+> under this plan's own stop condition — they were conditional on K1 confirming
+> the predicted direction, which it did not. Sweeping `world_sparse`'s finest
+> resolution over 32/48/64/96/128 x 5 seeds against the fixed committed `pixel2d`
+> control gives a Spearman correlation of **+0.20** (p ≈ 0.75) between resolution
+> and mean delta where the prediction required a negative one, is not monotonic,
+> and passes the unchanged -0.5 dB gate at no setting — but 5 points and p ≈ 0.75
+> against per-seed noise comparable to the effect size cannot rule out the
+> opposite direction either. K1 additionally found ~1.5 dB run-to-run variation
+> at a fixed seed, which exceeds the gate and is not removed by
+> single-threading. Results:
+> `docs/performance.md#k1-finest-resolution-sweep-does-not-support-the-vertex-support-hypothesis-kitchen-128`,
+> `out/r1-kitchen-parity-k1/report.json`, runner `examples/r1_kitchen_k1.py`.
+> The plan below is preserved as written, before the result was known.
+
 ## Decision carried forward
 
 The fair-allocation parity re-measurement (`docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128`,

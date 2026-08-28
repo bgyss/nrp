@@ -130,34 +130,46 @@ class ResolutionLadderTests(unittest.TestCase):
 
 
 class SeedGateTests(unittest.TestCase):
+    """These exercise the legacy per-seed rule, now nested under `result["per_seed"]`
+    (dual-verdict `arm_gate_verdict` still reports both rules; `binding="per_seed"`
+    makes the legacy rule decisive so `result["pass"]` mirrors it directly)."""
+
     def test_all_seeds_passing_gate_passes(self):
         runner = load_runner()
-        verdict = runner.arm_gate_verdict([0.1, -0.2, 0.0, -0.5, 1.0], seeds=(0, 1, 2, 3, 4))
+        verdict = runner.arm_gate_verdict(
+            [0.1, -0.2, 0.0, -0.5, 1.0], seeds=(0, 1, 2, 3, 4), binding="per_seed"
+        )
         self.assertTrue(verdict["pass"])
-        self.assertEqual(verdict["passing_seed_count"], 5)
-        self.assertEqual(verdict["seed_count"], 5)
+        self.assertEqual(verdict["per_seed"]["passing_seed_count"], 5)
+        self.assertEqual(verdict["per_seed"]["seed_count"], 5)
 
     def test_one_failing_seed_fails_the_whole_arm(self):
         # A favourable mean must never rescue a single failing seed: mean of
         # [-1.0, 1.0, 1.0, 1.0, 1.0] is 0.6, well above threshold, but seed 0 fails.
         runner = load_runner()
-        verdict = runner.arm_gate_verdict([-1.0, 1.0, 1.0, 1.0, 1.0], seeds=(0, 1, 2, 3, 4))
+        verdict = runner.arm_gate_verdict(
+            [-1.0, 1.0, 1.0, 1.0, 1.0], seeds=(0, 1, 2, 3, 4), binding="per_seed"
+        )
         self.assertFalse(verdict["pass"])
-        self.assertEqual(verdict["passing_seed_count"], 4)
-        self.assertGreater(float(np.mean([-1.0, 1.0, 1.0, 1.0, 1.0])), runner.GATE_DELTA_DB)
+        self.assertEqual(verdict["per_seed"]["passing_seed_count"], 4)
+        self.assertGreater(
+            float(np.mean([-1.0, 1.0, 1.0, 1.0, 1.0])), verdict["per_seed"]["threshold_db"]
+        )
 
     def test_delta_exactly_at_threshold_passes(self):
         runner = load_runner()
-        verdict = runner.arm_gate_verdict([runner.GATE_DELTA_DB] * 3, seeds=(0, 1, 2))
+        verdict = runner.arm_gate_verdict(
+            [runner.GATE_DELTA_DB] * 3, seeds=(0, 1, 2), binding="per_seed"
+        )
         self.assertTrue(verdict["pass"])
 
     def test_delta_just_below_threshold_fails(self):
         runner = load_runner()
         verdict = runner.arm_gate_verdict(
-            [runner.GATE_DELTA_DB - 1e-9] + [10.0, 10.0], seeds=(0, 1, 2)
+            [runner.GATE_DELTA_DB - 1e-9] + [10.0, 10.0], seeds=(0, 1, 2), binding="per_seed"
         )
         self.assertFalse(verdict["pass"])
-        self.assertEqual(verdict["passing_seed_count"], 2)
+        self.assertEqual(verdict["per_seed"]["passing_seed_count"], 2)
 
     def test_empty_seeds_raises_rather_than_reporting_a_pass(self):
         # The recurring defect this branch has hit fifteen times: a gate that
@@ -216,7 +228,8 @@ class ReportAssemblyTests(unittest.TestCase):
             "world3d": [-1.0, 1.0],
         }
         world_gates = {
-            arm: runner.arm_gate_verdict(per_seed_deltas[arm], seeds=seeds) for arm in world_arms
+            arm: runner.arm_gate_verdict(per_seed_deltas[arm], seeds=seeds, binding="per_seed")
+            for arm in world_arms
         }
         training_arms = [
             self._fake_arm_summary("pixel2d", 0, 100, 0.0),
@@ -242,14 +255,197 @@ class ReportAssemblyTests(unittest.TestCase):
         runner = load_runner()
         seeds = (0, 1)
         world_gates = {
-            "world_sparse": runner.arm_gate_verdict([-1.0, -1.0], seeds=seeds),
-            "world_normal_triplane": runner.arm_gate_verdict([-1.0, -1.0], seeds=seeds),
-            "world3d": runner.arm_gate_verdict([-1.0, -1.0], seeds=seeds),
+            "world_sparse": runner.arm_gate_verdict([-1.0, -1.0], seeds=seeds, binding="per_seed"),
+            "world_normal_triplane": runner.arm_gate_verdict(
+                [-1.0, -1.0], seeds=seeds, binding="per_seed"
+            ),
+            "world3d": runner.arm_gate_verdict([-1.0, -1.0], seeds=seeds, binding="per_seed"),
         }
         report = runner.build_report(
             seeds=seeds, training_arms=[], world_gates=world_gates, hardware={}
         )
         self.assertFalse(report["any_world_arm_pass"])
+
+
+class SeedPlanningTests(unittest.TestCase):
+    def test_batches_follow_the_look_schedule_and_respect_max_seeds(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        batches = runner.plan_seed_batches(EquivalenceGate(), max_seeds=24)
+        self.assertEqual([len(b) for b in batches], [8, 8, 8])
+        self.assertEqual(batches[0], tuple(range(8)))
+        self.assertEqual(batches[2], tuple(range(16, 24)))
+
+    def test_max_seeds_below_the_first_look_raises(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        with self.assertRaises(ValueError):
+            runner.plan_seed_batches(EquivalenceGate(), max_seeds=4)
+
+
+class DualVerdictTests(unittest.TestCase):
+    def test_verdict_carries_both_rules_with_equivalence_binding(self):
+        runner = load_runner()
+        deltas = [0.02, -0.01, 0.03, 0.00, 0.01, -0.02, 0.02, 0.01]
+        verdict = runner.arm_gate_verdict(deltas, tuple(range(8)))
+        self.assertEqual(verdict["binding"], "equivalence")
+        self.assertEqual(verdict["equivalence"]["verdict"], "pass")
+        self.assertIn("per_seed", verdict)
+        self.assertTrue(verdict["pass"])
+
+    def test_underpowered_is_not_a_pass(self):
+        runner = load_runner()
+        rng = np.random.default_rng(11)
+        deltas = list(rng.normal(0.0, 2.0, 48))
+        verdict = runner.arm_gate_verdict(deltas, tuple(range(48)))
+        self.assertEqual(verdict["equivalence"]["verdict"], "underpowered")
+        self.assertFalse(verdict["pass"])
+
+    def test_per_seed_rule_can_be_selected_as_binding(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        deltas = [0.02, -0.01, 0.03, 0.00, 0.01, -0.02, 0.02, 0.01]
+        verdict = runner.arm_gate_verdict(
+            deltas, tuple(range(8)), gate=EquivalenceGate(), binding="per_seed"
+        )
+        self.assertEqual(verdict["binding"], "per_seed")
+        self.assertTrue(verdict["pass"])
+
+    def test_a_report_records_which_rule_was_binding(self):
+        runner = load_runner()
+        deltas = [0.02, -0.01, 0.03, 0.00, 0.01, -0.02, 0.02, 0.01]
+        gates = {"world_sparse": runner.arm_gate_verdict(deltas, tuple(range(8)))}
+        report = runner.build_report(
+            seeds=tuple(range(8)),
+            training_arms=[],
+            world_gates=gates,
+            hardware={"device": "cpu"},
+            extra={"gate_rule": "equivalence"},
+        )
+        self.assertEqual(report["gate_rule"], "equivalence")
+        self.assertTrue(report["any_world_arm_pass"])
+
+
+def make_args(**overrides):
+    import argparse
+
+    defaults = dict(
+        cache="out/cache.npz",
+        out_dir="out/r1-parity",
+        iters=3000,
+        finest_resolution=64,
+        base_resolution=4,
+        denoise_method="bilateral",
+        gate="equivalence",
+        max_seeds=48,
+        bootstrap_seed=1234,
+        bootstrap_resamples=2000,
+    )
+    defaults.update(overrides)
+    return argparse.Namespace(**defaults)
+
+
+class ReproduceCommandTests(unittest.TestCase):
+    """Regression test: the recorded command must include every argument that
+    changes the run's numbers, not just the ones that change its output location.
+    Replaying a command missing --denoise-method silently falls back to the
+    bilateral default and reproduces a DIFFERENT measurement.
+    """
+
+    def test_command_includes_denoise_method(self):
+        runner = load_runner()
+        args = make_args(denoise_method="oidn")
+        command = runner.reproduce_command(args, (0, 1, 2, 3, 4))
+        self.assertIn("--denoise-method oidn", command)
+
+    def test_command_includes_bootstrap_seed_and_resamples(self):
+        runner = load_runner()
+        args = make_args(bootstrap_seed=99, bootstrap_resamples=500)
+        command = runner.reproduce_command(args, (0,))
+        self.assertIn("--bootstrap-seed 99", command)
+        self.assertIn("--bootstrap-resamples 500", command)
+
+    def test_command_includes_every_result_affecting_argument(self):
+        runner = load_runner()
+        args = make_args()
+        command = runner.reproduce_command(args, (0, 1))
+        for flag in (
+            "--cache",
+            "--out-dir",
+            "--seeds",
+            "--iters",
+            "--finest-resolution",
+            "--base-resolution",
+            "--denoise-method",
+            "--gate",
+            "--max-seeds",
+            "--bootstrap-seed",
+            "--bootstrap-resamples",
+        ):
+            self.assertIn(flag, command)
+
+
+class SeedBindingCompatibilityTests(unittest.TestCase):
+    def test_none_forced_seeds_is_always_fine(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        runner.check_seed_binding_compatibility(None, "equivalence", EquivalenceGate())
+
+    def test_per_seed_binding_never_raises(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        runner.check_seed_binding_compatibility((0, 1, 2, 3, 4), "per_seed", EquivalenceGate())
+
+    def test_scheduled_look_under_equivalence_is_fine(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        runner.check_seed_binding_compatibility(tuple(range(8)), "equivalence", EquivalenceGate())
+
+    def test_off_schedule_seed_count_under_equivalence_raises_before_training(self):
+        runner = load_runner()
+        from nrp.experiment_gate import EquivalenceGate
+
+        with self.assertRaises(ValueError) as ctx:
+            runner.check_seed_binding_compatibility(
+                (0, 1, 2, 3, 4), "equivalence", EquivalenceGate()
+            )
+        message = str(ctx.exception)
+        self.assertIn("per-seed", message)
+        self.assertIn("5", message)
+
+
+class GateExitCodeTests(unittest.TestCase):
+    def test_any_pass_is_zero(self):
+        runner = load_runner()
+        gates = {"world_sparse": {"pass": True, "equivalence": {"verdict": "pass"}}}
+        self.assertEqual(runner.gate_exit_code(gates), 0)
+
+    def test_all_underpowered_is_three(self):
+        runner = load_runner()
+        gates = {
+            "world_sparse": {"pass": False, "equivalence": {"verdict": "underpowered"}},
+            "world3d": {"pass": False, "equivalence": {"verdict": "underpowered"}},
+        }
+        self.assertEqual(runner.gate_exit_code(gates), 3)
+
+    def test_any_real_fail_is_two_even_alongside_underpowered(self):
+        runner = load_runner()
+        gates = {
+            "world_sparse": {"pass": False, "equivalence": {"verdict": "fail"}},
+            "world3d": {"pass": False, "equivalence": {"verdict": "underpowered"}},
+        }
+        self.assertEqual(runner.gate_exit_code(gates), 2)
+
+    def test_per_seed_binding_with_no_equivalence_verdict_is_two(self):
+        runner = load_runner()
+        gates = {"world_sparse": {"pass": False, "equivalence": None}}
+        self.assertEqual(runner.gate_exit_code(gates), 2)
 
 
 if __name__ == "__main__":
