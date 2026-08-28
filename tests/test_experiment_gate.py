@@ -147,13 +147,35 @@ class GateVerdictTests(unittest.TestCase):
         self.assertGreater(result["seeds_needed"], 48)
 
     def test_boundary_lower_bound_exactly_at_threshold_passes(self):
-        """A gate that rejects its own boundary silently moves the threshold."""
+        """A gate that rejects its own boundary silently moves the threshold.
+
+        `[0.0] * 8` (the previous version of this test) has zero spread, so its CI
+        lower bound sits at 0.0 -- nowhere near the -0.5 boundary the test is named
+        for. Construct deltas with genuine spread whose CI lower bound is placed,
+        by direct computation from the gate's own formula, at exactly -0.5.
+        """
         gate = EquivalenceGate(threshold_db=-0.5, looks=(8,))
-        deltas = [0.0] * 8
+        spread = np.array([0.5, -0.5, 0.3, -0.3, 0.1, -0.1, 0.2, -0.2])
+        std = float(spread.std(ddof=1))
+        confidence = gate.confidence_per_look
+        half_width = t_ppf(1.0 - (1.0 - confidence) / 2.0, 7) * std / math.sqrt(8)
+        deltas = list(spread - spread.mean() + (-0.5 + half_width))
         result = gate.evaluate(deltas)
-        # Zero spread puts the interval at exactly the mean, above -0.5.
         self.assertEqual(result["verdict"], "pass")
-        self.assertEqual(result["ci_lower_db"], 0.0)
+        self.assertAlmostEqual(result["ci_lower_db"], -0.5, places=6)
+
+    def test_boundary_lower_bound_just_below_threshold_does_not_pass(self):
+        """Companion to the above: nudge the mean down so the lower bound falls just
+        under -0.5, and the gate must not still report a pass at that boundary."""
+        gate = EquivalenceGate(threshold_db=-0.5, looks=(8,))
+        spread = np.array([0.5, -0.5, 0.3, -0.3, 0.1, -0.1, 0.2, -0.2])
+        std = float(spread.std(ddof=1))
+        confidence = gate.confidence_per_look
+        half_width = t_ppf(1.0 - (1.0 - confidence) / 2.0, 7) * std / math.sqrt(8)
+        deltas = list(spread - spread.mean() + (-0.5 + half_width - 1e-3))
+        result = gate.evaluate(deltas)
+        self.assertLess(result["ci_lower_db"], -0.5)
+        self.assertNotEqual(result["verdict"], "pass")
 
     def test_more_seeds_narrow_the_interval_at_equal_mean_and_spread(self):
         gate = EquivalenceGate()
@@ -313,7 +335,8 @@ class GatePowerTests(unittest.TestCase):
         """world3d's spread needs ~82 seeds; at cap 48 the honest answer is 'unknown'."""
         rates = verdict_rates(EquivalenceGate(), 0.0, 1.67, self.TRIALS, seed=103)
         self.assertGreaterEqual(rates["underpowered"], 0.50)
-        self.assertEqual(rates["fail"], 0.0)
+        # Knife-edge on a 600-trial Monte Carlo: a neighbouring cell measures 0.0015.
+        self.assertLessEqual(rates["fail"], 0.01)
 
     def test_legacy_per_seed_rule_rejects_at_parity_arms(self):
         """Regression test on the diagnosis: the old rule fails a perfect arm."""
@@ -326,7 +349,15 @@ class GatePowerTests(unittest.TestCase):
         self.assertLessEqual(passes / self.TRIALS, 0.30)
 
     def test_legacy_rule_gets_worse_with_more_seeds_and_the_gate_does_not(self):
-        """The structural defect: the old rule punishes sample size."""
+        """The structural defect: the old rule punishes sample size.
+
+        (The `gate_large >= gate_small` comparison this test used to make on the
+        replacement gate is dropped: both sides saturate near 1.0 under mutation, so
+        it could not fail regardless of whether the property holds. That property --
+        the gate does not get worse with more seeds -- is owned by
+        `test_gate_refuses_to_certify_a_spread_the_cap_cannot_resolve` and the
+        at-parity promotion tests above.)
+        """
         rng = np.random.default_rng(105)
         rates = {}
         for n in (5, 10):
@@ -335,12 +366,6 @@ class GatePowerTests(unittest.TestCase):
             )
             rates[n] = passes / self.TRIALS
         self.assertLess(rates[10], rates[5])
-
-        gate_small = verdict_rates(EquivalenceGate(looks=(8,)), 0.0, 0.73, self.TRIALS, seed=106)
-        gate_large = verdict_rates(
-            EquivalenceGate(looks=(8, 16, 24, 32, 40, 48)), 0.0, 0.73, self.TRIALS, seed=106
-        )
-        self.assertGreaterEqual(gate_large["pass"], gate_small["pass"])
 
 
 if __name__ == "__main__":
