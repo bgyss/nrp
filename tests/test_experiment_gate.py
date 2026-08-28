@@ -12,10 +12,18 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from nrp.experiment_gate import t_cdf, t_ppf  # noqa: E402
+from nrp.experiment_gate import (  # noqa: E402
+    EquivalenceGate,
+    per_seed_verdict,
+    seeds_needed,
+    t_cdf,
+    t_ppf,
+)
 
 
 class StudentTNumericsTests(unittest.TestCase):
@@ -66,6 +74,149 @@ class StudentTNumericsTests(unittest.TestCase):
             t_ppf(1.0, 10)
         with self.assertRaises(ValueError):
             t_ppf(0.975, 0)
+
+
+class GateScheduleTests(unittest.TestCase):
+    def test_confidence_is_bonferroni_split_across_looks(self):
+        gate = EquivalenceGate()
+        self.assertAlmostEqual(gate.confidence_per_look, 1.0 - 0.05 / 6, places=12)
+        self.assertEqual(gate.cap, 48)
+
+    def test_next_look_walks_the_schedule_and_ends_at_the_cap(self):
+        gate = EquivalenceGate()
+        self.assertEqual(gate.next_look(0), 8)
+        self.assertEqual(gate.next_look(8), 16)
+        self.assertEqual(gate.next_look(47), 48)
+        self.assertIsNone(gate.next_look(48))
+
+    def test_evaluating_off_schedule_raises_rather_than_peeking(self):
+        gate = EquivalenceGate()
+        with self.assertRaises(ValueError):
+            gate.evaluate([0.0] * 9)
+
+    def test_empty_and_single_seed_inputs_raise(self):
+        gate = EquivalenceGate()
+        with self.assertRaises(ValueError):
+            gate.evaluate([])
+        with self.assertRaises(ValueError):
+            gate.evaluate([0.1])
+
+    def test_a_first_look_below_two_seeds_raises(self):
+        """Two seeds is the floor for a variance estimate, so the schedule must respect it."""
+        with self.assertRaises(ValueError):
+            EquivalenceGate(looks=(1, 8))
+
+    def test_non_monotonic_or_duplicate_looks_raise(self):
+        with self.assertRaises(ValueError):
+            EquivalenceGate(looks=(16, 8))
+        with self.assertRaises(ValueError):
+            EquivalenceGate(looks=(8, 8))
+        with self.assertRaises(ValueError):
+            EquivalenceGate(looks=())
+
+
+class GateVerdictTests(unittest.TestCase):
+    def test_tight_interval_above_threshold_passes(self):
+        gate = EquivalenceGate()
+        deltas = [0.02, -0.01, 0.03, 0.00, 0.01, -0.02, 0.02, 0.01]
+        result = gate.evaluate(deltas)
+        self.assertEqual(result["verdict"], "pass")
+        self.assertGreaterEqual(result["ci_lower_db"], -0.5)
+        self.assertEqual(result["estimator"], "student_t")
+        self.assertEqual(result["n"], 8)
+
+    def test_interval_entirely_below_threshold_fails(self):
+        gate = EquivalenceGate()
+        deltas = [-3.0, -3.1, -2.9, -3.0, -3.2, -2.8, -3.1, -3.0]
+        result = gate.evaluate(deltas)
+        self.assertEqual(result["verdict"], "fail")
+        self.assertLess(result["ci_upper_db"], -0.5)
+
+    def test_straddling_interval_continues_before_the_cap(self):
+        gate = EquivalenceGate()
+        deltas = [1.5, -2.0, 0.5, -1.5, 2.0, -1.0, 0.0, -0.5]
+        result = gate.evaluate(deltas)
+        self.assertEqual(result["verdict"], "continue")
+
+    def test_straddling_interval_at_the_cap_is_underpowered(self):
+        gate = EquivalenceGate()
+        rng = np.random.default_rng(11)
+        deltas = list(rng.normal(0.0, 2.0, 48))
+        result = gate.evaluate(deltas)
+        self.assertEqual(result["verdict"], "underpowered")
+        self.assertGreater(result["seeds_needed"], 48)
+
+    def test_boundary_lower_bound_exactly_at_threshold_passes(self):
+        """A gate that rejects its own boundary silently moves the threshold."""
+        gate = EquivalenceGate(threshold_db=-0.5, looks=(8,))
+        deltas = [0.0] * 8
+        result = gate.evaluate(deltas)
+        # Zero spread puts the interval at exactly the mean, above -0.5.
+        self.assertEqual(result["verdict"], "pass")
+        self.assertEqual(result["ci_lower_db"], 0.0)
+
+    def test_more_seeds_narrow_the_interval_at_equal_mean_and_spread(self):
+        gate = EquivalenceGate()
+        base = [0.5, -0.5] * 4
+        narrow = gate.evaluate(base * 6)
+        wide = gate.evaluate(base)
+        self.assertAlmostEqual(narrow["mean_db"], wide["mean_db"], places=12)
+        span_narrow = narrow["ci_upper_db"] - narrow["ci_lower_db"]
+        span_wide = wide["ci_upper_db"] - wide["ci_lower_db"]
+        self.assertLess(span_narrow, span_wide)
+
+    def test_verdict_records_the_multiplicity_correction_for_auditing(self):
+        gate = EquivalenceGate()
+        result = gate.evaluate([0.0, 0.1] * 4)
+        self.assertEqual(result["looks_taken"], 1)
+        self.assertEqual(result["look_index"], 0)
+        self.assertEqual(result["looks"], [8, 16, 24, 32, 40, 48])
+        self.assertAlmostEqual(result["confidence"], 1.0 - 0.05 / 6, places=12)
+
+    def test_looks_taken_counts_every_look_up_to_this_one(self):
+        gate = EquivalenceGate()
+        result = gate.evaluate([0.0, 0.1] * 12)
+        self.assertEqual(result["n"], 24)
+        self.assertEqual(result["looks_taken"], 3)
+
+
+class LegacyPerSeedVerdictTests(unittest.TestCase):
+    def test_all_seeds_clearing_passes(self):
+        result = per_seed_verdict([0.1, -0.2, 0.0])
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["passing_seed_count"], 3)
+
+    def test_one_failing_seed_fails_the_whole_arm(self):
+        result = per_seed_verdict([0.1, -0.6, 0.0])
+        self.assertFalse(result["pass"])
+
+    def test_delta_exactly_at_threshold_passes(self):
+        self.assertTrue(per_seed_verdict([-0.5, -0.5])["pass"])
+
+    def test_empty_input_raises_rather_than_reporting_a_vacuous_pass(self):
+        with self.assertRaises(ValueError):
+            per_seed_verdict([])
+
+
+class SeedsNeededTests(unittest.TestCase):
+    def test_matches_the_measured_planning_numbers(self):
+        confidence = 1.0 - 0.05 / 6
+        self.assertEqual(seeds_needed(0.73, 0.5, confidence), 19)
+        self.assertEqual(seeds_needed(1.00, 0.5, confidence), 32)
+        self.assertEqual(seeds_needed(1.67, 0.5, confidence), 82)
+
+    def test_tighter_half_width_needs_more_seeds(self):
+        confidence = 1.0 - 0.05 / 6
+        self.assertGreater(seeds_needed(1.0, 0.25, confidence), seeds_needed(1.0, 0.5, confidence))
+
+    def test_zero_spread_needs_the_minimum_sample(self):
+        self.assertEqual(seeds_needed(0.0, 0.5, 0.99), 2)
+
+    def test_invalid_inputs_raise(self):
+        with self.assertRaises(ValueError):
+            seeds_needed(-1.0, 0.5, 0.99)
+        with self.assertRaises(ValueError):
+            seeds_needed(1.0, 0.0, 0.99)
 
 
 if __name__ == "__main__":
