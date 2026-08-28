@@ -3265,16 +3265,59 @@ result every time:
 A ~1.5 dB spread across runs that share a seed — three times the −0.5 dB gate,
 and larger than every between-resolution difference in K1's table. Training seeds
 NumPy, `torch.manual_seed`, and the batch generator at entry
-(`nrp/torch_backend/train.py:405-441`), so a seed was assumed to pin a run; it
-does not. Pinning `OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1` (repeats A and B) does
-**not** remove the variation, so nondeterministic multi-threaded gradient
-accumulation is not the sole cause and the actual source is not yet identified.
+(`nrp/torch_backend/train.py:405-441`), so a seed was assumed to pin a run; it did
+not. Pinning `OMP_NUM_THREADS=1`/`MKL_NUM_THREADS=1` (repeats A and B) did not
+remove the variation either.
 
-This does not change K1's verdict: a prediction about the direction of an effect
-cannot be rescued by noise this large, and no setting passed the gate under any
-run. What it does mean is that per-seed deltas in this track — K1's table above,
-and the per-seed structure of the original Kitchen parity result — carry
-substantially less signal than their reported precision suggests, since a "seed"
-does not identify a run. **Diagnosing and fixing this is a prerequisite for any
-further per-seed gating on this scene**, ahead of re-running K1 or re-reading the
-Kitchen negative.
+**Root cause (found and fixed): the OIDN denoiser.** Hashing every pipeline stage
+across two processes at one seed showed everything bit-identical — cache arrays,
+light sampling from the seeded RNG, GATHERLIGHT, spatial/aux tensors, world
+bounds, the occupancy vertex set, and model initialization — except the denoise
+step. Repeating one OIDN filter execution on byte-identical input returned three
+distinct outputs in twelve repeats, differing by ~5e-7 per pixel. `OMP_NUM_THREADS`
+had no effect because **OIDN threads through TBB, not OpenMP**, so the thread count
+has to be set on the OIDN device itself.
+
+Four trainings at a fixed seed isolate it end to end (`world_sparse`, finest 128,
+seed 2, 300 iterations, hash over the final `state_dict`):
+
+| denoiser | final-parameter hash | final loss | held-out PSNR |
+|---|---|---:|---:|
+| bilateral, run 1 | `4795abf900ee35c2` | 0.267957 | 18.075061 |
+| bilateral, run 2 | `4795abf900ee35c2` | 0.267957 | 18.075061 |
+| OIDN, run 1 | `e52b9cb3929c322f` | 0.345754 | 17.912648 |
+| OIDN, run 2 | `a74665bd40d27ed9` | 0.611123 | 17.329541 |
+
+The bilateral pair is bit-identical, so the training loop, the optimizer, and the
+CPU kernels are all deterministic; the OIDN pair diverges by 0.58 dB after only
+300 iterations. Every pool target is denoised, so the perturbation enters at
+iteration 0 and Adam amplifies it.
+
+The trigger is dynamic range, not resolution: against the unpinned filter,
+log-uniform HDR input (1e-6…1e3) gave 3–4 distinct outputs in 8–12 repeats and a
+heavy-tailed image 2, while Gaussian noise and a mostly-zero image gave 1 at every
+size from 64² to 256². A gather image spans many orders of magnitude, which is why
+real Kitchen targets reproduced it and synthetic noise did not.
+
+**Fix:** `nrp/torch_backend/denoise.py` now pins the OIDN device to a single thread
+by default (`oidn_denoise(..., deterministic=True)`, threaded through
+`denoise_image`'s kwargs), and raises rather than silently returning irreproducible
+output on an oidn build that exposes no `oidnSetDevice1i`. `deterministic=False`
+keeps the multi-threaded path for output that does not feed a seeded, gated
+measurement. Measured cost at 128²: **5.6 ms/image vs 5.4 ms/image** (20 repeats),
+and pool-build time is unchanged at 4.8–5.2 s for 64 images. Regression test:
+`tests/test_exporter_denoise_bench.py::OIDNTests::test_repeated_denoise_of_one_input_is_bit_identical`
+— eight repeats of a log-uniform 128² input must be bit-identical; the same input
+produced four distinct outputs in eight repeats before the fix. Verification: the
+two OIDN trainings above, repeated with the fix, now agree bit-for-bit
+(`466ca022430f1989`, loss 0.462583, PSNR 18.113793, both runs).
+
+**What this does and does not change.** K1's verdict stands: a prediction about
+the direction of an effect cannot be rescued by noise, and no setting passed the
+gate under any run. But every per-seed number measured before this fix — K1's
+table above, and the per-seed structure of the original Kitchen parity result —
+was measured with a denoiser that perturbed its own targets, so those deltas carry
+~1 dB of run-to-run noise that their reported precision does not show. Runs from
+here on are reproducible; **re-measuring the Kitchen parity result under the fixed
+denoiser is the natural next step**, and any future per-seed gating on this scene
+depends on it.

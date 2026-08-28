@@ -267,6 +267,52 @@ class OIDNTests(unittest.TestCase):
         # HDR mode: values above 1.0 must survive (LDR mode would clamp toward 1).
         self.assertGreater(float(out.mean()), 1.5)
 
+    def test_repeated_denoise_of_one_input_is_bit_identical(self):
+        """OIDN must be deterministic: identical input in, identical bytes out.
+
+        OIDN threads through TBB, and its default multi-threaded reduction order
+        varies between executions -- ~5e-7 per pixel, which sounds negligible but
+        enters training as a perturbation of every pool target and, after 3,000
+        Adam steps, moved held-out PSNR by up to 1.5 dB at a FIXED seed (three
+        times the representation track's -0.5 dB parity gate; see
+        docs/performance.md's K1 nondeterminism section). Seeded runs must be
+        reproducible, so the denoiser pins OIDN to one thread by default.
+
+        The input is log-uniform over nine orders of magnitude at 128x128, which is
+        what actually reproduces the bug: measured against the unpinned filter,
+        log-uniform HDR gave three distinct outputs in twelve repeats and a
+        heavy-tailed image two, while plain Gaussian noise and a mostly-zero image
+        gave one at every size from 64 to 256. Wide dynamic range, not resolution,
+        is what makes the reduction order visible. Eight repeats, since a single
+        one would make this flaky rather than failing.
+        """
+        rng = np.random.default_rng(3)
+        img = 10.0 ** rng.uniform(-6, 3, (128, 128, 3))
+        alb = np.clip(rng.random((128, 128, 3)), 0.05, 1.0)
+        nrm = np.tile(np.array([0.0, 0.0, 1.0]), (128, 128, 1))
+        dep = np.ones((128, 128))
+        first = denoise_image(img, alb, nrm, dep, method="oidn")
+        for repeat in range(7):
+            again = denoise_image(img, alb, nrm, dep, method="oidn")
+            np.testing.assert_array_equal(
+                again, first, err_msg=f"OIDN output differs on repeat {repeat + 1}"
+            )
+
+    def test_nondeterministic_opt_out_still_denoises(self):
+        """The multi-threaded path stays reachable for callers that want the speed."""
+        from nrp.torch_backend.denoise import oidn_denoise
+
+        rng = np.random.default_rng(4)
+        clean = np.full((32, 32, 3), 2.0)
+        noisy = clean + rng.normal(0, 0.5, clean.shape)
+        alb = np.full((32, 32, 3), 0.5)
+        nrm = np.tile(np.array([0.0, 0.0, 1.0]), (32, 32, 1))
+        out = oidn_denoise(noisy, alb, nrm, deterministic=False)
+        self.assertEqual(out.shape, clean.shape)
+        self.assertLess(
+            float(((out - clean) ** 2).mean()), float(((noisy - clean) ** 2).mean()) / 5
+        )
+
 
 class DenoiseDispatchTests(unittest.TestCase):
     def test_unknown_method_raises(self):
