@@ -3317,7 +3317,75 @@ the direction of an effect cannot be rescued by noise, and no setting passed the
 gate under any run. But every per-seed number measured before this fix — K1's
 table above, and the per-seed structure of the original Kitchen parity result —
 was measured with a denoiser that perturbed its own targets, so those deltas carry
-~1 dB of run-to-run noise that their reported precision does not show. Runs from
-here on are reproducible; **re-measuring the Kitchen parity result under the fixed
-denoiser is the natural next step**, and any future per-seed gating on this scene
-depends on it.
+~1 dB of run-to-run noise that their reported precision does not show. The Kitchen
+parity result has since been re-measured under the fixed denoiser — see "Kitchen
+parity re-measured under the deterministic denoiser" below: the negative stands
+and is now reproducible, while the original run's per-seed values and arm ranking
+do not survive. K1's own table has **not** been re-measured and should be read
+with the same caution.
+
+## Kitchen parity re-measured under the deterministic denoiser
+
+The Kitchen result above (`out/r1-parity-kitchen/report.json`) and K1's sweep were
+both measured before the OIDN nondeterminism was found, so their per-seed numbers
+carry run-to-run noise the reports do not show. This section re-measures the
+Kitchen parity question under the identical protocol with only the denoiser fix
+in place. Evidence: `out/r1-parity-kitchen-det/report.json`. Hardware: Apple M1
+Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
+  --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-det \
+  --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 \
+  --denoise-method oidn
+```
+
+Nothing else changed: same cache, arms, ladder, iteration count, pool, seeds, and
+the unchanged −0.5 dB per-seed gate. Parameter and slot counts are identical to
+the original run (`pixel2d` 106,085/26,289; `world_sparse` 343,527/145,010;
+`world_normal_triplane` 162,037/54,777; `world3d` 187,103/66,926), as they must be
+— the fix touches only the denoiser.
+
+| arm | run | per-seed Δ vs `pixel2d` (dB) | mean | std | 95% CI | seeds passing |
+|---|---|---|---:|---:|---:|---:|
+| `world_sparse` | original | +0.02, −0.36, −1.35, −0.17, −2.83 | −0.935 | 1.058 | [−1.96, −0.13] | 3/5 |
+| | **deterministic** | +0.24, −2.43, −0.44, +0.09, +0.11 | **−0.485** | 0.999 | [−1.42, +0.16] | 4/5 |
+| `world_normal_triplane` | original | −0.46, +0.87, −0.65, −0.36, +0.28 | −0.064 | 0.563 | [−0.52, +0.49] | 4/5 |
+| | **deterministic** | −0.34, −1.39, −0.69, −0.50, +0.85 | **−0.414** | 0.726 | [−1.00, +0.30] | 2/5 |
+| `world3d` | original | −1.26, −0.58, +0.56, +0.12, −0.61 | −0.355 | — | — | 2/5 |
+| | **deterministic** | −0.19, −3.35, −0.42, −0.01, −3.82 | **−1.559** | 1.666 | [−3.00, −0.17] | 3/5 |
+
+**The conclusion is unchanged: no world-anchored arm passes.** All three still
+fail at least one seed against the unchanged gate, on a scene where all three pass
+5/5 on toy 64². That finding is now reproducible rather than merely reported.
+
+**The per-seed structure it was built from does not survive.** Individual deltas
+moved by up to 2.9 dB (`world_sparse` seed 4: −2.83 → +0.11; `world3d` seed 4:
+−0.61 → −3.82), the set of passing seeds changed for every arm, and the ranking of
+arms by mean reordered completely — `world_normal_triplane` was the best arm at
+−0.064 dB and is now second at −0.414, while `world_sparse` went from worst
+(−0.935) to best (−0.485). Any statement that rested on *which* arm or *which*
+seed did better in the original run should be treated as retracted; only the
+aggregate verdict carries over.
+
+Reproducibility verified rather than assumed: re-running seed 0 through the same
+command (`out/r1-parity-kitchen-det-recheck/report.json`) reproduces all four arms
+to every recorded digit — `pixel2d` 23.618277844, `world_sparse` 23.862641803,
+`world_normal_triplane` 23.280073927, `world3d` 23.424832101 dB in both runs.
+
+### Seed sensitivity is real, and larger than the gate
+
+With the measurement noise removed, what remains is genuine per-seed variation,
+and it is large: `world3d` spans −0.01 to −3.82 dB across five reproducible runs
+(std 1.67), and every arm's 95% CI is wider than the ±0.5 dB gate it is being
+judged against. This is not a denoiser artifact — these runs are bit-reproducible
+— it is real sensitivity of these arms to initialization and light sampling on
+this scene.
+
+Consequence for future work on this scene: a five-seed per-seed gate at ±0.5 dB is
+underpowered against per-seed spreads of this size, and a single failing seed can
+decide an arm's verdict. Any further gated comparison on Kitchen should either
+raise the seed count enough to resolve differences of the size being claimed, or
+state a gate on the aggregate with its interval rather than on every seed
+individually. That is a question about experimental design, not about the
+denoiser, and it is unresolved.
