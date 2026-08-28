@@ -3390,7 +3390,7 @@ state a gate on the aggregate with its interval rather than on every seed
 individually. That is a question about experimental design, not about the
 denoiser, and it is unresolved.
 
-## The equivalence-gate-from-2026-08-28
+## The equivalence gate (from 2026-08-28)
 
 Promotion decisions on this track previously required every seed's paired PSNR
 delta to clear −0.5 dB. At the per-seed spreads measured on Country Kitchen under
