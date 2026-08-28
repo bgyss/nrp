@@ -31,8 +31,19 @@ Design (single view, no camera arc, no rotations):
     a favourable mean never rescues a failing seed.
 
 Usage:
-  uv run python examples/r1_parity.py --seeds 0 --iters 50 --out-dir out/r1-parity-smoke
   uv run python examples/r1_parity.py --out-dir out/r1-parity
+  # --seeds bypasses the look schedule and needs --gate per-seed (an explicit seed
+  # count is not a scheduled look under the default --gate equivalence, which fails
+  # fast rather than raising only after training finishes):
+  uv run python examples/r1_parity.py --seeds 0 --iters 50 --gate per-seed \\
+      --out-dir out/r1-parity-smoke
+  uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --gate per-seed \\
+      --out-dir out/r1-parity
+
+Exit codes: 0 if any world arm passed; 3 if no arm passed but every non-passing
+arm's verdict is `underpowered` (the equivalence gate needs more seeds to answer
+either way); 2 for any other non-pass (a real `fail`, or a non-equivalence binding
+rule with no `underpowered` concept). CI can therefore tell "no" from "unknown".
 """
 
 from __future__ import annotations
@@ -260,6 +271,53 @@ def arm_gate_verdict(
     }
 
 
+def check_seed_binding_compatibility(
+    forced_seeds: tuple[int, ...] | None, binding: str, gate: EquivalenceGate
+) -> None:
+    """Fail fast when an explicit seed list can never reach a verdict under `binding`.
+
+    `--seeds` bypasses the look schedule entirely (`run_experiment` trains exactly
+    that one batch), so under `binding="equivalence"` the run trains every arm and
+    only then discovers, inside `arm_gate_verdict`, that the seed count is not a
+    scheduled look and the equivalence rule cannot be binding off schedule -- after
+    however many hours of training that took. Raise here, before any training
+    starts, instead. `binding="per_seed"` has no such restriction and is unaffected.
+    """
+    if forced_seeds is None or binding != "equivalence":
+        return
+    if len(forced_seeds) not in gate.looks:
+        raise ValueError(
+            f"--seeds has {len(forced_seeds)} seeds, which is not a scheduled look "
+            f"{gate.looks}, but --gate equivalence (the default) is selected; the "
+            "equivalence rule cannot be evaluated off schedule. Either pass "
+            "--gate per-seed, or choose a --seeds count matching one of the "
+            f"scheduled looks {gate.looks}."
+        )
+
+
+def reproduce_command(args: argparse.Namespace, seeds: tuple[int, ...]) -> str:
+    """The exact command line that reproduces this run.
+
+    Must record every argument that distinguishes this run's RESULT, not merely
+    its output location -- --cache and --out-dir locate the run, but
+    --denoise-method, --bootstrap-seed, and --bootstrap-resamples change the
+    numbers themselves. A command string missing any of those replays a
+    DIFFERENT measurement (e.g. the bilateral-denoiser default instead of the
+    oidn run actually made) while appearing to reproduce this one.
+    """
+    return (
+        "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
+        f"--cache {args.cache} --out-dir {args.out_dir} "
+        f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters} "
+        f"--finest-resolution {args.finest_resolution} "
+        f"--base-resolution {args.base_resolution} "
+        f"--denoise-method {args.denoise_method} "
+        f"--gate {args.gate} --max-seeds {args.max_seeds} "
+        f"--bootstrap-seed {args.bootstrap_seed} "
+        f"--bootstrap-resamples {args.bootstrap_resamples}"
+    )
+
+
 def any_world_arm_passes(world_gates: dict[str, dict]) -> bool:
     """Whether at least one world-anchored arm's gate passed.
 
@@ -271,6 +329,32 @@ def any_world_arm_passes(world_gates: dict[str, dict]) -> bool:
     if not world_gates:
         raise ValueError("no world arms were evaluated")
     return any(gate["pass"] for gate in world_gates.values())
+
+
+def gate_exit_code(world_gates: dict[str, dict]) -> int:
+    """0 if any world arm passed; 3 if every non-passing arm is `underpowered`
+    (CI's `equivalence` verdict); 2 for a real failure (at least one arm's
+    equivalence verdict is `fail`, or the binding rule has no `underpowered`
+    concept, e.g. `per_seed`).
+
+    Distinguishing 2 from 3 lets CI tell "no" (a clear failure) from "unknown"
+    (every arm needs more seeds to say either way) instead of collapsing both
+    into the same exit code.
+    """
+    if any_world_arm_passes(world_gates):
+        return 0
+    verdicts = []
+    for gate in world_gates.values():
+        equivalence = gate.get("equivalence")
+        if equivalence is None:
+            # No equivalence verdict was computed (e.g. off-schedule under
+            # `per_seed` binding) -- nothing to call "underpowered", so this is a
+            # plain failure.
+            return 2
+        verdicts.append(equivalence["verdict"])
+    if verdicts and all(verdict == "underpowered" for verdict in verdicts):
+        return 3
+    return 2
 
 
 def build_report(
@@ -351,6 +435,18 @@ def run_experiment(
     metrics_by_arm: dict[tuple[str, int], list[dict]] = {}
     training_arms: list[dict] = []
     trained_seeds: list[int] = []
+    # One definition of "this arm's mean delta at this seed" (`seed_mean_delta`),
+    # computed once per (arm, seed) and shared between the look-boundary check and
+    # the final summary below instead of each recomputing it independently.
+    mean_delta_cache: dict[tuple[str, int], float] = {}
+
+    def cached_mean_delta(arm: str, seed: int) -> float:
+        key = (arm, seed)
+        if key not in mean_delta_cache:
+            mean_delta_cache[key] = seed_mean_delta(
+                metrics_by_arm[(CONTROL_ARM, seed)], metrics_by_arm[(arm, seed)]
+            )
+        return mean_delta_cache[key]
 
     for batch in seed_batches:
         batch_sets, batch_specs = build_frozen_validation_sets(cache, base_cfg, batch)
@@ -393,12 +489,7 @@ def run_experiment(
         if binding == "equivalence" and len(trained_seeds) in gate.looks:
             verdicts = []
             for arm in WORLD_ARMS:
-                deltas = [
-                    seed_mean_delta(
-                        metrics_by_arm[(CONTROL_ARM, seed)], metrics_by_arm[(arm, seed)]
-                    )
-                    for seed in trained_seeds
-                ]
+                deltas = [cached_mean_delta(arm, seed) for seed in trained_seeds]
                 verdicts.append(gate.evaluate(deltas)["verdict"])
             if all(verdict in ("pass", "fail") for verdict in verdicts):
                 break
@@ -427,7 +518,7 @@ def run_experiment(
                     ),
                 }
             )
-            seed_mean_deltas.append(float(deltas.mean()))
+            seed_mean_deltas.append(cached_mean_delta(arm, seed))
         verdict = arm_gate_verdict(seed_mean_deltas, seeds_run, gate=gate, binding=binding)
         verdict["across_seed_summary"] = summarize_values(
             np.asarray(seed_mean_deltas, dtype=np.float64),
@@ -536,6 +627,10 @@ def main() -> None:
 
     gate = EquivalenceGate()
     binding = args.gate.replace("-", "_")
+    try:
+        check_seed_binding_compatibility(forced_seeds, binding, gate)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     result = run_experiment(
         base_cfg,
@@ -565,17 +660,7 @@ def main() -> None:
             "device": "cpu",
         },
         extra={
-            # Record every argument that distinguishes this run, including --cache and
-            # --out-dir. A command string missing those silently reproduces a DIFFERENT
-            # scene while appearing to reproduce this one.
-            "command": (
-                "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
-                f"--cache {args.cache} --out-dir {args.out_dir} "
-                f"--seeds {' '.join(str(seed) for seed in seeds)} --iters {args.iters} "
-                f"--finest-resolution {args.finest_resolution} "
-                f"--base-resolution {args.base_resolution} "
-                f"--gate {args.gate} --max-seeds {args.max_seeds}"
-            ),
+            "command": reproduce_command(args, seeds),
             "cache": _relative_path(cache_path, root),
             "resolution": [cache.width, cache.height],
             "segments": cache.segment_count,
@@ -609,7 +694,7 @@ def main() -> None:
     print(json.dumps({"gate": {arm: g["pass"] for arm, g in report["gate"].items()}}, indent=2))
     print(f"wrote {report_path}")
     if not report["any_world_arm_pass"]:
-        raise SystemExit(2)
+        raise SystemExit(gate_exit_code(report["gate"]))
 
 
 if __name__ == "__main__":
