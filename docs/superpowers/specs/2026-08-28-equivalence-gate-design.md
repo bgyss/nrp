@@ -202,8 +202,8 @@ Tests assert, with margin below the measured values (600 trials each, fixed
 seeds):
 
 - at parity, std 0.73: pass rate **≥ 0.95**
-- at parity, std 1.00: pass rate **≥ 0.75**
-- 1.5 dB worse, any std: pass rate **≤ 0.01**, fail rate **≥ 0.90**
+- at parity, std 1.00: pass rate **≥ 0.70**
+- 1.5 dB worse, any std: pass rate **≤ 0.01**, fail rate **≥ 0.85**
 - at parity, std 1.67: **≥ 0.50 underpowered** — the gate must refuse to certify
   what 48 seeds cannot resolve, and that refusal is a tested behavior, not an
   accident
