@@ -98,7 +98,20 @@ def t_ppf(p: float, df: int) -> float:
         raise ValueError(f"p must lie in (0, 1), got {p}")
     if df <= 0:
         raise ValueError(f"df must be positive, got {df}")
-    low, high = -1e3, 1e3
+    low, high = -1.0, 1.0
+    expansions = 0
+    max_expansions = 200
+    while t_cdf(low, df) >= p:
+        low *= 2.0
+        expansions += 1
+        if expansions > max_expansions:
+            raise ValueError(f"could not bracket root for t_ppf(p={p}, df={df}): low diverged")
+    expansions = 0
+    while t_cdf(high, df) < p:
+        high *= 2.0
+        expansions += 1
+        if expansions > max_expansions:
+            raise ValueError(f"could not bracket root for t_ppf(p={p}, df={df}): high diverged")
     for _ in range(300):
         mid = 0.5 * (low + high)
         if t_cdf(mid, df) < p:

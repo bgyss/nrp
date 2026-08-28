@@ -7,6 +7,7 @@ properties are therefore not incidental -- they are the reason it exists, so
 they are asserted by simulation here rather than argued for in a docstring.
 """
 
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -41,6 +42,22 @@ class StudentTNumericsTests(unittest.TestCase):
         for df in (3, 12, 47):
             for p in (0.6, 0.9, 0.99, 0.9958333):
                 self.assertAlmostEqual(t_cdf(t_ppf(p, df), df), p, places=9)
+
+    def test_extreme_quantile_matches_cauchy_closed_form(self):
+        # df=1 is the standard Cauchy distribution, whose quantile function has
+        # a closed form independent of this module's bisection: tan(pi * (p - 0.5)).
+        # The old hard-coded [-1e3, 1e3] bracket silently clamps p=0.999999 to
+        # 1000.0 instead of the true ~318310, so this pins against an external
+        # oracle rather than the implementation under test.
+        for p in (0.9, 0.999999):
+            expected = math.tan(math.pi * (p - 0.5))
+            self.assertAlmostEqual(t_ppf(p, 1), expected, places=3)
+
+    def test_ppf_symmetric_at_extreme_quantile(self):
+        q = 1e-6
+        for df in (1, 5, 47):
+            high, low = t_ppf(1.0 - q, df), t_ppf(q, df)
+            self.assertAlmostEqual(high, -low, delta=1e-6 * abs(high))
 
     def test_invalid_inputs_raise(self):
         with self.assertRaises(ValueError):
