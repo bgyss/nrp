@@ -76,8 +76,31 @@ SWEPT_ARM = "world_sparse"
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
 DEFAULT_RESOLUTIONS = (32, 48, 64, 96, 128)
 DEFAULT_CACHE = "out/kitchen/path_cache.npz"
+#: The pre-determinism-fix control (`docs/performance.md`'s "Kitchen parity
+#: re-measured under the deterministic denoiser" section retracts this run's
+#: per-seed values and arm ranking, though not its aggregate "no arm passes"
+#: verdict). Kept as the default only for backward compatibility with reports
+#: already committed against it; a re-measurement should pass
+#: `--control-report out/r1-parity-kitchen-det/report.json` instead.
 DEFAULT_CONTROL_REPORT = "out/r1-parity-kitchen/report.json"
 DEFAULT_BASE_RESOLUTION = 4
+
+#: `training_config` keys that must match exactly between the fixed control and this
+#: sweep's runs. A control built with a different pool size, learning rate,
+#: batch_pixels, model width, sampling strategy, light type/bounds, or validation-
+#: light count is not a valid fixed baseline even though its cache, base resolution,
+#: and denoiser match -- silently comparing against it would attribute a training-
+#: config difference to the swept resolution.
+_STRICT_TRAINING_CONFIG_KEYS = (
+    "pool",
+    "lr",
+    "batch_pixels",
+    "model",
+    "sampling",
+    "light_type",
+    "light_bounds",
+    "n_val_lights",
+)
 
 #: `world_sparse`'s level count in the parity arm definition. Recorded here only so the
 #: vertex-support diagnostic describes the same ladder the swept arm actually queries;
@@ -114,12 +137,26 @@ def control_metrics_by_seed(control_report: dict, seeds: tuple[int, ...]) -> dic
     return {seed: by_seed[seed] for seed in seeds}
 
 
-def check_control_compatibility(control_report: dict, *, cache: str, base_resolution: int) -> dict:
+def check_control_compatibility(
+    control_report: dict,
+    *,
+    cache: str,
+    base_resolution: int,
+    run_training_config: dict | None = None,
+) -> dict:
     """Verify the fixed control was measured on the scene/ladder this sweep assumes.
 
     Returns the control's provenance for the report. Raises on a mismatch: a control
-    trained on a different cache, or on a different base resolution, is not a valid
-    fixed baseline for these runs no matter how convenient the numbers look.
+    trained on a different cache, on a different base resolution, or (when
+    `run_training_config` is given) differing in any of `_STRICT_TRAINING_CONFIG_KEYS`
+    (pool, lr, batch_pixels, model, sampling, light_type, light_bounds, n_val_lights)
+    is not a valid fixed baseline for these runs no matter how convenient the numbers
+    look -- a control built with a different pool size, lr, batch_pixels, or model
+    width would otherwise compare cleanly and silently attribute a training-config
+    difference to the swept resolution. `iters` and `denoise` are intentionally NOT
+    checked here: `iters` is a caller-side warning (a shorter control is a legitimate
+    smoke-test case) and `denoise.method` is checked separately, before targets are
+    ever built, since it changes what the pool images ARE, not just how training ran.
     """
     control_cache = control_report.get("cache")
     if control_cache != cache:
@@ -130,6 +167,17 @@ def check_control_compatibility(control_report: dict, *, cache: str, base_resolu
             f"control report's base_resolution is {ladder.get('base_resolution')!r}, "
             f"not {base_resolution!r}"
         )
+    control_training_config = control_report.get("training_config") or {}
+    if run_training_config is not None:
+        for key in _STRICT_TRAINING_CONFIG_KEYS:
+            control_value = control_training_config.get(key)
+            run_value = run_training_config.get(key)
+            if control_value != run_value:
+                raise ValueError(
+                    f"control report's training_config[{key!r}] is {control_value!r}, "
+                    f"this run's is {run_value!r} -- a control built with a different "
+                    f"{key} is not a valid fixed baseline"
+                )
     return {
         "cache": control_cache,
         "arm": CONTROL_ARM,
@@ -347,7 +395,15 @@ def run_sweep(
                 flush=True,
             )
 
-        gate = arm_gate_verdict(seed_mean_deltas, seeds)
+        # K1's seed count (5, documented and defaulted) is not one of the equivalence
+        # gate's scheduled looks, and K1 compares every resolution against a fixed
+        # external control rather than running its own adaptive-stopping schedule, so
+        # the equivalence rule's schedule does not apply here -- bind on the legacy
+        # per-seed rule explicitly. K1's published results were measured under that
+        # rule. Passing the default `binding="equivalence"` would raise
+        # `ValueError: n=5 is not a scheduled look` only after this resolution's seeds
+        # have already finished training.
+        gate = arm_gate_verdict(seed_mean_deltas, seeds, binding="per_seed")
         gate["across_seed_summary"] = summarize_values(
             np.asarray(seed_mean_deltas, dtype=np.float64),
             resamples=resamples,
@@ -428,7 +484,10 @@ def main() -> None:
 
     control_cache = _relative_path(cache_path, root)
     control = check_control_compatibility(
-        control_report, cache=control_cache, base_resolution=args.base_resolution
+        control_report,
+        cache=control_cache,
+        base_resolution=args.base_resolution,
+        run_training_config=BASE_TRAIN_CONFIG,
     )
     control["report"] = _relative_path(control_path, root)
     control_by_seed = control_metrics_by_seed(control_report, seeds)

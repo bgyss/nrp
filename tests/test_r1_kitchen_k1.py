@@ -102,6 +102,89 @@ class CompatibilityTests(unittest.TestCase):
                 control_report(), cache="out/kitchen/path_cache.npz", base_resolution=8
             )
 
+    def test_no_run_training_config_skips_the_strict_check(self):
+        """Backward-compatible: omitting run_training_config compares nothing new."""
+        runner = load_runner()
+        control = runner.check_control_compatibility(
+            control_report(), cache="out/kitchen/path_cache.npz", base_resolution=4
+        )
+        self.assertIn("training_config", control)
+
+    def test_matching_training_config_passes(self):
+        runner = load_runner()
+        report = control_report()
+        report["training_config"]["pool"] = {"size": 64}
+        runner.check_control_compatibility(
+            report,
+            cache="out/kitchen/path_cache.npz",
+            base_resolution=4,
+            run_training_config={"pool": {"size": 64}},
+        )
+
+    def test_mismatched_pool_raises_naming_key_and_both_values(self):
+        runner = load_runner()
+        report = control_report()
+        report["training_config"]["pool"] = {"size": 64}
+        with self.assertRaises(ValueError) as ctx:
+            runner.check_control_compatibility(
+                report,
+                cache="out/kitchen/path_cache.npz",
+                base_resolution=4,
+                run_training_config={"pool": {"size": 128}},
+            )
+        message = str(ctx.exception)
+        self.assertIn("pool", message)
+        self.assertIn("64", message)
+        self.assertIn("128", message)
+
+    def test_mismatched_lr_raises(self):
+        runner = load_runner()
+        report = control_report()
+        report["training_config"]["lr"] = 0.005
+        with self.assertRaises(ValueError):
+            runner.check_control_compatibility(
+                report,
+                cache="out/kitchen/path_cache.npz",
+                base_resolution=4,
+                run_training_config={"lr": 0.01},
+            )
+
+    def test_mismatched_model_raises(self):
+        runner = load_runner()
+        report = control_report()
+        report["training_config"]["model"] = {"hidden_width": 128, "hidden_layers": 4}
+        with self.assertRaises(ValueError):
+            runner.check_control_compatibility(
+                report,
+                cache="out/kitchen/path_cache.npz",
+                base_resolution=4,
+                run_training_config={"model": {"hidden_width": 64, "hidden_layers": 4}},
+            )
+
+    def test_mismatched_light_bounds_raises(self):
+        runner = load_runner()
+        report = control_report()
+        report["training_config"]["light_bounds"] = {"radius_min": 0.05, "radius_max": 0.25}
+        with self.assertRaises(ValueError):
+            runner.check_control_compatibility(
+                report,
+                cache="out/kitchen/path_cache.npz",
+                base_resolution=4,
+                run_training_config={"light_bounds": {"radius_min": 0.1, "radius_max": 0.25}},
+            )
+
+    def test_iters_mismatch_is_not_checked_here_only_via_the_caller_warning(self):
+        """iters stays a warning in main(), never a raise from this function."""
+        runner = load_runner()
+        report = control_report()
+        report["training_config"]["iters"] = 3000
+        runner.check_control_compatibility(
+            report,
+            cache="out/kitchen/path_cache.npz",
+            base_resolution=4,
+            run_training_config={"iters": 50},
+        )
+
 
 class FingerprintTests(unittest.TestCase):
     def test_identical_fingerprints_pass(self):
@@ -217,6 +300,31 @@ class ReportTests(unittest.TestCase):
         self.assertIn("prediction_not_evaluable", report["verdict"])
         self.assertNotIn("direction_supports_prediction", report["verdict"])
         self.assertEqual(report["verdict"]["resolutions_measured"], [32])
+
+
+class GateBindingTests(unittest.TestCase):
+    """Regression test: `run_sweep` must not use the equivalence gate's default
+    binding, because K1's 5-seed default is not a scheduled look (8/16/24/32/40/48)
+    and `arm_gate_verdict`'s default `binding="equivalence"` raises off schedule.
+    `run_sweep` itself needs real training, so this exercises the exact call it
+    makes (`arm_gate_verdict(deltas, seeds, binding="per_seed")`) against the real
+    gate machinery -- no mocking -- with K1's documented 5-seed default.
+    """
+
+    def test_five_seed_gate_call_returns_a_verdict_rather_than_raising(self):
+        runner = load_runner()
+        seeds = (0, 1, 2, 3, 4)
+        deltas = [0.1, -0.2, 0.05, -0.4, 0.0]
+        result = runner.arm_gate_verdict(deltas, seeds, binding="per_seed")
+        self.assertIn("pass", result)
+        self.assertIsInstance(result["pass"], bool)
+        self.assertEqual(result["binding"], "per_seed")
+
+    def test_default_equivalence_binding_raises_at_five_seeds(self):
+        """Sanity check on the bug this regression test guards against."""
+        runner = load_runner()
+        with self.assertRaises(ValueError):
+            runner.arm_gate_verdict([0.1] * 5, (0, 1, 2, 3, 4))
 
 
 class SpearmanTests(unittest.TestCase):
