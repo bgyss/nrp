@@ -3076,7 +3076,7 @@ each arm is sized by how many grid vertices it actually needs, `pixel2d` include
 ### Toy 64² — all three world arms pass
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --gate per-seed
 ```
 
 | arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB |
@@ -3106,7 +3106,7 @@ parameters-only figures:
 ### Kitchen 128² — no arm passes
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 --gate per-seed
 ```
 
 The control was verified to reproduce `examples/kitchen_torch.json` exactly:
@@ -3353,8 +3353,16 @@ Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
   --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-det \
   --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 \
-  --denoise-method oidn
+  --denoise-method oidn --gate per-seed
 ```
+
+Note: the `command` field recorded inside `out/r1-parity-kitchen-det/report.json`,
+`out/r1-parity-kitchen/report.json`, and `out/r1-parity/report.json` is incomplete —
+those reports were generated before this fix, so the recorded string omits
+`--denoise-method` (and `--gate`, which did not exist yet). Those `command` fields
+are historical evidence and are not edited retroactively. The command shown above
+(and elsewhere in this document) is the authoritative one for reproducing each run;
+the code now records every result-affecting argument in `command`.
 
 Nothing else changed: same cache, arms, ladder, iteration count, pool, seeds, and
 the unchanged −0.5 dB per-seed gate. Parameter and slot counts are identical to

@@ -44,6 +44,9 @@ Exit codes: 0 if any world arm passed; 3 if no arm passed but every non-passing
 arm's verdict is `underpowered` (the equivalence gate needs more seeds to answer
 either way); 2 for any other non-pass (a real `fail`, or a non-equivalence binding
 rule with no `underpowered` concept). CI can therefore tell "no" from "unknown".
+1 for argument-validation failures (e.g. a missing cache, duplicate --seeds, or an
+explicit --seeds list that is not a scheduled look under --gate equivalence) --
+these fail before training starts.
 """
 
 from __future__ import annotations
