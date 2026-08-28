@@ -3389,3 +3389,50 @@ raise the seed count enough to resolve differences of the size being claimed, or
 state a gate on the aggregate with its interval rather than on every seed
 individually. That is a question about experimental design, not about the
 denoiser, and it is unresolved.
+
+## The equivalence-gate-from-2026-08-28
+
+Promotion decisions on this track previously required every seed's paired PSNR
+delta to clear −0.5 dB. At the per-seed spreads measured on Country Kitchen under
+the deterministic denoiser, that rule rejects an arm sitting *exactly at parity*
+76–91% of the time, and its false-rejection rate rises with the seed count — a
+true-parity arm passes under 6% of the time at ten seeds. It punished sample size,
+so it could not be repaired by running more seeds.
+
+`nrp/experiment_gate.py` replaces it. The threshold is unchanged at −0.5 dB; the
+rule's structure is what changed:
+
+| verdict | condition |
+|---|---|
+| `pass` | CI lower bound ≥ −0.5 dB |
+| `fail` | CI upper bound < −0.5 dB |
+| `underpowered` | interval straddles −0.5 dB at the 48-seed cap |
+
+`underpowered` is never a pass. The interval is a Student-t interval (binding);
+the percentile bootstrap is still reported but is descriptive only, because its
+coverage at n=8 and 99.17% confidence is unreliable. Seeds accumulate to six
+pre-registered looks (n = 8, 16, 24, 32, 40, 48) with α = 0.05 split six ways, so
+adaptive stopping cannot inflate the false-pass rate; evaluating off schedule
+raises.
+
+Measured behavior (4,000 simulated experiments per cell, cap 48):
+
+| true mean | std | pass | fail | underpowered | median n |
+|---|---:|---:|---:|---:|---:|
+| 0.0 (at parity) | 0.73 | 0.977 | 0.000 | 0.023 | 24 |
+| 0.0 | 1.00 | 0.798 | 0.000 | 0.202 | 32 |
+| 0.0 | 1.67 | 0.341 | 0.000 | 0.659 | 48 |
+| −1.5 (clearly worse) | 0.73 / 1.00 / 1.67 | 0.000 | 1.00 / 1.00 / 0.93 | ≤0.07 | 8–24 |
+
+Certifying parity at `world3d`'s spread (1.67) needs ~82 seeds; the cap stays at
+48, and every `underpowered` verdict reports the `seeds_needed` figure so the cost
+of a definitive answer is stated rather than guessed. Failure detection is
+unaffected by the cap — a clearly worse arm is caught at every spread, usually by
+seed 24.
+
+Not corrected: multiplicity across arms. Each arm is one pre-registered question
+against a fixed control; a future "promote whichever of N arms passes" selection
+would need its own correction.
+
+Verdicts recorded before 2026-08-28 used the per-seed rule and are labelled as
+such in their reports.
