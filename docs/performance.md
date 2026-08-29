@@ -3676,10 +3676,17 @@ with `pixel2d`**, for three reasons, all checkable in `rescore-96.json`:
   uncorrected (`docs/performance.md#the-equivalence-gate-from-2026-08-28`,
   "multiplicity across arms... a future 'promote whichever of N arms passes'
   selection would need its own correction"). Each look's one-sided false-pass
-  rate is the gate's per-look two-sided α (0.05/6 ≈ 0.00833) halved, ≈0.42%;
-  across five settings at one look each that is a family-wise false-parity rate
-  of roughly 1 − (1 − 0.0042)^30 ≈ 11–12% against a nominal 5% budget — not the
-  ~0.4% a reader would assume from a single arm's gate.
+  rate is the gate's per-look two-sided α (0.05/6 ≈ 0.00833) halved, ≈0.42%.
+  All five settings were in fact read at one look each (`looks_taken: 1` for
+  every resolution in `rescore-96.json`), so the realized family-wise
+  false-parity rate is 1 − (1 − 0.0042)^5 ≈ 2.1% against a nominal 5% budget —
+  not the ~0.42% a reader would assume from a single arm's gate. (If every
+  setting had instead run its full six-look schedule — which is not what
+  happened here — each arm's own cumulative one-sided false-pass budget over
+  all six looks is ≈2.5% (half the schedule's overall two-sided α = 0.05, by
+  construction of the α-split), not the ≈0.42% single-look figure; across five
+  such arms the family-wise rate would reach 1 − (1 − 0.025)^5 ≈ 11–12%. That
+  number is the design's ceiling, not this run's realized rate.)
 - *It is not the best mean.* `finest64`'s mean delta (+0.021 dB) is the median
   of the five settings, not the best — `finest96` has the best mean (+0.138 dB).
   `finest64` clears the gate only because its sample sd (0.402) is the smallest

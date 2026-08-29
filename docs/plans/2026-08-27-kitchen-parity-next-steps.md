@@ -39,9 +39,11 @@
 > evidence that `finest_resolution=64` is at parity with `pixel2d`**: it is one
 > of five pre-registered settings and the pass is uncorrected for that
 > multiplicity (the equivalence gate's own multiplicity note applies directly
-> here — `docs/performance.md#the-equivalence-gate-from-2026-08-28` — and the
-> resulting family-wise false-parity rate across the sweep is roughly 10–12%
-> against a nominal 5%); it passes on having the smallest per-seed sample sd
+> here — `docs/performance.md#the-equivalence-gate-from-2026-08-28` — and, at the
+> one look each actually taken, the resulting family-wise false-parity rate
+> across the sweep is roughly 2.1% against a nominal 5% (a full six-look
+> schedule across all five settings would reach ≈11–12%, but that is not what
+> was run); it passes on having the smallest per-seed sample sd
 > (0.402) of the five, not the best mean (`finest64`'s +0.021 dB mean is the
 > median of the five, `finest96`'s +0.138 dB is the best); and under a pooled
 > sample sd across all five settings (0.613), no setting passes and `finest64`
