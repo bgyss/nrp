@@ -14,6 +14,22 @@
 > single-threading. Results:
 > `docs/performance.md#k1-finest-resolution-sweep-does-not-support-the-vertex-support-hypothesis-kitchen-128`,
 > `out/r1-kitchen-parity-k1/report.json`, runner `examples/r1_kitchen_k1.py`.
+>
+> **Re-run (2026-08-28): K1 was re-measured under the equivalence gate at 8 seeds,
+> against a deterministic 8-seed `pixel2d` control, and every resolution returns
+> `continue`** — the interval for the mean delta straddles −0.5 dB at all five
+> settings, so nothing is promoted and nothing is rejected. Spearman is now −0.30
+> (permutation p = 0.68), nominally the predicted sign but indistinguishable from
+> noise and still not monotonic. K2–K4 remain cancelled: the stop condition
+> requires K1 to confirm the direction, and an undecided sweep does not. Deciding a
+> single setting would take 19–47 seeds. The run also settles the nondeterminism
+> caveat above: the sweep's 128 row is bit-identical, per seed, to the control
+> run's `world_sparse` arm trained in a separate process, so the ~1.5 dB
+> run-to-run variation is gone under the single-threaded OIDN fix. Results:
+> `docs/performance.md#k1-re-run-under-the-equivalence-gate-kitchen-128-8-seeds`,
+> `out/r1-kitchen-parity-k1-eq/report.json`,
+> `out/r1-parity-kitchen-eq/report.json` (the fixed control).
+>
 > The plan below is preserved as written, before the result was known.
 
 ## Decision carried forward

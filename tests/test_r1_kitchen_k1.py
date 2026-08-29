@@ -293,6 +293,9 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["swept_arm"], "world_sparse")
         self.assertEqual(report["control_arm"], "pixel2d")
         self.assertEqual(report["gate"], {"32": True, "128": False})
+        # A per-seed-bound row carries no equivalence verdict; the word is derived
+        # from the binding rule's pass/fail rather than dropped from the report.
+        self.assertEqual(report["gate_verdict"], {"32": "pass", "128": "fail"})
         self.assertEqual(report["verdict"]["best_resolution"], 32)
         self.assertEqual(report["control"]["report"], "out/r1-parity-kitchen/report.json")
 
@@ -358,6 +361,64 @@ def _tiny_cache() -> PathCache:
     )
 
 
+def run_sweep_with_fakes(runner, seeds=(0, 1, 2, 3, 4), binding=None):
+    """Drive `run_sweep` with training/evaluation/vertex-support faked out."""
+    # Deterministic per-seed deltas the real per-light pairing math on the way to
+    # the gate call must reproduce exactly -- if `run_sweep`'s aggregation logic
+    # regressed this would also fail even though that is not what this test is for.
+    cycle = (0.1, -0.2, 0.05, -0.4, 0.0)
+    per_seed_delta = {seed: cycle[index % len(cycle)] for index, seed in enumerate(seeds)}
+    control_light = {"radius": 0.1}
+    control_by_seed = {seed: [{"light": control_light, "psnr_db_vs_raw": 20.0}] for seed in seeds}
+    validation_sets = {seed: seed for seed in seeds}  # opaque marker, read back below
+
+    def fake_train(cfg):
+        return {"parameter_count": 1, "iters_per_second": 1.0, "train_seconds": 0.001}
+
+    class _FakeEncoding:
+        def capacity_report(self):
+            return None
+
+    class _FakeModel:
+        encoding = _FakeEncoding()
+
+    def fake_load_trained_model(path, cache):
+        return _FakeModel()
+
+    def fake_evaluate_model(model, cache, val_set):
+        seed = val_set
+        return [{"light": control_light, "psnr_db_vs_raw": 20.0 + per_seed_delta[seed]}]
+
+    def fake_cache_vertex_support(cache, levels, base_resolution, finest):
+        return {
+            "finest": {"median_support": 1.0, "fraction_touched_by_le1_pixel": 0.5},
+        }
+
+    cache = _tiny_cache()
+    with (
+        mock.patch.object(runner, "train", fake_train),
+        mock.patch.object(runner, "load_trained_model", fake_load_trained_model),
+        mock.patch.object(runner, "evaluate_model", fake_evaluate_model),
+        mock.patch.object(runner, "cache_vertex_support", fake_cache_vertex_support),
+    ):
+        with tempfile.TemporaryDirectory() as out_dir:
+            per_resolution = runner.run_sweep(
+                runner.BASE_TRAIN_CONFIG,
+                cache,
+                root=ROOT,
+                out_root=Path(out_dir),
+                seeds=seeds,
+                resolutions=(32,),
+                base_resolution=4,
+                control_by_seed=control_by_seed,
+                validation_sets=validation_sets,
+                resamples=10,
+                bootstrap_seed=0,
+                **({} if binding is None else {"binding": binding}),
+            )
+    return per_resolution, per_seed_delta
+
+
 class RunSweepGateBindingTest(unittest.TestCase):
     """Regression test for the Critical defect `GateBindingTests` above does not
     actually catch: those tests call `arm_gate_verdict` directly, a hand-copied
@@ -366,8 +427,9 @@ class RunSweepGateBindingTest(unittest.TestCase):
     `binding="per_seed"`) leaves the direct tests above passing, because they never
     go through `run_sweep` at all.
 
-    This test drives `run_sweep` itself, with K1's documented 5-seed default (not a
-    scheduled equivalence look), so it fails if the real call site regresses. Real
+    This test drives `run_sweep` itself with the historical 5-seed reproduction mode
+    (`--gate per-seed`; 5 is not a scheduled equivalence look), so it fails if the real
+    call site regresses to ignoring `binding`. Real
     training/evaluation/vertex-support measurement are monkeypatched to synthetic,
     near-instant stand-ins -- constructing a real cache large enough to train on
     would take minutes per seed, and the gate-binding bug lives entirely in
@@ -376,66 +438,9 @@ class RunSweepGateBindingTest(unittest.TestCase):
     own tests already cover independently (training, model loading, evaluation).
     """
 
-    def _run(self, runner):
-        seeds = (0, 1, 2, 3, 4)
-        # Deterministic per-seed deltas the real per-light pairing math on the way to
-        # the gate call must reproduce exactly -- if `run_sweep`'s aggregation logic
-        # regressed this would also fail even though that is not what this test is for.
-        per_seed_delta = {0: 0.1, 1: -0.2, 2: 0.05, 3: -0.4, 4: 0.0}
-        control_light = {"radius": 0.1}
-        control_by_seed = {
-            seed: [{"light": control_light, "psnr_db_vs_raw": 20.0}] for seed in seeds
-        }
-        validation_sets = {seed: seed for seed in seeds}  # opaque marker, read back below
-
-        def fake_train(cfg):
-            return {"parameter_count": 1, "iters_per_second": 1.0, "train_seconds": 0.001}
-
-        class _FakeEncoding:
-            def capacity_report(self):
-                return None
-
-        class _FakeModel:
-            encoding = _FakeEncoding()
-
-        def fake_load_trained_model(path, cache):
-            return _FakeModel()
-
-        def fake_evaluate_model(model, cache, val_set):
-            seed = val_set
-            return [{"light": control_light, "psnr_db_vs_raw": 20.0 + per_seed_delta[seed]}]
-
-        def fake_cache_vertex_support(cache, levels, base_resolution, finest):
-            return {
-                "finest": {"median_support": 1.0, "fraction_touched_by_le1_pixel": 0.5},
-            }
-
-        cache = _tiny_cache()
-        with (
-            mock.patch.object(runner, "train", fake_train),
-            mock.patch.object(runner, "load_trained_model", fake_load_trained_model),
-            mock.patch.object(runner, "evaluate_model", fake_evaluate_model),
-            mock.patch.object(runner, "cache_vertex_support", fake_cache_vertex_support),
-        ):
-            with tempfile.TemporaryDirectory() as out_dir:
-                per_resolution = runner.run_sweep(
-                    runner.BASE_TRAIN_CONFIG,
-                    cache,
-                    root=ROOT,
-                    out_root=Path(out_dir),
-                    seeds=seeds,
-                    resolutions=(32,),
-                    base_resolution=4,
-                    control_by_seed=control_by_seed,
-                    validation_sets=validation_sets,
-                    resamples=10,
-                    bootstrap_seed=0,
-                )
-        return per_resolution, per_seed_delta
-
     def test_run_sweep_binds_the_five_seed_gate_on_per_seed(self):
         runner = load_runner()
-        per_resolution, per_seed_delta = self._run(runner)
+        per_resolution, per_seed_delta = run_sweep_with_fakes(runner, binding="per_seed")
         self.assertEqual(len(per_resolution), 1)
         gate = per_resolution[0]["gate"]
         self.assertEqual(gate["binding"], "per_seed")
@@ -457,7 +462,68 @@ class RunSweepGateBindingTest(unittest.TestCase):
 
         with mock.patch.object(runner, "arm_gate_verdict", buggy_arm_gate_verdict):
             with self.assertRaises(ValueError):
-                self._run(runner)
+                run_sweep_with_fakes(runner, binding="per_seed")
+
+
+class EquivalenceBindingTests(unittest.TestCase):
+    """K1 re-run under the equivalence gate (2026-08-28).
+
+    The per-seed rule K1 originally bound on rejects a true-parity arm 76-91% of the
+    time at Kitchen's measured spreads, so K1's "no support" verdict was read under a
+    rule that could not have supported the hypothesis reliably in the first place.
+    `run_sweep` must therefore be able to bind on the equivalence rule -- but only at a
+    scheduled look, and it must refuse BEFORE training rather than after hours of it.
+    """
+
+    def test_run_sweep_binds_the_eight_seed_gate_on_equivalence(self):
+        runner = load_runner()
+        seeds = tuple(range(8))
+        per_resolution, per_seed_delta = run_sweep_with_fakes(
+            runner, seeds=seeds, binding="equivalence"
+        )
+        gate = per_resolution[0]["gate"]
+        self.assertEqual(gate["binding"], "equivalence")
+        equivalence = gate["equivalence"]
+        self.assertEqual(equivalence["n"], len(seeds))
+        self.assertIn(equivalence["verdict"], {"pass", "fail", "continue", "underpowered"})
+        # `pass` in the report is the DECISIVE rule's outcome, not the legacy one's.
+        self.assertEqual(gate["pass"], equivalence["verdict"] == "pass")
+        # Both verdicts stay recorded so a report can be read against either rule.
+        self.assertEqual(gate["per_seed"]["seed_count"], len(seeds))
+
+    def test_equivalence_binding_refuses_an_off_schedule_seed_count_before_training(self):
+        """Five seeds is not a scheduled look, so the run must raise without training."""
+        runner = load_runner()
+        trained = []
+
+        def counting_train(cfg):
+            trained.append(cfg)
+            raise AssertionError("run_sweep trained before validating the gate binding")
+
+        with mock.patch.object(runner, "train", counting_train):
+            with self.assertRaises(ValueError):
+                runner.run_sweep(
+                    runner.BASE_TRAIN_CONFIG,
+                    _tiny_cache(),
+                    root=ROOT,
+                    out_root=ROOT,
+                    seeds=(0, 1, 2, 3, 4),
+                    resolutions=(32,),
+                    base_resolution=4,
+                    control_by_seed={},
+                    validation_sets={},
+                    resamples=10,
+                    bootstrap_seed=0,
+                    binding="equivalence",
+                )
+        self.assertEqual(trained, [])
+
+    def test_default_seed_count_is_a_scheduled_look(self):
+        """K1's default invocation must be runnable under its default gate."""
+        runner = load_runner()
+        gate = runner.EquivalenceGate()
+        self.assertEqual(runner.DEFAULT_GATE, "equivalence")
+        self.assertIn(len(runner.DEFAULT_SEEDS), gate.looks)
 
 
 class SpearmanTests(unittest.TestCase):

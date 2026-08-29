@@ -26,13 +26,20 @@ finest_resolution falls, best near where median vertex support approaches pixel2
 Falsifier: a delta that is flat across the sweep, or worse as resolution falls,
 refutes the hypothesis as stated -- K2-K4 must not then be run.
 
-Usage:
+Gate: the sweep binds on the equivalence rule (`nrp/experiment_gate.py`, from
+2026-08-28) by default, so every setting needs a seed count that is one of the
+pre-registered looks (8/16/24/32/40/48) and the fixed control must cover those same
+seeds. `--gate per-seed --seeds 0 1 2 3 4` reproduces the published run, whose
+verdict was read under the old per-seed rule -- a rule that rejects a true-parity
+arm 76-91% of the time at Kitchen's measured spreads.
+
+Usage (equivalence gate, first look):
     uv run python examples/r1_kitchen_k1.py \\
         --cache out/kitchen/path_cache.npz \\
-        --control-report out/r1-parity-kitchen/report.json \\
-        --out-dir out/r1-kitchen-parity-k1 \\
-        --seeds 0 1 2 3 4 --resolutions 32 48 64 96 128 \\
-        --iters 3000 --base-resolution 4 --denoise-method oidn
+        --control-report out/r1-parity-kitchen-eq/report.json \\
+        --out-dir out/r1-kitchen-parity-k1-eq \\
+        --seeds 0 1 2 3 4 5 6 7 --resolutions 32 48 64 96 128 \\
+        --iters 3000 --base-resolution 4 --denoise-method oidn --gate equivalence
 """
 
 from __future__ import annotations
@@ -55,6 +62,7 @@ from examples.r1_parity import (  # noqa: E402
     GATE_DELTA_DB,
     arm_gate_verdict,
     build_arm_models,
+    check_seed_binding_compatibility,
     evaluate_model,
     make_arm_config,
 )
@@ -68,21 +76,32 @@ from examples.r1a_variance import (  # noqa: E402
     validation_fingerprint,
 )
 from examples.vertex_support import cache_vertex_support  # noqa: E402
+from nrp.experiment_gate import EquivalenceGate  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
 from nrp.torch_backend.train import load_trained_model, train  # noqa: E402
 
 #: The arm under test. K1 sweeps only this arm; the control is fixed and pre-committed.
 SWEPT_ARM = "world_sparse"
-DEFAULT_SEEDS = (0, 1, 2, 3, 4)
+#: The equivalence gate's first scheduled look (`nrp/experiment_gate.py`). K1's
+#: original 5 seeds are not a scheduled look, and the per-seed rule they were read
+#: under rejects a true-parity arm 76-91% of the time at Kitchen's measured spreads,
+#: so the sweep now defaults to the first look under the equivalence rule. The
+#: historical run is still reproducible with `--gate per-seed --seeds 0 1 2 3 4`.
+DEFAULT_SEEDS = tuple(range(EquivalenceGate().looks[0]))
+DEFAULT_GATE = "equivalence"
+#: The 5-seed run this sweep's published result was measured with.
+LEGACY_SEEDS = (0, 1, 2, 3, 4)
 DEFAULT_RESOLUTIONS = (32, 48, 64, 96, 128)
 DEFAULT_CACHE = "out/kitchen/path_cache.npz"
-#: The pre-determinism-fix control (`docs/performance.md`'s "Kitchen parity
-#: re-measured under the deterministic denoiser" section retracts this run's
-#: per-seed values and arm ranking, though not its aggregate "no arm passes"
-#: verdict). Kept as the default only for backward compatibility with reports
-#: already committed against it; a re-measurement should pass
-#: `--control-report out/r1-parity-kitchen-det/report.json` instead.
-DEFAULT_CONTROL_REPORT = "out/r1-parity-kitchen/report.json"
+#: The fixed control: `pixel2d` at finest_resolution=128, deterministic (single-
+#: threaded) OIDN, seeds 0-7 -- the equivalence gate's first look. `docs/performance.md`'s
+#: "Kitchen parity re-measured under the deterministic denoiser" section retracts the
+#: pre-determinism-fix control's per-seed values, so that older report survives only as
+#: `LEGACY_CONTROL_REPORT` for reproducing the published per-seed-rule run.
+DEFAULT_CONTROL_REPORT = "out/r1-parity-kitchen-eq/report.json"
+#: The pre-determinism-fix, 5-seed control the published K1 result was measured
+#: against. Only usable with `--gate per-seed`: 5 seeds is not a scheduled look.
+LEGACY_CONTROL_REPORT = "out/r1-parity-kitchen/report.json"
 DEFAULT_BASE_RESOLUTION = 4
 
 #: `training_config` keys that must match exactly between the fixed control and this
@@ -302,6 +321,17 @@ def build_report(
         "hardware": hardware,
         "per_resolution": per_resolution,
         "gate": {str(row["finest_resolution"]): row["gate"]["pass"] for row in per_resolution},
+        # `gate` above is the binding rule's pass/fail; under the equivalence rule a
+        # non-pass is not necessarily a fail (`continue`/`underpowered` mean the run
+        # did not answer the question), so the verdict word is recorded too.
+        "gate_verdict": {
+            str(row["finest_resolution"]): (
+                row["gate"]["equivalence"]["verdict"]
+                if row["gate"].get("equivalence") is not None
+                else ("pass" if row["gate"]["pass"] else "fail")
+            )
+            for row in per_resolution
+        },
         # A directional verdict needs a sweep. With fewer than two settings (a smoke run),
         # say so rather than raising and discarding the runs that did complete -- and
         # never substitute a single setting's gate result for the swept direction.
@@ -330,6 +360,17 @@ def _relative_path(path: str | Path, root: Path) -> str:
         return str(path)
 
 
+def _gate_label(gate: dict) -> str:
+    """Console label for a gate verdict: the equivalence rule has four outcomes.
+
+    Printing `PASS`/`FAIL` for a `continue` or `underpowered` verdict would report a
+    question the run did not answer as an answer.
+    """
+    if gate["binding"] == "equivalence":
+        return str(gate["equivalence"]["verdict"]).upper()
+    return "PASS" if gate["pass"] else "FAIL"
+
+
 def run_sweep(
     base_cfg: dict,
     cache: PathCache,
@@ -343,7 +384,15 @@ def run_sweep(
     validation_sets: dict[int, list[dict]],
     resamples: int,
     bootstrap_seed: int,
+    binding: str = DEFAULT_GATE,
+    gate_rule: EquivalenceGate | None = None,
 ) -> list[dict]:
+    gate_rule = gate_rule or EquivalenceGate()
+    # Fail before the first training, not after the last one: the equivalence rule is
+    # only defined AT a scheduled look, and this sweep spends ~3 minutes per (seed,
+    # resolution) pair. `main` checks the same thing at argument-parse time; this
+    # guard covers every other caller.
+    check_seed_binding_compatibility(tuple(seeds), binding, gate_rule)
     per_resolution: list[dict] = []
     for res_index, finest in enumerate(resolutions):
         arm_models = build_arm_models(base_resolution=base_resolution, finest_resolution=finest)
@@ -395,15 +444,13 @@ def run_sweep(
                 flush=True,
             )
 
-        # K1's seed count (5, documented and defaulted) is not one of the equivalence
-        # gate's scheduled looks, and K1 compares every resolution against a fixed
-        # external control rather than running its own adaptive-stopping schedule, so
-        # the equivalence rule's schedule does not apply here -- bind on the legacy
-        # per-seed rule explicitly. K1's published results were measured under that
-        # rule. Passing the default `binding="equivalence"` would raise
-        # `ValueError: n=5 is not a scheduled look` only after this resolution's seeds
-        # have already finished training.
-        gate = arm_gate_verdict(seed_mean_deltas, seeds, binding="per_seed")
+        # Every resolution is one pre-registered question against the SAME fixed
+        # external control, evaluated once at the seed count the run was launched
+        # with -- K1 runs no adaptive-stopping schedule of its own, so the caller is
+        # responsible for choosing a seed count that is a scheduled look (checked
+        # before any training, above). Both verdicts are recorded either way; only
+        # `binding` decides which one `gate["pass"]` reports.
+        gate = arm_gate_verdict(seed_mean_deltas, seeds, gate=gate_rule, binding=binding)
         gate["across_seed_summary"] = summarize_values(
             np.asarray(seed_mean_deltas, dtype=np.float64),
             resamples=resamples,
@@ -430,7 +477,7 @@ def run_sweep(
         print(
             f"finest {finest}: mean delta "
             f"{gate['across_seed_summary']['mean_db']:+.3f} dB, "
-            f"gate {'PASS' if gate['pass'] else 'FAIL'}, "
+            f"gate {_gate_label(gate)}, "
             f"median vertex support {support['finest']['median_support']}, "
             f"<=1px {support['finest']['fraction_touched_by_le1_pixel']:.3f}",
             flush=True,
@@ -450,12 +497,22 @@ def main() -> None:
     parser.add_argument("--bootstrap-resamples", type=int, default=BOOTSTRAP_RESAMPLES)
     parser.add_argument("--bootstrap-seed", type=int, default=BOOTSTRAP_SEED)
     parser.add_argument(
+        "--gate",
+        default=DEFAULT_GATE,
+        choices=["equivalence", "per-seed"],
+        help="Which rule is binding (default: equivalence, the gate from 2026-08-28). "
+        "Both verdicts are always recorded. --gate equivalence requires a --seeds count "
+        "matching a scheduled look; --gate per-seed reproduces the published 5-seed run.",
+    )
+    parser.add_argument(
         "--denoise-method",
         default="oidn",
         choices=["bilateral", "oidn"],
         help="Pool/validation-target denoiser; must match the fixed control's (oidn).",
     )
     args = parser.parse_args()
+    binding = args.gate.replace("-", "_")
+    gate_rule = EquivalenceGate()
 
     root = Path(__file__).resolve().parent.parent
     cache_path = Path(args.cache)
@@ -474,6 +531,10 @@ def main() -> None:
     seeds = tuple(args.seeds)
     if len(set(seeds)) != len(seeds):
         raise SystemExit("--seeds must not contain duplicates")
+    try:
+        check_seed_binding_compatibility(seeds, binding, gate_rule)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     resolutions = tuple(args.resolutions)
     if len(set(resolutions)) != len(resolutions):
         raise SystemExit("--resolutions must not contain duplicates")
@@ -539,6 +600,8 @@ def main() -> None:
         validation_sets=validation_sets,
         resamples=args.bootstrap_resamples,
         bootstrap_seed=args.bootstrap_seed,
+        binding=binding,
+        gate_rule=gate_rule,
     )
 
     report = build_report(
@@ -562,7 +625,7 @@ def main() -> None:
                 f"--seeds {' '.join(str(seed) for seed in seeds)} "
                 f"--resolutions {' '.join(str(res) for res in resolutions)} "
                 f"--iters {args.iters} --base-resolution {args.base_resolution} "
-                f"--denoise-method {args.denoise_method}"
+                f"--denoise-method {args.denoise_method} --gate {args.gate}"
             ),
             "cache": control_cache,
             "resolution": [cache.width, cache.height],
@@ -571,6 +634,13 @@ def main() -> None:
                 k: v for k, v in base_cfg.items() if k not in {"out_dir", "seed", "cache"}
             },
             "gate_threshold_db": GATE_DELTA_DB,
+            "gate_rule": binding,
+            "gate_schedule": {
+                "looks": list(gate_rule.looks),
+                "cap": gate_rule.cap,
+                "alpha_overall": gate_rule.alpha,
+                "confidence_per_look": gate_rule.confidence_per_look,
+            },
             "bootstrap_resamples": args.bootstrap_resamples,
             "bootstrap_seed": args.bootstrap_seed,
             "validation": {"lights": validation_specs, "fingerprints": fingerprints},
@@ -579,6 +649,7 @@ def main() -> None:
 
     report_path = out_root / "report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps({"gate_verdict": report["gate_verdict"]}, indent=2))
     print(json.dumps(report["verdict"], indent=2))
     print(f"wrote {report_path}")
 
