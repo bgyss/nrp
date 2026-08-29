@@ -30,6 +30,23 @@
 > `out/r1-kitchen-parity-k1-eq/report.json`,
 > `out/r1-parity-kitchen-eq/report.json` (the fixed control).
 >
+> **Re-read (2026-08-29): the same 40 sweep checkpoints were re-scored against 96
+> held-out lights instead of 12** (`examples/rescore_checkpoints.py::rescore_sweep`,
+> evaluation-only, trains nothing; reproduces the 12-light committed deltas exactly
+> before the 96-light output is trusted). Every mean delta moves toward zero, and
+> `finest64` newly clears the −0.5 dB gate (`pass`, CI lower −0.496 dB) — the only
+> setting to pass at either light count. Spearman is now **+0.30** (permutation
+> p ≈ 0.68), the same magnitude as both prior readings but flipped in sign again
+> from the −0.30 8-seed/12-light reading, using the *identical* checkpoints just
+> scored more precisely — evidence the correlation itself is dominated by
+> 8-seed sampling noise, not evidence of a trend in either direction. **K1 remains
+> undecided; it neither confirms nor significantly refutes the predicted negative
+> correlation.** Per the plan's stop condition, K2–K4 stay cancelled: an undecided
+> sweep is not a confirmation. Deciding the correlation's sign would take 9–19
+> more seeds per setting (down from 19–47 at 12 lights). Results:
+> `docs/performance.md#k1-sweep-re-read-at-96-held-out-lights-2026-08-29`,
+> `out/r1-kitchen-parity-k1-eq/rescore-96.json`.
+>
 > The plan below is preserved as written, before the result was known.
 
 ## Decision carried forward

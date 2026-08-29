@@ -3619,3 +3619,74 @@ Evidence: `out/r1-parity-kitchen-eq/rescore-96.json` (96-light re-read),
 `out/r1-parity-kitchen-eq/rescore-12.json` (12-light reproduction check),
 `out/r1-parity-kitchen-eq/report.json` (unmodified committed run). Runner:
 `examples/rescore_checkpoints.py`.
+
+### K1 sweep re-read at 96 held-out lights (2026-08-29)
+
+The K1 `finest_resolution` sweep above (`out/r1-kitchen-parity-k1-eq/report.json`)
+was also scored against only 12 held-out lights — the same estimator whose ±0.94 dB
+standard error is the reason the R1 Kitchen parity re-read above exists. Task 7
+extends `examples/rescore_checkpoints.py` with `rescore_sweep`, which re-scores the
+sweep's 40 committed checkpoints (5 `finest_resolution` settings x 8 seeds, `train/
+finest<N>/seed<S>/model.pt`) against the same 96-light held-out set used above,
+reloading the fixed `pixel2d` control from `out/r1-parity-kitchen-eq/train/pixel2d/`
+for every seed rather than reusing its previously-published numbers, since those
+were scored at a different light count. No checkpoint was retrained.
+
+```sh
+nix develop --command uv run python examples/rescore_checkpoints.py \
+  --sweep-dir out/r1-kitchen-parity-k1-eq --control-dir out/r1-parity-kitchen-eq \
+  --cache out/kitchen/path_cache.npz --resolutions 32 48 64 96 128 \
+  --gate-lights 96 --out out/r1-kitchen-parity-k1-eq/rescore-96.json
+```
+
+`rescore_sweep(..., n_gate_lights=12)` reproduces the committed
+`out/r1-kitchen-parity-k1-eq/report.json` per-resolution per-seed deltas exactly
+(`assertAlmostEqual(..., places=6)`, `tests/test_rescore_checkpoints.py`) before
+its 96-light output is trusted.
+
+| `finest_resolution` | mean Δ, 12 lights (dB) | seeds needed, 12 | mean Δ, 96 lights (dB) | sd, 96 | light SEM, 96 | verdict, 96 | seeds needed, 96 |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 32 | −0.409 | 46 | **−0.025** | 0.524 | 0.323 | `continue` | 13 |
+| 48 | −0.248 | 22 | **+0.036** | 0.598 | 0.315 | `continue` | 16 |
+| 64 | −0.580 | 19 | **+0.021** | 0.376 | 0.395 | `pass` | 9 |
+| 96 | −0.381 | 47 | **+0.138** | 0.687 | 0.351 | `continue` | 19 |
+| 128 | −0.493 | 34 | **−0.009** | 0.631 | 0.298 | `continue` | 17 |
+
+Every mean delta moves toward (and mostly across) zero, the same pattern seen for
+the R1 parity control's `world_sparse` arm above — because it *is* the same eight
+`finest128` checkpoints, since the K1 sweep's 128 row and the parity control's
+`world_sparse` arm are bit-identical. `finest64` newly reads `pass` at 96 lights
+(CI lower bound −0.4958 dB, just above the −0.5 dB threshold) — the only setting
+to clear the gate at either light count, and only by re-reading it more precisely,
+not by retraining or relaxing anything.
+
+The resolution-vs-mean-delta rank correlation, recomputed the same way as the
+committed report (`examples.r1_kitchen_k1.spearman`, two-sided permutation p over
+all 120 orderings of the 5 resolutions): **ρ = +0.30** (82/120 permutations have
+`|ρ_perm| ≥ |ρ_obs|`, p ≈ 0.683). This is the same magnitude as both prior
+readings (+0.20 at the original per-seed gate, then −0.30 at the 8-seed
+equivalence-gate re-run) but has now flipped sign again — using the *same* eight
+checkpoints per resolution as the 12-light reading, just scored against a wider
+light sample. The sequence is still not monotonic in resolution. A rank
+correlation whose sign flips between two measurements of the identical
+checkpoints, at p ≈ 0.68 either way, is not evidence of a trend in either
+direction; it is the sampling noise the estimator was too coarse to average out
+at 8 seeds.
+
+**Reading against K1's stop condition** (unchanged: K2–K4 run only if K1
+*confirms* a negative resolution-vs-delta correlation): ρ = +0.30 is not
+negative, so this reading does not confirm the hypothesis — but p ≈ 0.68 is far
+from the significance a "confirmed positive/flat" falsifier would need either,
+so this is not a confirmed refutation on new evidence. **The sweep remains
+undecided** at 96 lights, same as its 12-light reading; only the light-sampling
+noise floor came down, not the seed-sampling noise the correlation is computed
+over. Per-setting `seeds_needed` at 96 lights is 9–19 (down from 19–47 at 12
+lights, before `finest64`'s new `pass`), against the unchanged 8-seed schedule.
+K2–K4 stay cancelled under the existing stop condition; whether to spend the
+additional seeds a decisive read would need is left to the reader, not decided
+here by widening the gate, dropping a seed, or adding an arm.
+
+Evidence: `out/r1-kitchen-parity-k1-eq/rescore-96.json` (96-light re-read),
+`out/r1-kitchen-parity-k1-eq/report.json` (unmodified committed sweep),
+`out/r1-parity-kitchen-eq/report.json` (unmodified committed control). Runner:
+`examples/rescore_checkpoints.py::rescore_sweep`.

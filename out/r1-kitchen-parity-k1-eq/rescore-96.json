@@ -1,0 +1,267 @@
+{
+  "n_gate_lights": 96,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "resolutions": {
+    "32": {
+      "per_seed": [
+        0.5814974112767174,
+        0.0561199779742679,
+        -0.29138526027985284,
+        -0.31561076331718174,
+        0.4838932458386294,
+        -1.1195282033736766,
+        0.4330594403647727,
+        -0.025028820947106827
+      ],
+      "per_light_var": [
+        10.153533147907783,
+        16.747871080414644,
+        1.7843227533558963,
+        5.447615871268673,
+        12.46074255334424,
+        8.208926004399569,
+        11.992713070182045,
+        13.324918926160736
+      ],
+      "mean_db": -0.024622871557928836,
+      "between_seed_sd_db": 0.5240010640415832,
+      "light_sem_db": 0.32299187983019273,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -0.7447082967400664,
+        "ci_upper_db": 0.6954625536242087,
+        "mean_db": -0.024622871557928847,
+        "std_db": 0.5601807005567414,
+        "seeds_needed": 13,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    },
+    "48": {
+      "per_seed": [
+        0.33255460763209366,
+        1.1492657050117618,
+        -0.25986565655260946,
+        -0.4982481018307505,
+        -0.10602163773338258,
+        -0.9539871963094222,
+        0.2637997368292182,
+        0.36094040077736217
+      ],
+      "per_light_var": [
+        7.642661645190938,
+        8.637998703726288,
+        3.497220975075275,
+        7.400837771220233,
+        6.955790599836102,
+        24.915429266222795,
+        10.692677048485532,
+        6.456540882745724
+      ],
+      "mean_db": 0.03605473222803389,
+      "between_seed_sd_db": 0.5977025222605691,
+      "light_sem_db": 0.31498833661546866,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -0.7853116817155129,
+        "ci_upper_db": 0.8574211461715807,
+        "mean_db": 0.0360547322280339,
+        "std_db": 0.6389708735741927,
+        "seeds_needed": 16,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    },
+    "64": {
+      "per_seed": [
+        -0.03750990687326613,
+        -0.043324635931257384,
+        -0.6152402657921828,
+        0.1515401460999509,
+        0.7162888547604579,
+        0.08355486651532591,
+        0.2775575697623663,
+        -0.3648068373112947
+      ],
+      "per_light_var": [
+        15.615812053364236,
+        17.400450472568966,
+        10.1454807458808,
+        4.505413501290149,
+        22.325114118565743,
+        14.203605984750189,
+        17.638213225853132,
+        18.07969306626416
+      ],
+      "mean_db": 0.021007473903762494,
+      "between_seed_sd_db": 0.37606712803361514,
+      "light_sem_db": 0.3951426811933883,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "pass",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -0.4957862434571268,
+        "ci_upper_db": 0.5378011912646518,
+        "mean_db": 0.021007473903762494,
+        "std_db": 0.4020326707228108,
+        "seeds_needed": 9,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    },
+    "96": {
+      "per_seed": [
+        0.6373673617596475,
+        0.5622029916202029,
+        -0.8551171910729124,
+        0.0013916334741675789,
+        1.5056049156166067,
+        -0.31999898373102614,
+        -0.31366134240419247,
+        -0.11151732677870563
+      ],
+      "per_light_var": [
+        12.090939543355283,
+        9.345487122178833,
+        6.600828325029356,
+        4.244989326292708,
+        12.40358609965228,
+        19.14442228982299,
+        8.591576856457145,
+        22.126535408390975
+      ],
+      "mean_db": 0.1382840073104735,
+      "between_seed_sd_db": 0.6874429098769781,
+      "light_sem_db": 0.3508701329878194,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -0.8064041889866366,
+        "ci_upper_db": 1.0829722036075835,
+        "mean_db": 0.1382840073104735,
+        "std_db": 0.734907383350448,
+        "seeds_needed": 19,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    },
+    "128": {
+      "per_seed": [
+        0.6382644936877062,
+        0.38903648950515946,
+        -0.35201782313107305,
+        -0.5824096005013866,
+        0.8178212272338463,
+        0.0762015325829803,
+        0.15399341687251353,
+        -1.2094075224377485
+      ],
+      "per_light_var": [
+        6.772552513023572,
+        9.360929012267647,
+        2.747943799819445,
+        2.7299085518310893,
+        9.52746328460185,
+        12.63710468321522,
+        10.091143673896807,
+        14.257234134449869
+      ],
+      "mean_db": -0.00856472327350029,
+      "between_seed_sd_db": 0.630702026495118,
+      "light_sem_db": 0.2978313098578586,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -0.8752792551278329,
+        "ci_upper_db": 0.8581498085808322,
+        "mean_db": -0.008564723273500302,
+        "std_db": 0.6742488275110721,
+        "seeds_needed": 17,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    }
+  },
+  "source_sweep_report": "out/r1-kitchen-parity-k1-eq/report.json",
+  "source_control_report": "out/r1-parity-kitchen-eq/report.json"
+}

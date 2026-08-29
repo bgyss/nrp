@@ -54,6 +54,37 @@ class TestRescore(unittest.TestCase):
             for a, b in zip(got["arms"][arm]["per_seed_mean_delta_db"], expected, strict=False):
                 self.assertAlmostEqual(a, b, places=6)
 
+    def test_rescore_sweep_at_the_original_count_reproduces_the_committed_deltas(self):
+        """rescore_sweep at n_gate_lights=12 must reproduce the committed K1 sweep's
+        per-resolution per-seed deltas exactly, because it reloads the same
+        checkpoints against the same held-out lights."""
+        sweep_dir = ROOT / "out/r1-kitchen-parity-k1-eq"
+        control_dir = ROOT / "out/r1-parity-kitchen-eq"
+        if not (sweep_dir / "report.json").exists() or not (control_dir / "report.json").exists():
+            self.skipTest("committed K1 sweep or control run not present")
+
+        from nrp.path_cache import PathCache
+
+        runner = load_runner()
+        sweep_report = json.loads((sweep_dir / "report.json").read_text())
+        control_report = json.loads((control_dir / "report.json").read_text())
+        cache = PathCache.load(str(ROOT / "out/kitchen/path_cache.npz"))
+        got = runner.rescore_sweep(
+            sweep_dir,
+            control_dir,
+            cache,
+            seeds=sweep_report["seeds"],
+            resolutions=sweep_report["resolutions"],
+            control_arm=sweep_report["control_arm"],
+            base_cfg=control_report["training_config"],
+            n_gate_lights=12,
+        )
+        for res_row in sweep_report["per_resolution"]:
+            res = str(res_row["finest_resolution"])
+            expected = res_row["gate"]["per_seed"]["per_seed_delta_db"]
+            for a, b in zip(got["resolutions"][res]["per_seed"], expected, strict=False):
+                self.assertAlmostEqual(a, b, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()
