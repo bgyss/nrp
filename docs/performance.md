@@ -3652,6 +3652,13 @@ its 96-light output is trusted.
 | 96 | −0.381 | 47 | **+0.138** | 0.687 | 0.351 | `continue` | 19 |
 | 128 | −0.493 | 34 | **−0.009** | 0.631 | 0.298 | `continue` | 17 |
 
+The "sd, 96" column is `between_seed_sd_db` (population sd, ddof=0), which is
+what this table publishes for every resolution; the equivalence gate's own CI
+is built from the sample sd (ddof=1), which runs slightly higher — 0.402 vs.
+0.376 for `finest64`, the row where the gap is load-bearing (§ below). A reader
+recomputing the gate from this table should use the gate's own `std_db`
+(`rescore-96.json`), not this column.
+
 Every mean delta moves toward (and mostly across) zero, the same pattern seen for
 the R1 parity control's `world_sparse` arm above — because it *is* the same eight
 `finest128` checkpoints, since the K1 sweep's 128 row and the parity control's
@@ -3660,18 +3667,45 @@ the R1 parity control's `world_sparse` arm above — because it *is* the same ei
 to clear the gate at either light count, and only by re-reading it more precisely,
 not by retraining or relaxing anything.
 
+**This single `pass` is not evidence that `finest_resolution=64` is at parity
+with `pixel2d`**, for three reasons, all checkable in `rescore-96.json`:
+
+- *Uncorrected multiplicity.* `finest64` is one of five pre-registered settings,
+  and it is the one being highlighted because it is the one that passed. The
+  equivalence-gate section above already flags this exact situation as
+  uncorrected (`docs/performance.md#the-equivalence-gate-from-2026-08-28`,
+  "multiplicity across arms... a future 'promote whichever of N arms passes'
+  selection would need its own correction"). Each look's one-sided false-pass
+  rate is the gate's per-look two-sided α (0.05/6 ≈ 0.00833) halved, ≈0.42%;
+  across five settings at one look each that is a family-wise false-parity rate
+  of roughly 1 − (1 − 0.0042)^30 ≈ 11–12% against a nominal 5% budget — not the
+  ~0.4% a reader would assume from a single arm's gate.
+- *It is not the best mean.* `finest64`'s mean delta (+0.021 dB) is the median
+  of the five settings, not the best — `finest96` has the best mean (+0.138 dB).
+  `finest64` clears the gate only because its sample sd (0.402) is the smallest
+  of the five (others: 0.560–0.735), not because its estimate is closer to
+  parity. Substituting the pooled sample sd across all five settings (0.613,
+  computed as the RMS of the five `std_db` values) into every setting's CI, no
+  setting passes, and `finest64` is not even the closest to the threshold under
+  that pooled sd — `finest96` is (CI lower ≈ −0.650 dB vs. `finest64`'s
+  ≈ −0.767 dB, both against the −0.5 dB threshold).
+- *The margin is small.* The CI lower bound is −0.4958 dB against a −0.5 dB
+  threshold — a margin of 0.0042 dB. The verdict flips to `continue` if the
+  sample sd rises by less than 1% (≈0.82%, from 0.402 to 0.405), and at n = 8
+  the sample sd's own sampling spread is on the order of tens of percent.
+
 The resolution-vs-mean-delta rank correlation, recomputed the same way as the
 committed report (`examples.r1_kitchen_k1.spearman`, two-sided permutation p over
 all 120 orderings of the 5 resolutions): **ρ = +0.30** (82/120 permutations have
-`|ρ_perm| ≥ |ρ_obs|`, p ≈ 0.683). This is the same magnitude as both prior
-readings (+0.20 at the original per-seed gate, then −0.30 at the 8-seed
-equivalence-gate re-run) but has now flipped sign again — using the *same* eight
-checkpoints per resolution as the 12-light reading, just scored against a wider
-light sample. The sequence is still not monotonic in resolution. A rank
-correlation whose sign flips between two measurements of the identical
-checkpoints, at p ≈ 0.68 either way, is not evidence of a trend in either
-direction; it is the sampling noise the estimator was too coarse to average out
-at 8 seeds.
+`|ρ_perm| ≥ |ρ_obs|`, p ≈ 0.683). This matches the magnitude of the second prior
+reading (−0.30 at the 8-seed equivalence-gate re-run) but not the first (+0.20 at
+the original per-seed gate) — 0.20 ≠ 0.30 — and has flipped sign again relative
+to the second reading, using the *same* eight checkpoints per resolution as the
+12-light reading, just scored against a wider light sample. The sequence is
+still not monotonic in resolution. A rank correlation whose sign flips between
+two measurements of the identical checkpoints, at p ≈ 0.68 either way, is not
+evidence of a trend in either direction; it is the sampling noise the estimator
+was too coarse to average out at 8 seeds.
 
 **Reading against K1's stop condition** (unchanged: K2–K4 run only if K1
 *confirms* a negative resolution-vs-delta correlation): ρ = +0.30 is not
@@ -3685,6 +3719,17 @@ lights, before `finest64`'s new `pass`), against the unchanged 8-seed schedule.
 K2–K4 stay cancelled under the existing stop condition; whether to spend the
 additional seeds a decisive read would need is left to the reader, not decided
 here by widening the gate, dropping a seed, or adding an arm.
+
+The committed sweep's pre-registered `falsifier` field, taken literally, reads
+"a flat (|rho| small) or positive correlation refutes the vertex-support
+hypothesis as stated" — with no significance qualifier, so a literal reading of
+ρ = +0.30 would call this a refutation, not an "undecided". This section instead
+applies the significance-qualified reading used throughout the equivalence-gate
+work (an unsignificant positive correlation, p ≈ 0.68, is neither a confirmation
+nor a refutation), which is the more conservative choice: refuting on an
+unsignificant statistic would let sampling noise cancel K2–K4 as readily as it
+could have confirmed them, and the whole point of the 2026-08-28 gate rework was
+to stop treating noise as decisions in either direction.
 
 Evidence: `out/r1-kitchen-parity-k1-eq/rescore-96.json` (96-light re-read),
 `out/r1-kitchen-parity-k1-eq/report.json` (unmodified committed sweep),
