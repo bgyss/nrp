@@ -14,6 +14,8 @@ from pathlib import Path
 
 import numpy as np
 
+from nrp.toy_tracer import trace_path_cache
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -23,6 +25,20 @@ def load_runner():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_r1a_variance():
+    spec = importlib.util.spec_from_file_location(
+        "r1a_variance", ROOT / "examples" / "r1a_variance.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _small_cache():
+    return trace_path_cache(5, 4, spp=2, max_bounces=1, seed=9)
 
 
 class ArmConfigTests(unittest.TestCase):
@@ -446,6 +462,25 @@ class GateExitCodeTests(unittest.TestCase):
         runner = load_runner()
         gates = {"world_sparse": {"pass": False, "equivalence": None}}
         self.assertEqual(runner.gate_exit_code(gates), 2)
+
+
+class FrozenValidationSetGateSizeTests(unittest.TestCase):
+    def test_frozen_sets_honor_an_explicit_gate_light_count(self):
+        """The gate's held-out set is sized by n_gate_lights, not by the
+        training-time n_val_lights -- raising it must not slow training."""
+        runner = load_runner()
+        r1a_variance = load_r1a_variance()
+        cache = _small_cache()
+        base = dict(runner.BASE_TRAIN_CONFIG)
+        base["n_val_lights"] = 2
+        base["denoise"] = {"enabled": False}
+        sets, specs = r1a_variance.build_frozen_validation_sets(cache, base, (0,), n_gate_lights=6)
+        self.assertEqual(len(sets[0]), 6)
+        self.assertEqual(len(specs["0"]), 6)
+        small, _ = r1a_variance.build_frozen_validation_sets(cache, base, (0,))
+        self.assertEqual(len(small[0]), 2)
+        for a, b in zip(small[0], sets[0], strict=False):
+            self.assertEqual(a["light"].to_dict(), b["light"].to_dict())
 
 
 if __name__ == "__main__":
