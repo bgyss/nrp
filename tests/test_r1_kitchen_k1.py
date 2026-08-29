@@ -9,6 +9,7 @@ nrp/torch_backend/train.py's tests.
 """
 
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -34,14 +35,19 @@ def load_runner():
     return module
 
 
-def control_report(seeds=(0, 1), cache="out/kitchen/path_cache.npz", base_resolution=4):
+def control_report(
+    seeds=(0, 1), cache="out/kitchen/path_cache.npz", base_resolution=4, n_gate_lights=None
+):
+    training_config = {"iters": 3000, "denoise": {"enabled": True, "method": "oidn"}}
+    if n_gate_lights is not None:
+        training_config["n_gate_lights"] = n_gate_lights
     return {
         "control_arm": "pixel2d",
         "cache": cache,
         "resolution_ladder": {"base_resolution": base_resolution, "finest_resolution": 128},
         "command": "uv run python examples/r1_parity.py ...",
         "hardware": {"cpu_brand": "Apple M1 Max"},
-        "training_config": {"iters": 3000, "denoise": {"enabled": True, "method": "oidn"}},
+        "training_config": training_config,
         "training_arms": [
             {
                 "arm": arm,
@@ -192,6 +198,56 @@ class CompatibilityTests(unittest.TestCase):
             base_resolution=4,
             run_training_config={"iters": 50},
         )
+
+
+class GateLightsCompatibilityTests(unittest.TestCase):
+    """A sweep read against a control scored on a different number of held-out
+    lights would attribute an estimator-precision difference to the swept
+    resolution -- exactly the class of confound `_STRICT_TRAINING_CONFIG_KEYS`
+    already exists to catch (2026-08-29).
+    """
+
+    def test_control_with_a_different_gate_light_count_is_rejected(self):
+        runner = load_runner()
+        control = control_report(n_gate_lights=12)
+        run_cfg = dict(control["training_config"])
+        run_cfg["n_gate_lights"] = 96
+        with self.assertRaisesRegex(ValueError, "n_gate_lights"):
+            runner.check_control_compatibility(
+                control,
+                cache="out/kitchen/path_cache.npz",
+                base_resolution=4,
+                run_training_config=run_cfg,
+            )
+
+    def test_a_control_predating_the_key_reads_as_twelve_lights(self):
+        """Committed controls have no n_gate_lights. Absence is 12, not None --
+        otherwise every historical control is rejected by a 12-light run."""
+        runner = load_runner()
+        control = control_report()
+        control["training_config"].pop("n_gate_lights", None)
+        run_cfg = dict(control["training_config"])
+        run_cfg["n_gate_lights"] = 12
+        runner.check_control_compatibility(
+            control,
+            cache="out/kitchen/path_cache.npz",
+            base_resolution=4,
+            run_training_config=run_cfg,
+        )
+
+    def test_a_control_predating_the_key_is_rejected_by_a_96_light_run(self):
+        runner = load_runner()
+        control = control_report()
+        control["training_config"].pop("n_gate_lights", None)
+        run_cfg = dict(control["training_config"])
+        run_cfg["n_gate_lights"] = 96
+        with self.assertRaisesRegex(ValueError, "n_gate_lights"):
+            runner.check_control_compatibility(
+                control,
+                cache="out/kitchen/path_cache.npz",
+                base_resolution=4,
+                run_training_config=run_cfg,
+            )
 
 
 class FingerprintTests(unittest.TestCase):
@@ -524,6 +580,148 @@ class EquivalenceBindingTests(unittest.TestCase):
         gate = runner.EquivalenceGate()
         self.assertEqual(runner.DEFAULT_GATE, "equivalence")
         self.assertIn(len(runner.DEFAULT_SEEDS), gate.looks)
+
+
+class MainGateLightsCallSiteTest(unittest.TestCase):
+    """Regression test for the call site `main()` makes to
+    `build_frozen_validation_sets` at examples/r1_kitchen_k1.py (around line 605).
+
+    Unlike `r1_parity.py`, where that call lives inside `run_experiment` (the
+    function `RunExperimentGateLightsTest` in tests/test_r1_parity.py drives
+    directly), in this module the call lives in `main()` itself -- `run_sweep`
+    receives an already-built `validation_sets` dict and never calls
+    `build_frozen_validation_sets`. `run_sweep_with_fakes` therefore cannot see this
+    call site at all; this test drives the real `main()` instead, with `sys.argv`
+    pointed at a synthetic control report and cache, and with training, model
+    loading, evaluation, vertex-support measurement, cache loading, and
+    `build_frozen_validation_sets` itself replaced with fast, deterministic
+    stand-ins -- the same style `run_sweep_with_fakes` and
+    `RunExperimentGateLightsTest` use, just wrapping one more layer (`main`'s
+    argument parsing and control-compatibility/fingerprint checks) to reach the
+    call site that actually exists here.
+
+    `build_frozen_validation_sets` is replaced with a spy that records the
+    `n_gate_lights` it was called with, and returns a small deterministic
+    validation set/spec so the rest of `main()` (fingerprint check, `run_sweep`,
+    report-writing) completes normally. `--gate-lights 20` is chosen because it is
+    neither the 12-light legacy default nor the 96-light BASE_TRAIN_CONFIG default,
+    so a call-site regression to either fallback would produce a different
+    (wrong) recorded value.
+    """
+
+    def test_main_passes_gate_lights_through_to_build_frozen_validation_sets(self):
+        runner = load_runner()
+        self._run_main(runner, gate_lights=20)
+        self.assertEqual(runner._recorded_n_gate_lights, [20])
+
+    def _run_main(self, runner, *, gate_lights: int) -> None:
+        seeds = (0, 1, 2, 3, 4)
+        cycle = (0.1, -0.2, 0.05, -0.4, 0.0)
+        per_seed_delta = {seed: cycle[index % len(cycle)] for index, seed in enumerate(seeds)}
+        control_light = {"radius": 0.1}
+
+        runner._recorded_n_gate_lights = []
+
+        def spy_build_frozen_validation_sets(cache, base_cfg, seeds, n_gate_lights=None):
+            runner._recorded_n_gate_lights.append(n_gate_lights)
+            sets = {seed: seed for seed in seeds}
+            specs = {str(seed): [{"seed": seed}] for seed in seeds}
+            return sets, specs
+
+        fingerprints = {
+            str(seed): runner.validation_fingerprint([{"seed": seed}]) for seed in seeds
+        }
+
+        def fake_train(cfg):
+            return {"parameter_count": 1, "iters_per_second": 1.0, "train_seconds": 0.001}
+
+        class _FakeEncoding:
+            def capacity_report(self):
+                return None
+
+        class _FakeModel:
+            encoding = _FakeEncoding()
+
+        def fake_load_trained_model(path, cache):
+            return _FakeModel()
+
+        def fake_evaluate_model(model, cache, val_set):
+            seed = val_set
+            return [{"light": control_light, "psnr_db_vs_raw": 20.0 + per_seed_delta[seed]}]
+
+        def fake_cache_vertex_support(cache, levels, base_resolution, finest):
+            return {"finest": {"median_support": 1.0, "fraction_touched_by_le1_pixel": 0.5}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            cache_path = tmp_path / "path_cache.npz"
+            cache_path.write_bytes(b"")  # only existence is checked; load is faked below
+            out_dir = tmp_path / "out"
+
+            strict_cfg = {
+                key: runner.BASE_TRAIN_CONFIG[key]
+                for key in runner._STRICT_TRAINING_CONFIG_KEYS
+                if key != "n_gate_lights"
+            }
+            strict_cfg["n_gate_lights"] = gate_lights
+            strict_cfg["iters"] = 1
+            strict_cfg["denoise"] = {"method": "oidn"}
+            control = {
+                "control_arm": "pixel2d",
+                "cache": str(cache_path),
+                "resolution_ladder": {"base_resolution": 4, "finest_resolution": 128},
+                "command": "uv run python examples/r1_parity.py ...",
+                "hardware": {"cpu_brand": "test"},
+                "training_config": strict_cfg,
+                "training_arms": [
+                    {
+                        "arm": "pixel2d",
+                        "seed": seed,
+                        "validation": [{"light": control_light, "psnr_db_vs_raw": 20.0}],
+                    }
+                    for seed in seeds
+                ],
+                "validation": {"fingerprints": fingerprints},
+            }
+            control_path = tmp_path / "control_report.json"
+            control_path.write_text(json.dumps(control))
+
+            argv = [
+                "r1_kitchen_k1.py",
+                "--cache",
+                str(cache_path),
+                "--control-report",
+                str(control_path),
+                "--out-dir",
+                str(out_dir),
+                "--seeds",
+                *[str(seed) for seed in seeds],
+                "--resolutions",
+                "32",
+                "--iters",
+                "1",
+                "--base-resolution",
+                "4",
+                "--gate",
+                "per-seed",
+                "--denoise-method",
+                "oidn",
+                "--gate-lights",
+                str(gate_lights),
+            ]
+
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(runner.PathCache, "load", lambda path: _tiny_cache()),
+                mock.patch.object(
+                    runner, "build_frozen_validation_sets", spy_build_frozen_validation_sets
+                ),
+                mock.patch.object(runner, "train", fake_train),
+                mock.patch.object(runner, "load_trained_model", fake_load_trained_model),
+                mock.patch.object(runner, "evaluate_model", fake_evaluate_model),
+                mock.patch.object(runner, "cache_vertex_support", fake_cache_vertex_support),
+            ):
+                runner.main()
 
 
 class SpearmanTests(unittest.TestCase):
