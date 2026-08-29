@@ -176,6 +176,12 @@ BASE_TRAIN_CONFIG: dict = {
     "lr": 0.005,
     "model": {"hidden_width": 128, "hidden_layers": 4},
     "n_val_lights": 12,
+    # The GATE's held-out set. Separate from n_val_lights (the training-time
+    # checkpoint set) because only this one sets the precision of the per-seed delta
+    # the equivalence gate consumes. At 12 lights the light-sampling standard error
+    # on Kitchen 128 is +/-0.94 dB against a -0.5 dB threshold -- larger than the
+    # between-seed spread the gate is trying to resolve. 96 puts it at 0.30 dB.
+    "n_gate_lights": 96,
 }
 
 
@@ -303,10 +309,11 @@ def reproduce_command(args: argparse.Namespace, seeds: tuple[int, ...]) -> str:
 
     Must record every argument that distinguishes this run's RESULT, not merely
     its output location -- --cache and --out-dir locate the run, but
-    --denoise-method, --bootstrap-seed, and --bootstrap-resamples change the
-    numbers themselves. A command string missing any of those replays a
+    --denoise-method, --bootstrap-seed, --bootstrap-resamples, and --gate-lights
+    change the numbers themselves. A command string missing any of those replays a
     DIFFERENT measurement (e.g. the bilateral-denoiser default instead of the
-    oidn run actually made) while appearing to reproduce this one.
+    oidn run actually made, or the pre-96 12-light gate set) while appearing to
+    reproduce this one.
     """
     return (
         "UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py "
@@ -317,7 +324,8 @@ def reproduce_command(args: argparse.Namespace, seeds: tuple[int, ...]) -> str:
         f"--denoise-method {args.denoise_method} "
         f"--gate {args.gate} --max-seeds {args.max_seeds} "
         f"--bootstrap-seed {args.bootstrap_seed} "
-        f"--bootstrap-resamples {args.bootstrap_resamples}"
+        f"--bootstrap-resamples {args.bootstrap_resamples} "
+        f"--gate-lights {args.gate_lights}"
     )
 
 
@@ -452,7 +460,9 @@ def run_experiment(
         return mean_delta_cache[key]
 
     for batch in seed_batches:
-        batch_sets, batch_specs = build_frozen_validation_sets(cache, base_cfg, batch)
+        batch_sets, batch_specs = build_frozen_validation_sets(
+            cache, base_cfg, batch, n_gate_lights=base_cfg.get("n_gate_lights")
+        )
         validation_sets.update(batch_sets)
         validation_specs.update(batch_specs)
 
@@ -591,6 +601,12 @@ def main() -> None:
         default=EquivalenceGate().cap,
         help="Seed cap for the adaptive look schedule (default: 48).",
     )
+    parser.add_argument(
+        "--gate-lights",
+        type=int,
+        default=BASE_TRAIN_CONFIG["n_gate_lights"],
+        help="held-out lights per seed for the promotion gate (default 96)",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).resolve().parent.parent
@@ -608,6 +624,7 @@ def main() -> None:
     base_cfg["denoise"]["method"] = args.denoise_method
     if args.denoise_method == "oidn":
         base_cfg["denoise"].pop("radius", None)
+    base_cfg["n_gate_lights"] = args.gate_lights
 
     out_root = Path(args.out_dir)
     if not out_root.is_absolute():
@@ -677,6 +694,7 @@ def main() -> None:
             "arm_models": arm_models,
             "bootstrap_resamples": args.bootstrap_resamples,
             "bootstrap_seed": args.bootstrap_seed,
+            "gate_lights": args.gate_lights,
             "validation": {
                 "lights": result["validation_specs"],
                 "fingerprints": result["validation_fingerprints"],

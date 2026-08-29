@@ -359,6 +359,7 @@ def make_args(**overrides):
         max_seeds=48,
         bootstrap_seed=1234,
         bootstrap_resamples=2000,
+        gate_lights=96,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -400,8 +401,15 @@ class ReproduceCommandTests(unittest.TestCase):
             "--max-seeds",
             "--bootstrap-seed",
             "--bootstrap-resamples",
+            "--gate-lights",
         ):
             self.assertIn(flag, command)
+
+    def test_command_includes_gate_lights_value(self):
+        runner = load_runner()
+        args = make_args(gate_lights=96)
+        command = runner.reproduce_command(args, (0, 1))
+        self.assertIn("--gate-lights 96", command)
 
 
 class SeedBindingCompatibilityTests(unittest.TestCase):
@@ -462,6 +470,32 @@ class GateExitCodeTests(unittest.TestCase):
         runner = load_runner()
         gates = {"world_sparse": {"pass": False, "equivalence": None}}
         self.assertEqual(runner.gate_exit_code(gates), 2)
+
+
+class GateLightsPreRegistrationTests(unittest.TestCase):
+    def test_gate_lights_default_is_pre_registered_at_96(self):
+        runner = load_runner()
+        self.assertEqual(runner.BASE_TRAIN_CONFIG["n_gate_lights"], 96)
+
+    def test_reproduce_command_records_gate_lights(self):
+        import argparse
+
+        runner = load_runner()
+        args = argparse.Namespace(
+            cache="c.npz",
+            out_dir="o",
+            iters=3000,
+            base_resolution=4,
+            finest_resolution=128,
+            denoise_method="oidn",
+            gate="equivalence",
+            max_seeds=8,
+            bootstrap_seed=0,
+            bootstrap_resamples=2000,
+            gate_lights=96,
+        )
+        cmd = runner.reproduce_command(args, (0, 1))
+        self.assertIn("--gate-lights 96", cmd)
 
 
 class FrozenValidationSetGateSizeTests(unittest.TestCase):
