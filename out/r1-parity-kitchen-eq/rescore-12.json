@@ -1,0 +1,136 @@
+{
+  "n_gate_lights": 12,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "arms": {
+    "world_sparse": {
+      "per_seed_mean_delta_db": [
+        0.24436395873026692,
+        -2.4268260793335843,
+        -0.4436607823911343,
+        0.08926213740604864,
+        0.11072562275049276,
+        0.5381836861580193,
+        -0.4108573428324674,
+        -1.642374636637679
+      ],
+      "mean_db": -0.4926479295187547,
+      "between_seed_sd_db": 0.9605002192740151,
+      "light_sem_db": 0.9420812264074339,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -1.81257312861831,
+        "ci_upper_db": 0.8272772695808006,
+        "mean_db": -0.4926479295187547,
+        "std_db": 1.0268179258413168,
+        "seeds_needed": 34,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    },
+    "world_normal_triplane": {
+      "per_seed_mean_delta_db": [
+        -0.33820391683834955,
+        -1.3867326266768274,
+        -0.691789424276417,
+        -0.5027535484029633,
+        0.8490837452201019,
+        -0.9856267673345158,
+        -0.7023304249751338,
+        0.18682634706113724
+      ],
+      "mean_db": -0.44644082702787097,
+      "between_seed_sd_db": 0.6514256624525443,
+      "light_sem_db": 1.1397918821689634,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -1.3416339045069485,
+        "ci_upper_db": 0.44875225045120665,
+        "mean_db": -0.44644082702787097,
+        "std_db": 0.696403326242763,
+        "seeds_needed": 18,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    },
+    "world3d": {
+      "per_seed_mean_delta_db": [
+        -0.19344574301327513,
+        -3.350040478090184,
+        -0.41678054771367234,
+        -0.012532814829749364,
+        -3.8200627559549383,
+        -1.8694552619838778,
+        -1.6060449534114973,
+        0.32459667241910584
+      ],
+      "mean_db": -1.367970735322261,
+      "between_seed_sd_db": 1.4678125699176077,
+      "light_sem_db": 1.0724343958871412,
+      "gate": {
+        "rule": "equivalence",
+        "verdict": "continue",
+        "threshold_db": -0.5,
+        "n": 8,
+        "look_index": 0,
+        "looks_taken": 1,
+        "looks": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48
+        ],
+        "confidence": 0.9916666666666667,
+        "alpha_overall": 0.05,
+        "estimator": "student_t",
+        "ci_lower_db": -3.3850476289159923,
+        "ci_upper_db": 0.6491061582714703,
+        "mean_db": -1.367970735322261,
+        "std_db": 1.569157641323388,
+        "seeds_needed": 73,
+        "definition": "pass when the confidence interval for the mean paired delta lies entirely at or above the threshold, fail when it lies entirely below, underpowered when it straddles the threshold at the seed cap; underpowered is never a pass"
+      }
+    }
+  },
+  "source_report": "out/r1-parity-kitchen-eq/report.json"
+}
