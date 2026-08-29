@@ -3259,8 +3259,14 @@ above stand, and Kitchen really does spread its pixel budget over more distinct
 surface positions — but this data does not establish support density as the
 mechanism producing the Kitchen parity negative. What the sweep does establish,
 unchanged: no setting passed the gate at any resolution, and the practical
-recommendation is not to proceed to K2–K4 on this basis. K1 was measured before
-the OIDN determinism fix (see below) and has not been re-measured.
+recommendation is not to proceed to K2–K4 on this basis.
+
+**Superseded (2026-08-28):** this sweep was measured before the OIDN determinism
+fix and read under the per-seed rule the equivalence gate replaced. It has now
+been re-run at 8 seeds against a deterministic 8-seed control — see "K1 re-run
+under the equivalence gate (Kitchen 128², 8 seeds)" at the end of this document.
+The per-seed numbers in the table below are retracted as measurements; the
+conclusion (no support for the hypothesis, K2–K4 not run) survives the re-run.
 
 ### Run-to-run nondeterminism exceeds the gate (affects K1 and the original Kitchen negative)
 
@@ -3460,4 +3466,101 @@ against a fixed control; a future "promote whichever of N arms passes" selection
 would need its own correction.
 
 Verdicts recorded before 2026-08-28 used the per-seed rule and are labelled as
-such in their reports.
+such in their reports. The first runs under the new rule are
+`out/r1-parity-kitchen-eq/report.json` and `out/r1-kitchen-parity-k1-eq/report.json`
+(next section).
+
+## K1 re-run under the equivalence gate (Kitchen 128², 8 seeds)
+
+K1's published verdict was read under the per-seed rule the equivalence gate
+replaced — a rule that rejects an arm sitting exactly at parity 76–91% of the time
+at this scene's measured spreads — and against a control trained before the OIDN
+determinism fix. Both are now fixed, so K1 was re-run end to end at the gate's
+first scheduled look (n = 8).
+
+**Outcome: every resolution returns `continue`.** The interval for the mean delta
+straddles −0.5 dB at all five settings, so the sweep neither promotes nor rejects
+any of them; deciding a single setting would take 19–47 seeds. The rank
+correlation between resolution and mean delta is **ρ = −0.30** (two-sided
+permutation p = 0.68 over the 120 orderings of 5 points) — nominally the predicted
+sign, the opposite of the +0.20 measured before, and indistinguishable from noise
+either way. The sequence is still not monotonic. **The vertex-support hypothesis
+remains unsupported, and K2–K4 stay unrun**: the plan's stop condition requires K1
+to *confirm* the predicted direction, and an undecided sweep does not.
+
+Evidence: `out/r1-kitchen-parity-k1-eq/report.json` (sweep),
+`out/r1-parity-kitchen-eq/report.json` (fixed control). Runner:
+`examples/r1_kitchen_k1.py`, which now takes `--gate {equivalence,per-seed}`,
+defaults to `equivalence` with `--seeds` defaulting to the first look, and refuses
+an off-schedule seed count *before* the first training rather than after the last.
+Hardware: Apple M1 Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
+
+```sh
+# fixed pixel2d control at 8 seeds (also the first equivalence-gate answer for R1 parity)
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
+  --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-eq \
+  --iters 3000 --finest-resolution 128 --base-resolution 4 \
+  --denoise-method oidn --gate equivalence --max-seeds 8
+
+# the sweep itself
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_kitchen_k1.py \
+  --cache out/kitchen/path_cache.npz \
+  --control-report out/r1-parity-kitchen-eq/report.json \
+  --out-dir out/r1-kitchen-parity-k1-eq --seeds 0 1 2 3 4 5 6 7 \
+  --resolutions 32 48 64 96 128 --iters 3000 --base-resolution 4 \
+  --denoise-method oidn --gate equivalence
+```
+
+`r1_parity.py` exits 1 when every arm's verdict is `underpowered`; here the
+verdicts are `continue` at the 8-seed look, and the control run's own exit
+reflects that no world arm passed.
+
+### The fixed control, re-measured at 8 seeds
+
+Retraining the control at seeds 0–7 under the deterministic denoiser also gives
+the R1 Kitchen parity question its first equivalence-gate reading. Same arms,
+same protocol, threshold unchanged at −0.5 dB:
+
+| arm | mean Δ vs `pixel2d` (dB) | std (dB) | 99.17% CI (dB) | verdict | seeds to decide | seeds ≥ −0.5 dB |
+|---|---:|---:|---:|---|---:|---:|
+| `world_sparse` | −0.493 | 1.027 | [−1.81, +0.83] | `continue` | 34 | 6/8 |
+| `world_normal_triplane` | −0.446 | 0.696 | [−1.34, +0.45] | `continue` | 18 | 3/8 |
+| `world3d` | −1.368 | 1.569 | [−3.39, +0.65] | `continue` | 73 | 4/8 |
+
+This is a weaker statement than "no arm passes" from the per-seed era, and a more
+honest one: at 8 seeds none of the three arms is shown to be at parity, and none
+is shown to be worse than parity either. `world3d`'s spread (1.57 dB) still puts a
+definitive answer past the 48-seed cap.
+
+### The sweep
+
+| finest res | per-seed Δ vs fixed `pixel2d` (dB) | mean (dB) | 99.17% CI (dB) | verdict | seeds to decide | vertices/pixel | median support | ≤1 px | params |
+|---|---|---:|---:|---|---:|---:|---:|---:|---:|
+| 32 | −0.09, −3.27, −0.40, −0.24, +0.80, +0.25, −0.42, +0.09 | −0.409 | [−1.98, +1.16] | `continue` | 46 | 0.51 | 12 | 6.9% | 89,575 |
+| 48 | −0.34, −0.71, −0.50, −0.58, −0.36, −0.56, −0.63, +1.70 | **−0.248** | [−1.27, +0.78] | `continue` | 22 | 1.07 | 5 | 11.7% | 123,277 |
+| 64 | −1.15, −1.36, −1.52, +0.19, −0.73, +0.03, −0.45, +0.35 | −0.580 | [−1.52, +0.36] | `continue` | 19 | 1.76 | 3 | 18.1% | 163,671 |
+| 96 | −0.44, −1.78, −1.90, −0.36, +2.00, −0.21, −0.74, +0.38 | −0.381 | [−1.97, +1.21] | `continue` | 47 | 3.29 | 2 | 39.2% | 252,709 |
+| 128 | +0.24, −2.43, −0.44, +0.09, +0.11, +0.54, −0.41, −1.64 | −0.493 | [−1.81, +0.83] | `continue` | 34 | 4.77 | 1 | **59.1%** | 343,527 |
+
+The interval is the binding Student-t interval at the gate's Bonferroni-corrected
+per-look confidence (99.17%), not the descriptive bootstrap the earlier K1 table
+reported. The vertex-support columns are unchanged from the original sweep — they
+are a property of the cache and the ladder, not of the training runs.
+
+**Determinism check, for free.** The 128 row re-trains exactly the arm and
+configuration the control run trains as `world_sparse`, in a different process,
+output directory, and run — and its eight per-seed deltas are bit-identical to the
+control report's (−0.493 dB mean in both). The single-threaded OIDN fix holds
+across processes, so the ~1.5 dB run-to-run variation recorded in "Run-to-run
+nondeterminism exceeds the gate" is gone; the spread that remains in the table
+above is seed-to-seed, not run-to-run.
+
+**What changed from the published K1 and what did not.** The mean deltas moved
+(48 was +0.14 dB at 5 seeds, is −0.25 dB at 8; 128 was −0.22 dB, is −0.49 dB) — the
+old numbers came from a pre-determinism-fix control and three fewer seeds, and are
+retracted as measurements. The conclusion is unchanged in substance and softer in
+form: deliberately varying vertex support across a 4× resolution range still does
+not move the parity delta the way the hypothesis requires, and the sweep is still
+too noisy at this seed count to establish any direction. What the re-run adds is a
+price for an answer: ~19–47 seeds per setting, i.e. roughly 2–5× this run's ~3 CPU
+hours per setting, before any single resolution is decided.

@@ -312,3 +312,32 @@ FINAL WHOLE-BRANCH REVIEW (opus): NOT READY -> fixed -> READY WITH FIXES -> clos
   out/ artifacts deliberately NOT edited -- their incomplete command field is
     historical fact; the correction lives in docs naming the authoritative command.
   Final: 662 tests OK (7 skips), ruff clean, 21 commits.
+
+## K1 re-run under the equivalence gate (2026-08-28, follow-on)
+
+User request: "re-run K1 under the new gate". Decisions taken with the user:
+extend the control to the gate's first look rather than splice a control-only
+extension; stop at that first look (n=8) rather than follow the schedule upward.
+
+- examples/r1_kitchen_k1.py: added --gate {equivalence,per-seed}; default is
+  equivalence, DEFAULT_SEEDS is now the first look (0-7), DEFAULT_CONTROL_REPORT
+  points at the 8-seed deterministic control. run_sweep takes binding/gate_rule
+  and calls check_seed_binding_compatibility BEFORE the first training (the old
+  code would have raised after the last one). Report gained gate_rule,
+  gate_schedule, and a per-resolution gate_verdict word so continue/underpowered
+  cannot be read as a fail; console label prints the verdict, not PASS/FAIL.
+- tests: the run_sweep fixture became a module-level helper shared by the
+  per-seed and equivalence binding tests; new tests cover the 8-seed equivalence
+  binding, the pre-training refusal at an off-schedule seed count (asserting no
+  training ran), and that the default seed count is a scheduled look. 665 OK.
+- control: out/r1-parity-kitchen-eq (4 arms x 8 seeds, oidn, ~1.6 h). All three
+  world arms `continue`; means -0.45/-0.49/-1.37 dB.
+- sweep: out/r1-kitchen-parity-k1-eq (5 resolutions x 8 seeds, ~3 h). Every
+  resolution `continue`; rho = -0.30 (permutation p = 0.68), not monotonic.
+  K2-K4 stay unrun -- the stop condition needs a CONFIRMED direction.
+- free determinism check: the sweep's finest128 row is bit-identical per seed to
+  the control run's world_sparse arm from a separate process, so the earlier
+  ~1.5 dB run-to-run variation is resolved by the single-threaded OIDN fix.
+- docs/performance.md: new section at the end; the old K1 section is marked
+  superseded with its per-seed numbers retracted as measurements (its conclusion
+  survives). docs/plans/2026-08-27-kitchen-parity-next-steps.md banner updated.
