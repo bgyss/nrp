@@ -304,14 +304,22 @@ class ImagePool:
             self._next_replace = (self._next_replace + 1) % self.size
 
 
-def build_val_set(cache: PathCache, cfg: dict) -> list[dict]:
+def build_val_set(cache: PathCache, cfg: dict, n_lights: int | None = None) -> list[dict]:
     """Fixed held-out validation set: fresh light configurations from a dedicated RNG
     (never the training RNG, so evaluating cannot perturb pool sampling), each with
     its raw GATHERLIGHT reference (physically grounded) and the denoised one (what
-    the network is supervised with), computed once and reused at every checkpoint."""
+    the network is supervised with), computed once and reused at every checkpoint.
+
+    `n_lights` overrides `cfg["n_val_lights"]` so a caller can build a LARGER
+    held-out set for a promotion gate than the one training validates against,
+    without paying for the larger set at every checkpoint. Lights are drawn one at a
+    time from the same seeded stream, so a larger set is a strict superset of a
+    smaller one -- that is what lets a committed run be re-read at a higher count.
+    """
     val_rng = np.random.default_rng([cfg.get("seed", 0), 0x5EED])
     val_set = []
-    for _ in range(cfg.get("n_val_lights", 12)):
+    count = cfg.get("n_val_lights", 12) if n_lights is None else int(n_lights)
+    for _ in range(count):
         light = sample_light(
             cache, val_rng, cfg["light_type"], cfg["light_bounds"], cfg.get("sampling", "segments")
         )
