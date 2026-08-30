@@ -7,12 +7,17 @@ runner's pure logic (arm-config construction, the per-seed gate, report assembly
 the training path itself is exercised by nrp/torch_backend/train.py's own tests.
 """
 
+import copy
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
+
+from nrp.toy_tracer import trace_path_cache
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -23,6 +28,20 @@ def load_runner():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_r1a_variance():
+    spec = importlib.util.spec_from_file_location(
+        "r1a_variance", ROOT / "examples" / "r1a_variance.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _small_cache():
+    return trace_path_cache(5, 4, spp=2, max_bounces=1, seed=9)
 
 
 class ArmConfigTests(unittest.TestCase):
@@ -343,6 +362,7 @@ def make_args(**overrides):
         max_seeds=48,
         bootstrap_seed=1234,
         bootstrap_resamples=2000,
+        gate_lights=96,
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -384,8 +404,15 @@ class ReproduceCommandTests(unittest.TestCase):
             "--max-seeds",
             "--bootstrap-seed",
             "--bootstrap-resamples",
+            "--gate-lights",
         ):
             self.assertIn(flag, command)
+
+    def test_command_includes_gate_lights_value(self):
+        runner = load_runner()
+        args = make_args(gate_lights=96)
+        command = runner.reproduce_command(args, (0, 1))
+        self.assertIn("--gate-lights 96", command)
 
 
 class SeedBindingCompatibilityTests(unittest.TestCase):
@@ -446,6 +473,140 @@ class GateExitCodeTests(unittest.TestCase):
         runner = load_runner()
         gates = {"world_sparse": {"pass": False, "equivalence": None}}
         self.assertEqual(runner.gate_exit_code(gates), 2)
+
+
+class GateLightsPreRegistrationTests(unittest.TestCase):
+    def test_gate_lights_default_is_pre_registered_at_96(self):
+        runner = load_runner()
+        self.assertEqual(runner.BASE_TRAIN_CONFIG["n_gate_lights"], 96)
+
+    def test_reproduce_command_records_gate_lights(self):
+        import argparse
+
+        runner = load_runner()
+        args = argparse.Namespace(
+            cache="c.npz",
+            out_dir="o",
+            iters=3000,
+            base_resolution=4,
+            finest_resolution=128,
+            denoise_method="oidn",
+            gate="equivalence",
+            max_seeds=8,
+            bootstrap_seed=0,
+            bootstrap_resamples=2000,
+            gate_lights=96,
+        )
+        cmd = runner.reproduce_command(args, (0, 1))
+        self.assertIn("--gate-lights 96", cmd)
+
+
+class FrozenValidationSetGateSizeTests(unittest.TestCase):
+    def test_frozen_sets_honor_an_explicit_gate_light_count(self):
+        """The gate's held-out set is sized by n_gate_lights, not by the
+        training-time n_val_lights -- raising it must not slow training."""
+        runner = load_runner()
+        r1a_variance = load_r1a_variance()
+        cache = _small_cache()
+        base = dict(runner.BASE_TRAIN_CONFIG)
+        base["n_val_lights"] = 2
+        base["denoise"] = {"enabled": False}
+        sets, specs = r1a_variance.build_frozen_validation_sets(cache, base, (0,), n_gate_lights=6)
+        self.assertEqual(len(sets[0]), 6)
+        self.assertEqual(len(specs["0"]), 6)
+        small, _ = r1a_variance.build_frozen_validation_sets(cache, base, (0,))
+        self.assertEqual(len(small[0]), 2)
+        for a, b in zip(small[0], sets[0], strict=False):
+            self.assertEqual(a["light"].to_dict(), b["light"].to_dict())
+
+
+class RunExperimentGateLightsTest(unittest.TestCase):
+    """Regression test for the Critical defect `FrozenValidationSetGateSizeTests`
+    above does not catch: that test calls `build_frozen_validation_sets` directly, a
+    hand-copied mirror of the call `run_experiment` makes at
+    examples/r1_parity.py:463-465. Reverting that call site to drop
+    `n_gate_lights=base_cfg.get("n_gate_lights")` (silently falling back to the
+    training-time `n_val_lights`) leaves every test above green, because none of
+    them ever go through `run_experiment` itself.
+
+    This test drives the real `run_experiment`, with training, model loading, and
+    evaluation monkeypatched to synthetic, near-instant stand-ins -- training four
+    arms for real would take minutes and is exercised independently by
+    nrp/torch_backend/train.py's own tests -- and `build_frozen_validation_sets`
+    replaced with a spy that records the `n_gate_lights` it was actually called
+    with, while still returning a usable fake validation set so `run_experiment`
+    completes. `n_gate_lights` is set to a value that differs from both
+    `n_val_lights` and the 96 default, so a fallback to either would be caught.
+    """
+
+    def test_run_experiment_passes_n_gate_lights_through_to_the_frozen_sets(self):
+        runner = load_runner()
+        n_gate_lights = 20  # != n_val_lights (12) and != the 96 default
+        base_cfg = copy.deepcopy(runner.BASE_TRAIN_CONFIG)
+        base_cfg["n_val_lights"] = 12
+        base_cfg["n_gate_lights"] = n_gate_lights
+        base_cfg["iters"] = 1
+        self.assertNotEqual(n_gate_lights, base_cfg["n_val_lights"])
+
+        recorded_n_gate_lights = []
+
+        def fake_build_frozen_validation_sets(cache, cfg, seeds, n_gate_lights=None):
+            recorded_n_gate_lights.append(n_gate_lights)
+            # Mirrors build_frozen_validation_sets' real fallback (n_val_lights when
+            # n_gate_lights is None) so a reverted call site produces a
+            # DIFFERENT-sized set here too, rather than accidentally still 20.
+            count = n_gate_lights if n_gate_lights is not None else cfg.get("n_val_lights", 12)
+            sets = {}
+            specs = {}
+            for seed in seeds:
+                lights = [{"radius": 0.05 + 0.001 * i} for i in range(count)]
+                sets[seed] = [{"light": light} for light in lights]
+                specs[str(seed)] = lights
+            return sets, specs
+
+        def fake_train(cfg):
+            return {"parameter_count": 1, "iters_per_second": 1.0, "train_seconds": 0.001}
+
+        class _FakeEncoding:
+            def capacity_report(self):
+                return None
+
+        class _FakeModel:
+            encoding = _FakeEncoding()
+
+        def fake_load_trained_model(path, cache):
+            return _FakeModel()
+
+        def fake_evaluate_model(model, cache, val_set):
+            return [{"light": row["light"], "psnr_db_vs_raw": 20.0} for row in val_set]
+
+        cache = _small_cache()
+        with (
+            mock.patch.object(
+                runner, "build_frozen_validation_sets", fake_build_frozen_validation_sets
+            ),
+            mock.patch.object(runner, "train", fake_train),
+            mock.patch.object(runner, "load_trained_model", fake_load_trained_model),
+            mock.patch.object(runner, "evaluate_model", fake_evaluate_model),
+        ):
+            with tempfile.TemporaryDirectory() as out_dir:
+                report = runner.run_experiment(
+                    base_cfg,
+                    cache,
+                    root=ROOT,
+                    out_root=Path(out_dir),
+                    seeds=(0,),
+                    resamples=10,
+                    bootstrap_seed=0,
+                    binding="per_seed",
+                )
+
+        # The spy proves the real call site handed n_gate_lights through (not None,
+        # not n_val_lights) -- this is what a reverted call site would break.
+        self.assertEqual(recorded_n_gate_lights, [n_gate_lights])
+        # The report's own held-out set size confirms the gate actually used the
+        # requested count end to end, not just that the spy received it.
+        self.assertEqual(len(report["validation_specs"]["0"]), n_gate_lights)
 
 
 if __name__ == "__main__":

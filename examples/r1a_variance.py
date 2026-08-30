@@ -239,15 +239,27 @@ def evaluate_model(model: TorchNRP, cache: PathCache, val_set: list[dict]) -> li
 
 
 def build_frozen_validation_sets(
-    cache: PathCache, base_cfg: dict, seeds: tuple[int, ...] | list[int]
+    cache: PathCache,
+    base_cfg: dict,
+    seeds: tuple[int, ...] | list[int],
+    n_gate_lights: int | None = None,
 ) -> tuple[dict[int, list[dict]], dict[str, list[dict]]]:
-    """Build exactly one held-out set per seed for all matrix arms to share."""
+    """Build exactly one held-out set per seed for all matrix arms to share.
+
+    `n_gate_lights` sizes the GATE's held-out set independently of the training-time
+    `n_val_lights`. They are separate because they buy different things: the
+    training set is re-scored at every checkpoint (so it must stay cheap), while the
+    gate set is scored once per (arm, seed) and its size is what sets the precision
+    of the per-seed delta the gate consumes. At 12 lights on Country Kitchen that
+    precision is +/-0.94 dB against a -0.5 dB threshold; see
+    docs/superpowers/plans/2026-08-29-heldout-light-estimator.md.
+    """
     validation_sets = {}
     specs_by_seed = {}
     for seed in seeds:
         cfg = copy.deepcopy(base_cfg)
         cfg["seed"] = seed
-        val_set = build_val_set(cache, cfg)
+        val_set = build_val_set(cache, cfg, n_gate_lights)
         validation_sets[seed] = val_set
         specs = validation_light_specs(val_set, cfg["light_type"])
         specs_by_seed[str(seed)] = specs

@@ -8,7 +8,7 @@ in `docs/plans/2026-07-17-representation-track-design.md`.
 
 | rung | title | status | evidence |
 |---|---|---|---|
-| R1 | World-space encoding at parity | **not promoted (redesigned gate) — no arm clears held-out-camera generalization on all seeds; closed as a characterized negative. Fair-allocation single-view parity now re-measured on two scenes with opposite outcomes: all 3 world arms pass 5/5 on toy 64², none passes on Kitchen 128²; the original allocation-handicap explanation for the Kitchen negative is retracted (see R1 parity re-measurement below). The vertex-support hypothesis offered for the Kitchen negative has since been tested by intervention (K1); the sweep gives no support for the predicted direction and is underpowered to establish either direction: sweeping `world_sparse`'s finest resolution against mean delta gives Spearman +0.20 (p ~ 0.75, n=5, prediction required negative) against per-seed noise comparable to the 0.5 dB effect, and no setting passes the gate, so K2-K4 are cancelled. K1 also found run-to-run nondeterminism (~1.5 dB at a fixed seed) that exceeds the -0.5 dB gate; root cause was the OIDN denoiser (TBB-threaded, not reproducible), now fixed by pinning it to one thread. Kitchen parity has been re-measured under the fixed denoiser (`out/r1-parity-kitchen-det/report.json`): the negative stands and is now reproducible (no arm passes), but the original run's per-seed values, passing-seed sets, and arm ranking are all retracted -- they moved by up to 2.9 dB. Remaining per-seed spread is genuine and exceeds the gate (world3d spans -0.01 to -3.82 dB), so a 5-seed +/-0.5 dB per-seed gate is underpowered on this scene. Promotion on this track uses the equivalence gate from 2026-08-28 (`nrp/experiment_gate.py`, `docs/performance.md#the-equivalence-gate-from-2026-08-28`); every verdict recorded before that date used the per-seed rule, which rejects an at-parity arm 76-91% of the time** | `out/r1-encoding-redesign/report.json`, `out/r1-parity/report.json`, `out/r1-parity-kitchen/report.json`, `out/r1-kitchen-parity-k1/report.json`, `out/r1-parity-kitchen-det/report.json`, `docs/performance.md#kitchen-parity-re-measured-under-the-deterministic-denoiser`, `docs/performance.md#k1-finest-resolution-sweep-does-not-support-the-vertex-support-hypothesis-kitchen-128`, `docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`, `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1`, `docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128` |
+| R1 | World-space encoding at parity | **not promoted (redesigned gate) — no arm clears held-out-camera generalization on all seeds; closed as a characterized negative. That campaign has since been re-read at 96 held-out lights from its committed checkpoints (no retraining, 2026-08-29): it reproduces exactly at the original light count, and at 96 lights the negative survives and strengthens — no arm passes G1/G3/G4, failing rows rise from 83 to 94 of 180, and every arm's mean delta shrinks; its published per-row and per-rotation deltas are retracted as measurements while the closure stands. Fair-allocation single-view parity now re-measured on two scenes with opposite outcomes: all 3 world arms pass 5/5 on toy 64², none passes on Kitchen 128²; the original allocation-handicap explanation for the Kitchen negative is retracted (see R1 parity re-measurement below). The vertex-support hypothesis offered for the Kitchen negative has since been tested by intervention (K1); the sweep gives no support for the predicted direction and is underpowered to establish either direction: sweeping `world_sparse`'s finest resolution against mean delta gives Spearman +0.20 (p ~ 0.75, n=5, prediction required negative) against per-seed noise comparable to the 0.5 dB effect, and no setting passes the gate, so K2-K4 are cancelled. K1 also found run-to-run nondeterminism (~1.5 dB at a fixed seed) that exceeds the -0.5 dB gate; root cause was the OIDN denoiser (TBB-threaded, not reproducible), now fixed by pinning it to one thread. Kitchen parity has been re-measured under the fixed denoiser (`out/r1-parity-kitchen-det/report.json`): the negative stands and is now reproducible (no arm passes), but the original run's per-seed values, passing-seed sets, and arm ranking are all retracted -- they moved by up to 2.9 dB. Remaining per-seed spread is genuine and exceeds the gate (world3d spans -0.01 to -3.82 dB), so a 5-seed +/-0.5 dB per-seed gate is underpowered on this scene. Promotion on this track uses the equivalence gate from 2026-08-28 (`nrp/experiment_gate.py`, `docs/performance.md#the-equivalence-gate-from-2026-08-28`); every verdict recorded before that date used the per-seed rule, which rejects an at-parity arm 76-91% of the time. All per-seed dB numbers above and in the equivalence-gate Kitchen-parity tables were computed with a 12-light held-out estimator whose standard error (~0.94-1.14 dB) exceeded the -0.5 dB gate threshold; re-scoring the same committed checkpoints (no retraining) at 96 held-out lights moves `world_sparse`'s published -0.493 dB to -0.009 dB and drops `seeds_needed` from 18-73 to 14-25 across the three world arms, with every verdict remaining `continue` — see R1 parity re-measurement below and `docs/performance.md#r1-kitchen-parity-re-read-at-96-held-out-lights-2026-08-29`** | `out/r1-encoding-redesign/report.json`, `out/r1-parity/report.json`, `out/r1-parity-kitchen/report.json`, `out/r1-kitchen-parity-k1/report.json`, `out/r1-parity-kitchen-det/report.json`, `out/r1-parity-kitchen-eq/rescore-96.json`, `docs/performance.md#kitchen-parity-re-measured-under-the-deterministic-denoiser`, `docs/performance.md#k1-finest-resolution-sweep-does-not-support-the-vertex-support-hypothesis-kitchen-128`, `docs/superpowers/specs/2026-08-26-world-anchored-encoding-redesign-design.md`, `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1`, `docs/performance.md#r1-fair-allocation-parity-re-measurement-toy-64-and-kitchen-128`, `out/r1-encoding-redesign/rescore-96.json`, `docs/performance.md#encoding-redesign-campaign-re-read-at-96-held-out-lights-2026-08-29` |
 | R1 follow-up | Provenance, collision, and tri-plane diagnosis | **done — candidate not promoted**: tri-plane passes on 2/3 seeds, but fails the unchanged per-seed gate | `out/r1-followup/report.json`, `docs/plans/2026-07-27-r1-next-experiments.md` |
 | R1A | Five-seed variance decomposition | **candidate only**: target-scale world tri-plane passes all 5 original Kitchen seeds; the other three crossed world-policy arms do not | `out/r1a/report.json`, `examples/r1a_variance.py` |
 | R1 promotion audit | R1C coordinate robustness + R1E independent scene | **not promoted — corrected R1C and R1E both contain binding failures** | `out/r1-promotion/report.json`, `examples/r1_promotion.py` |
@@ -237,6 +237,46 @@ blocked on R1. Full per-row numbers, the rotation table, and the G2 capacity
 accounting are in
 `docs/performance.md#world-anchored-encoding-redesign-representation-track-rung-r1`.
 
+### Encoding-redesign campaign re-read at 96 held-out lights (2026-08-29)
+
+Every per-row number in this section was produced by one draw of 8 held-out lights
+(`N_EVAL_LIGHTS`), rendered as a single image, and then judged against a 1.0 dB
+margin — with ≈1.9 dB of row-to-row spread. That is the same defective-estimator
+problem the R1 parity re-read below records, applied to the campaign that closed
+R1. The campaign's 165 committed checkpoints have now been re-scored against 96
+held-out lights, as twelve independent draws of the campaign's own 8-light
+configuration so the estimand is unchanged (`rescore_encoding_redesign` in
+`examples/rescore_checkpoints.py`, which imports the campaign's own camera arc,
+cache/camera/**light** rotation, per-seed PSNR peak, model reload and gate
+functions rather than reimplementing them). **Nothing was retrained.** Re-scoring
+at the original count reproduces all 180 committed rows to 6 decimal places
+before any 96-light number is quoted.
+
+| arm | rows failing G1, 8 lights | rows failing G1, 96 lights | mean Δ, 8 (dB) | mean Δ, 96 (dB) | seeds passing G3, 96 |
+|---|---:|---:|---:|---:|---:|
+| `world_sparse` | 24/60 | 24/60 | +1.88 | +1.41 | 0/5 |
+| `world_normal_triplane` | 29/60 | 32/60 | +1.40 | +1.08 | 0/5 |
+| `world3d` | 30/60 | 38/60 | +1.41 | +0.99 | 0/5 |
+
+**The negative survives, and is now a stronger statement.** No arm passes G1, G3
+or G4 at 96 lights; `stop_reason` is byte-identical to the committed one; the 15 dB
+absolute floor is still non-binding (all 94 failures are `below_delta_threshold`);
+and every arm's advantage over `pixel2d` shrinks rather than grows. Of the 83
+originally-failing rows 59 still fail, while 35 previously-passing rows now fail —
+churn that is itself the evidence of how noisy the original instrument was: the
+per-row delta standard error is 0.385 dB across twelve groups, i.e. ≈1.33 dB on a
+single 8-light draw, larger than the 1.0 dB margin each row was judged against.
+
+`world_sparse`'s frame-robustness finding survives (per-rotation means flat to
+within 0.10 dB). The per-row deltas, per-rotation means and per-arm means
+published above are **retracted as measurements of the arms** and superseded by
+`out/r1-encoding-redesign/rescore-96.json` — `world3d`'s +2.42 dB at 0° reads
++1.44 dB — but every conclusion drawn from them here is unchanged. Per gate spec,
+no threshold widening, seed drop, arm addition or rotation-set change follows.
+Full tables:
+`docs/performance.md#encoding-redesign-campaign-re-read-at-96-held-out-lights-2026-08-29`.
+
+
 ## R1 parity re-measurement
 
 The redesign above re-specified promotion around held-out-camera generalization
@@ -308,6 +348,29 @@ the monotonic capacity-to-worse ordering on Kitchen, but it has not been tested
 by an intervention that would falsify it. `docs/plans/2026-08-27-kitchen-parity-next-steps.md`
 proposes that test.
 
+**All Kitchen per-seed dB numbers above (the Kitchen 128² parity re-measurement,
+under the unchanged original R1 gate) and in the K1/equivalence-gate tables in
+`docs/performance.md` (pre-2026-08-29) were computed with a 12-light held-out
+estimator.** This is Kitchen-specific: the ~0.94–1.14 dB standard error was
+measured on Kitchen's per-light delta spread and was never measured on the toy
+64² scene, whose 5/5-seed pass results above are a separate measurement this
+retraction does not cover. On Kitchen the per-light delta spread is large
+enough that this estimator's standard error exceeds the −0.5 dB gate
+threshold — comparable in size to the effect the gate exists to detect.
+`world_sparse`'s
+Kitchen-parity mean is the sharpest example: at 12 lights it is −0.493 dB; the
+same eight `out/r1-parity-kitchen-eq/` checkpoints, re-scored (no retraining) at
+96 held-out lights with `examples/rescore_checkpoints.py`, give −0.009 dB. See
+`docs/performance.md#r1-kitchen-parity-re-read-at-96-held-out-lights-2026-08-29`
+for the full comparison table (`out/r1-parity-kitchen-eq/rescore-96.json`, with
+`out/r1-parity-kitchen-eq/rescore-12.json` confirming the re-scorer reproduces
+`out/r1-parity-kitchen-eq/report.json` exactly at the original light count).
+This retracts the 12-light numbers **as measurements of the arms**, not as
+measurements — they still correctly report what a 12-light estimator saw. All
+three equivalence-gate verdicts remain `continue` at 96 lights; nothing above is
+promoted by this re-read. What changes is how many seeds a decision needs: 18–73
+at 12 lights, 14–25 at 96.
+
 ## R2 implementation and pilot
 
 The R2 machinery is implemented and measured, but the rung is not promoted because
@@ -349,8 +412,8 @@ UV_CACHE_DIR=.uv-cache uv run python examples/r1_worldgrid.py --devices cpu mps
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_failure_analysis.py --reuse
 UV_CACHE_DIR=.uv-cache uv run python examples/r1a_variance.py --seeds 0 1 2 3 4 --denoise-method oidn
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_promotion.py --second-cache out/r1-promotion/bedroom_cache.npz --second-scene Bedroom --gather-backend numpy --denoise-method oidn --workers 2
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --gate per-seed
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 --gate per-seed
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --gate per-seed --gate-lights 12
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 --gate per-seed --gate-lights 12
 mise run test
 mise run lint
 mise run pipeline-audit

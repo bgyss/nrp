@@ -3076,7 +3076,7 @@ each arm is sized by how many grid vertices it actually needs, `pixel2d` include
 ### Toy 64² — all three world arms pass
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --gate per-seed
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --gate per-seed --gate-lights 12
 ```
 
 | arm | per-seed Δ vs `pixel2d` (dB) | mean (dB) | 95% CI (dB) | seeds passing −0.5 dB |
@@ -3106,7 +3106,7 @@ parameters-only figures:
 ### Kitchen 128² — no arm passes
 
 ```sh
-UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 --gate per-seed
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 --gate per-seed --gate-lights 12
 ```
 
 The control was verified to reproduce `examples/kitchen_torch.json` exactly:
@@ -3359,7 +3359,7 @@ Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
   --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-det \
   --seeds 0 1 2 3 4 --iters 3000 --finest-resolution 128 --base-resolution 4 \
-  --denoise-method oidn --gate per-seed
+  --denoise-method oidn --gate per-seed --gate-lights 12
 ```
 
 Note: the `command` field recorded inside `out/r1-parity-kitchen-det/report.json`,
@@ -3500,7 +3500,7 @@ Hardware: Apple M1 Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU.
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
   --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-eq \
   --iters 3000 --finest-resolution 128 --base-resolution 4 \
-  --denoise-method oidn --gate equivalence --max-seeds 8
+  --denoise-method oidn --gate equivalence --max-seeds 8 --gate-lights 12
 
 # the sweep itself
 UV_CACHE_DIR=.uv-cache uv run python examples/r1_kitchen_k1.py \
@@ -3564,3 +3564,339 @@ not move the parity delta the way the hypothesis requires, and the sweep is stil
 too noisy at this seed count to establish any direction. What the re-run adds is a
 price for an answer: ~19–47 seeds per setting, i.e. roughly 2–5× this run's ~3 CPU
 hours per setting, before any single resolution is decided.
+
+### K1 sweep re-read at 96 held-out lights (2026-08-29)
+
+The K1 `finest_resolution` sweep above (`out/r1-kitchen-parity-k1-eq/report.json`)
+was also scored against only 12 held-out lights — the same estimator whose ±0.94 dB
+standard error is the reason the R1 Kitchen parity re-read below exists. Task 7
+extends `examples/rescore_checkpoints.py` with `rescore_sweep`, which re-scores the
+sweep's 40 committed checkpoints (5 `finest_resolution` settings x 8 seeds, `train/
+finest<N>/seed<S>/model.pt`) against the same 96-light held-out set used above,
+reloading the fixed `pixel2d` control from `out/r1-parity-kitchen-eq/train/pixel2d/`
+for every seed rather than reusing its previously-published numbers, since those
+were scored at a different light count. No checkpoint was retrained.
+
+```sh
+nix develop --command uv run python examples/rescore_checkpoints.py \
+  --sweep-dir out/r1-kitchen-parity-k1-eq --control-dir out/r1-parity-kitchen-eq \
+  --cache out/kitchen/path_cache.npz --resolutions 32 48 64 96 128 \
+  --gate-lights 96 --out out/r1-kitchen-parity-k1-eq/rescore-96.json
+```
+
+`rescore_sweep(..., n_gate_lights=12)` reproduces the committed
+`out/r1-kitchen-parity-k1-eq/report.json` per-resolution per-seed deltas exactly
+(`assertAlmostEqual(..., places=6)`, `tests/test_rescore_checkpoints.py`) before
+its 96-light output is trusted.
+
+| `finest_resolution` | mean Δ, 12 lights (dB) | seeds needed, 12 | mean Δ, 96 lights (dB) | sd, 96 | light SEM, 96 | verdict, 96 | seeds needed, 96 |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 32 | −0.409 | 46 | **−0.025** | 0.524 | 0.323 | `continue` | 13 |
+| 48 | −0.248 | 22 | **+0.036** | 0.598 | 0.315 | `continue` | 16 |
+| 64 | −0.580 | 19 | **+0.021** | 0.376 | 0.395 | `pass` | 9 |
+| 96 | −0.381 | 47 | **+0.138** | 0.687 | 0.351 | `continue` | 19 |
+| 128 | −0.493 | 34 | **−0.009** | 0.631 | 0.298 | `continue` | 17 |
+
+The "sd, 96" column is `between_seed_sd_db` (population sd, ddof=0), which is
+what this table publishes for every resolution; the equivalence gate's own CI
+is built from the sample sd (ddof=1), which runs slightly higher — 0.402 vs.
+0.376 for `finest64`, the row where the gap is load-bearing (§ below). A reader
+recomputing the gate from this table should use the gate's own `std_db`
+(`rescore-96.json`), not this column.
+
+Every mean delta moves toward (and mostly across) zero, the same pattern seen for
+the R1 parity control's `world_sparse` arm below — because it *is* the same eight
+`finest128` checkpoints, since the K1 sweep's 128 row and the parity control's
+`world_sparse` arm are bit-identical. `finest64` newly reads `pass` at 96 lights
+(CI lower bound −0.4958 dB, just above the −0.5 dB threshold) — the only setting
+to clear the gate at either light count, and only by re-reading it more precisely,
+not by retraining or relaxing anything.
+
+**This single `pass` is not evidence that `finest_resolution=64` is at parity
+with `pixel2d`**, for four reasons, all checkable in `rescore-96.json`:
+
+- *Uncorrected multiplicity.* `finest64` is one of five pre-registered settings,
+  and it is the one being highlighted because it is the one that passed. The
+  equivalence-gate section above already flags this exact situation as
+  uncorrected (`docs/performance.md#the-equivalence-gate-from-2026-08-28`,
+  "multiplicity across arms... a future 'promote whichever of N arms passes'
+  selection would need its own correction"). Each look's one-sided false-pass
+  rate is the gate's per-look two-sided α (0.05/6 ≈ 0.00833) halved, ≈0.42%.
+  All five settings were in fact read at one look each (`looks_taken: 1` for
+  every resolution in `rescore-96.json`), so the realized family-wise
+  false-parity rate is 1 − (1 − 0.0042)^5 ≈ 2.1% against a nominal 5% budget —
+  not the ~0.42% a reader would assume from a single arm's gate. (If every
+  setting had instead run its full six-look schedule — which is not what
+  happened here — each arm's own cumulative one-sided false-pass budget over
+  all six looks is ≈2.5% (half the schedule's overall two-sided α = 0.05, by
+  construction of the α-split), not the ≈0.42% single-look figure; across five
+  such arms the family-wise rate would reach 1 − (1 − 0.025)^5 ≈ 11–12%. That
+  number is the design's ceiling, not this run's realized rate.)
+- *It is not the best mean.* `finest64`'s mean delta (+0.021 dB) is the median
+  of the five settings, not the best — `finest96` has the best mean (+0.138 dB).
+  `finest64` clears the gate only because its sample sd (0.402) is the smallest
+  of the five (others: 0.560–0.735), not because its estimate is closer to
+  parity. Substituting the pooled sample sd across all five settings (0.613,
+  computed as the RMS of the five `std_db` values) into every setting's CI, no
+  setting passes, and `finest64` is not even the closest to the threshold under
+  that pooled sd — `finest96` is (CI lower ≈ −0.650 dB vs. `finest64`'s
+  ≈ −0.767 dB, both against the −0.5 dB threshold).
+- *The margin is small.* The CI lower bound is −0.4958 dB against a −0.5 dB
+  threshold — a margin of 0.0042 dB. The verdict flips to `continue` if the
+  sample sd rises by less than 1% (≈0.82%, from 0.402 to 0.405), and at n = 8
+  the sample sd's own sampling spread is on the order of tens of percent.
+- *The light count itself was chosen after seeing related data.* 96 was picked
+  after observing its effect on the encoding-redesign campaign's numbers (the
+  plan's own "Measured evidence" table), not fixed in advance of any data from
+  this branch's re-reads. The estimator is unbiased at any held-out light
+  count `n`, and the stated rationale for 96 (driving the light-sampling SEM
+  below the −0.5 dB effect size) does not depend on which arm passes — so this
+  is a scoping note about how the count was selected, not a retraction of the
+  `finest64` reading itself.
+
+The resolution-vs-mean-delta rank correlation, recomputed the same way as the
+committed report (`examples.r1_kitchen_k1.spearman`, two-sided permutation p over
+all 120 orderings of the 5 resolutions): **ρ = +0.30** (82/120 permutations have
+`|ρ_perm| ≥ |ρ_obs|`, p ≈ 0.683). This matches the magnitude of the second prior
+reading (−0.30 at the 8-seed equivalence-gate re-run) but not the first (+0.20 at
+the original per-seed gate) — 0.20 ≠ 0.30 — and has flipped sign again relative
+to the second reading, using the *same* eight checkpoints per resolution as the
+12-light reading, just scored against a wider light sample. The sequence is
+still not monotonic in resolution. A rank correlation whose sign flips between
+two measurements of the identical checkpoints, at p ≈ 0.68 either way, is not
+evidence of a trend in either direction; it is the sampling noise the estimator
+was too coarse to average out at 8 seeds.
+
+**Reading against K1's stop condition** (unchanged: K2–K4 run only if K1
+*confirms* a negative resolution-vs-delta correlation): ρ = +0.30 is not
+negative, so this reading does not confirm the hypothesis — but p ≈ 0.68 is far
+from the significance a "confirmed positive/flat" falsifier would need either,
+so this is not a confirmed refutation on new evidence. **The sweep remains
+undecided** at 96 lights, same as its 12-light reading; only the light-sampling
+noise floor came down, not the seed-sampling noise the correlation is computed
+over. Per-setting `seeds_needed` at 96 lights is 9–19 (down from 19–47 at 12
+lights, before `finest64`'s new `pass`), against the unchanged 8-seed schedule.
+K2–K4 stay cancelled under the existing stop condition; whether to spend the
+additional seeds a decisive read would need is left to the reader, not decided
+here by widening the gate, dropping a seed, or adding an arm.
+
+The committed sweep's pre-registered `falsifier` field, taken literally, reads
+"a flat (|rho| small) or positive correlation refutes the vertex-support
+hypothesis as stated" — with no significance qualifier, so a literal reading of
+ρ = +0.30 would call this a refutation, not an "undecided". This section instead
+applies the significance-qualified reading used throughout the equivalence-gate
+work (an unsignificant positive correlation, p ≈ 0.68, is neither a confirmation
+nor a refutation), which is the more conservative choice: refuting on an
+unsignificant statistic would let sampling noise cancel K2–K4 as readily as it
+could have confirmed them, and the whole point of the 2026-08-28 gate rework was
+to stop treating noise as decisions in either direction.
+
+Evidence: `out/r1-kitchen-parity-k1-eq/rescore-96.json` (96-light re-read),
+`out/r1-kitchen-parity-k1-eq/report.json` (unmodified committed sweep),
+`out/r1-parity-kitchen-eq/report.json` (unmodified committed control). Runner:
+`examples/rescore_checkpoints.py::rescore_sweep`.
+
+## R1 Kitchen parity re-read at 96 held-out lights (2026-08-29)
+
+Any `r1_parity` reproduce command shown earlier in this document, or in
+`docs/representation-track.md`, that predates 2026-08-29 needs `--gate-lights 12`
+appended to reproduce its published numbers — the flag's default changed to 96
+as part of this re-read, and running an old command string without it silently
+scores against a different held-out light count.
+
+The gate's per-seed value above is a mean over only 12 held-out lights. On this
+scene the per-light delta standard deviation is large enough that the resulting
+light-sampling standard error (~0.94–1.14 dB) exceeds the −0.5 dB effect the gate
+must resolve — which is a large part of why the R1 Kitchen parity control above
+reads `continue` at 34–73 seeds needed. `examples/rescore_checkpoints.py`
+(evaluation-only; trains nothing) re-scores the same eight committed `model.pt`
+checkpoints in `out/r1-parity-kitchen-eq/` against a larger held-out light set —
+`build_val_set` draws lights one at a time from a fixed RNG, so a larger count
+extends the committed 12-light draw rather than replacing it.
+
+```sh
+nix develop --command uv run python examples/rescore_checkpoints.py \
+  --run-dir out/r1-parity-kitchen-eq --cache out/kitchen/path_cache.npz \
+  --gate-lights 96 --out out/r1-parity-kitchen-eq/rescore-96.json
+```
+
+No checkpoint was retrained. The 12-light re-read
+(`out/r1-parity-kitchen-eq/rescore-12.json`) reproduces the committed
+`out/r1-parity-kitchen-eq/report.json` exactly — same per-seed deltas, same
+means, same `seeds_needed` — confirming the re-scorer before trusting its
+96-light output.
+
+| arm | mean Δ, 12 lights (dB) | seeds needed, 12 | mean Δ, 96 lights (dB) | sd, 96 | light SEM, 96 | seeds needed, 96 |
+|---|---:|---:|---:|---:|---:|---:|
+| `world_sparse` | −0.493 | 34 | **−0.009** | 0.631 | 0.298 | 17 |
+| `world_normal_triplane` | −0.446 | 18 | −0.416 | 0.556 | 0.319 | 14 |
+| `world3d` | −1.368 | 73 | −0.674 | 0.803 | 0.320 | 25 |
+
+The "sd, 96" column is `between_seed_sd_db` (population sd, ddof=0); the
+equivalence gate's own CI is built from the sample sd (ddof=1), which runs
+slightly higher. A reader recomputing a CI from this table should use the
+gate's own `std_db` (`rescore-96.json`), not this column.
+
+All three verdicts remain `continue` at 96 lights — **nothing is promoted by this
+re-read**. What moves is how far each arm is from a decision: the seed count
+needed to resolve the equivalence gate drops from 18–73 (12-light estimator) to
+14–25 (96-light estimator), because the wider light sample cuts the noise the
+gate has to see through, not because the arms changed.
+
+`world_sparse` is the sharpest instance: its published −0.493 dB is retracted
+**as a measurement of the arm** — it stands only as a measurement made with a
+12-light estimator, whose ±0.94 dB standard error was too wide to distinguish
+−0.49 dB from 0 dB in the first place. The same eight checkpoints, read against
+96 lights instead of 12, give −0.009 dB. This is not evidence that `world_sparse`
+is at parity with `pixel2d` — the 96-light verdict is still `continue`, and 17
+more seeds are needed to say so with confidence — it is evidence that the
+12-light number was mostly sampling noise.
+
+The cost asymmetry is why this re-read is free: re-scoring all four arms at 96
+lights costs ~16 s/seed of additional forward-pass evaluation, against ~548
+s/seed to train one checkpoint. Re-reading a committed run at a larger held-out
+light count is strictly cheaper than deciding whether to retrain it.
+
+Evidence: `out/r1-parity-kitchen-eq/rescore-96.json` (96-light re-read),
+`out/r1-parity-kitchen-eq/rescore-12.json` (12-light reproduction check),
+`out/r1-parity-kitchen-eq/report.json` (unmodified committed run). Runner:
+`examples/rescore_checkpoints.py`.
+
+## Encoding-redesign campaign re-read at 96 held-out lights (2026-08-29)
+
+The held-out-camera campaign that closed R1 as a characterized negative
+(§"World-anchored encoding redesign" above) was read with the same class of
+estimator the two re-reads above corrected. Its 1.0 dB comparative margin is
+applied per row, and each row is a *single* image lit by one draw of 8 held-out
+lights (`N_EVAL_LIGHTS` in `examples/r1_encoding_redesign.py`; the `n_val_lights`
+values of 4 and 12 in that file are the training runs' own validation sets and
+never reach a gate row). Against ≈1.9 dB of row-to-row spread, a row's verdict was
+decided by one light draw. This section re-reads the campaign's 165 committed
+checkpoints against 96 held-out lights. **Nothing was retrained.**
+
+**What "96 lights" means here, and what it deliberately does not.** Unlike the
+`r1_parity` schema — where the val set is scored one light per row — this campaign
+sums its 8 lights into one rendered image. Scoring one image lit by 96 emitters
+would be a *different physical configuration*, not a lower-variance estimate of the
+same one, so it would change the estimand. Instead the extra budget buys twelve
+independent draws of the campaign's own 8-light configuration
+(`redesign_light_groups`), each scored exactly as the campaign scores its single
+group — same `campaign_peak` recipe per group, same rotation handling — and the
+row's delta is the mean of the twelve. The estimand is unchanged; only the number
+of samples of it goes up. Because `frozen_lights` draws lights one at a time from
+`default_rng([seed, 0xE1C0DE])`, group 0 *is* the committed campaign's light set.
+
+```sh
+nix develop --command uv run python examples/rescore_checkpoints.py \
+  --redesign-dir out/r1-encoding-redesign --gate-lights 96 \
+  --out out/r1-encoding-redesign/rescore-96.json
+```
+
+**Reproduction check first.** Re-scoring at the original count
+(`--gate-lights 8`, one group) reproduces the committed
+`out/r1-encoding-redesign/report.json` exactly: all **180 rows across all three
+arms** match on `psnr_db`, `baseline_psnr_db`, `delta_db`,
+`out_of_occupancy_fraction`, both occupancy-split PSNRs and `baseline_camera` to
+6 decimal places, all five per-seed PSNR peaks match, and the G1/G3/G4 summaries
+and `stop_reason` are identical. `tests/test_rescore_checkpoints.py` carries a
+fast one-seed/one-rotation slice of that check; the full 180-row version was run
+out of band (~95 s). The re-scorer imports the campaign's own `camera_arc`,
+`rotated_caches`, `rotated_camera`, `rotated_lights`, `campaign_peak`,
+`load_conditioned_model`, `evaluate_camera` and gate functions rather than
+reimplementing them — in particular `rotated_lights`, whose absence invalidated
+campaign run 2.
+
+**Gate results at 96 lights, against the committed 8-light reading:**
+
+| arm | mean Δ, 8 (dB) | mean Δ, 96 (dB) | worst Δ, 96 (dB) | std, 96 (dB) | rows failing G1, 8 | rows failing G1, 96 | seeds passing G3, 96 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `world_sparse` | +1.880 | **+1.412** | −1.624 | 1.421 | 24/60 | **24/60** | 0/5 |
+| `world_normal_triplane` | +1.399 | **+1.079** | −1.592 | 1.599 | 29/60 | **32/60** | 0/5 |
+| `world3d` | +1.409 | **+0.992** | −1.777 | 1.463 | 30/60 | **38/60** | 0/5 |
+
+The "std, 96 (dB)" column is `between_seed_sd_db` (population sd, ddof=0), the
+same convention used by the "sd, 96" columns above; the equivalence gate's own
+CI is built from the sample sd (ddof=1), which runs slightly higher. A reader
+recomputing a CI from this table should use the gate's own `std_db`, not this
+column.
+
+`stop_reason` at 96 lights is byte-identical to the committed one: "no arm passed
+G1 across all seeds, cameras, and orientations (world3d, world_normal_triplane,
+world_sparse); close as a characterized negative with the G5 decomposition."
+`promoted: false`. G4 fails for all three arms, and the 15 dB absolute floor is
+still non-binding — every one of the 94 failing rows fails for
+`below_delta_threshold` alone, and the dimmest row at 96 lights is 19.60 dB.
+
+**Of the 83 previously-failing rows, 59 still fail at 96 lights.** The rest of the
+churn goes the other way: 35 rows that passed at 8 lights now fail, so the total
+failing-row count rises from 83 to 94.
+
+| arm | previously failing | still failing | 0° | 90° | 180° |
+|---|---:|---:|---:|---:|---:|
+| `world_sparse` | 24 | 14 | 4/6 | 6/10 | 4/8 |
+| `world_normal_triplane` | 29 | 22 | 4/6 | 7/9 | 11/14 |
+| `world3d` | 30 | 23 | 4/6 | 10/12 | 9/12 |
+| **all arms** | **83** | **59** | 12/18 | 23/31 | 24/34 |
+
+**Per-rotation means at 96 lights** (compare §"G4 — rotation breakdown" above):
+
+| arm | 0° | 90° | 180° |
+|---|---:|---:|---:|
+| `world_sparse` | +1.46 | +1.37 | +1.41 |
+| `world_normal_triplane` | +1.68 | +0.94 | +0.62 |
+| `world3d` | +1.44 | +0.80 | +0.73 |
+
+`world_sparse`'s frame-robustness finding survives (flat to within 0.10 dB across
+rotations), and both hashed arms still degrade with rotation. What does *not*
+survive as a measurement is `world3d`'s published +2.42 dB at 0°: it reads +1.44 dB
+at 96 lights. Every arm's published mean delta shrinks by 0.32–0.47 dB, and
+`world3d`'s 0° mean by 0.98 dB, so the campaign's per-rotation and per-arm mean
+deltas are retracted as measurements of the arms and stand only as measurements
+made with an 8-light estimator.
+
+**How noisy the original per-row instrument was.** The mean per-row standard error
+of the delta across the twelve groups is 0.385 dB (`delta_sem_db` in
+`rescore-96.json`; max 1.04 dB), which implies ≈1.33 dB on a single 8-light group —
+larger than the 1.0 dB threshold each row was judged against. That is the defect,
+stated in the campaign's own units: the original gate decided each row with a
+measurement whose noise exceeded the margin it was testing. It is also why 35 rows
+flipped to failing and 24 flipped to passing without any model changing.
+
+**The per-row verdict is still noisy at 96 lights, and the campaign's verdict is
+still robust to it.** Only 10/19/19 rows (`world_sparse` / `world_normal_triplane`
+/ `world3d`) fail by more than 2 SEM, and 22/17/12 pass by more than 2 SEM; the
+remainder sit within noise of the 1.0 dB line, so individual row labels should not
+be read as findings. The *campaign* verdict does not depend on them: promotion
+requires all 60 of an arm's rows to clear +1.0 dB, and each arm's worst row sits at
+−1.6 to −1.8 dB, 4.2–8.6 SEM below the line. Every seed of every arm contributes
+at least one failing row: the worst per-seed delta is negative in 10 of the 15
+arm×seed cells and never exceeds +0.53 dB in the other five. No plausible
+re-reading of the light draw turns any arm into a pass.
+
+**G5 is unchanged in substance.** For `world_sparse`, mean out-of-occupancy query
+fraction is 0.45% (identical — it does not depend on the lights), and
+out-of-occupancy PSNR is still slightly *higher* than in-occupancy PSNR (24.04 vs
+23.15 dB at 96 lights, against 24.44 vs 23.46 dB at 8). The sparse fallback is
+still not the limiting factor.
+
+**Verdict: the campaign's negative survives the estimator fix, and is now a
+stronger statement than it was.** R1 stays closed as a characterized negative.
+Under a 12× larger held-out light sample, no arm passes G1, G3 or G4; the
+failing-row count goes up rather than down; and every arm's advantage over the
+`pixel2d` baseline shrinks. The individual per-row deltas, per-rotation means and
+per-arm means published for this campaign are retracted as measurements and
+superseded by `rescore-96.json`; the conclusion they were used to support is not.
+Per gate spec, no threshold widening, seed drop, arm addition, or rotation-set
+change follows from this re-read.
+
+Schema note: `rescore-96.json` stores `peak_by_seed` as a list per seed (one
+peak per light group, 12 entries) where the original `report.json` stores a
+scalar; this is correct, not a divergence to chase — group 0 is the committed
+campaign's own light set (see above), and its peak matches the committed
+scalar for all 5 seeds to 1e-9.
+
+Evidence: `out/r1-encoding-redesign/rescore-96.json` (96-light re-read),
+`out/r1-encoding-redesign/report.json` (unmodified committed run),
+`out/r1-encoding-redesign/report-INVALID-unrotated-lights.json` (unmodified,
+preserved run 2). Runner:
+`examples/rescore_checkpoints.py::rescore_encoding_redesign`.

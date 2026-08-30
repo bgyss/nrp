@@ -119,7 +119,17 @@ _STRICT_TRAINING_CONFIG_KEYS = (
     "light_type",
     "light_bounds",
     "n_val_lights",
+    # The gate's held-out light count sets the precision of every per-seed delta in
+    # the report. A sweep read against a control scored at a different count would
+    # silently attribute an estimator difference to the swept resolution.
+    "n_gate_lights",
 )
+
+#: Controls written before `n_gate_lights` existed were all scored at 12 lights, so
+#: absence means 12 rather than "unknown". Comparing a bare `.get()` would make every
+#: committed control incompatible with every run, including the 12-light re-reads
+#: whose whole purpose is to reproduce those controls exactly.
+_LEGACY_TRAINING_CONFIG_DEFAULTS = {"n_gate_lights": 12}
 
 #: `world_sparse`'s level count in the parity arm definition. Recorded here only so the
 #: vertex-support diagnostic describes the same ladder the swept arm actually queries;
@@ -168,8 +178,8 @@ def check_control_compatibility(
     Returns the control's provenance for the report. Raises on a mismatch: a control
     trained on a different cache, on a different base resolution, or (when
     `run_training_config` is given) differing in any of `_STRICT_TRAINING_CONFIG_KEYS`
-    (pool, lr, batch_pixels, model, sampling, light_type, light_bounds, n_val_lights)
-    is not a valid fixed baseline for these runs no matter how convenient the numbers
+    (pool, lr, batch_pixels, model, sampling, light_type, light_bounds, n_val_lights,
+    n_gate_lights) is not a valid fixed baseline for these runs no matter how convenient the numbers
     look -- a control built with a different pool size, lr, batch_pixels, or model
     width would otherwise compare cleanly and silently attribute a training-config
     difference to the swept resolution. `iters` and `denoise` are intentionally NOT
@@ -189,8 +199,9 @@ def check_control_compatibility(
     control_training_config = control_report.get("training_config") or {}
     if run_training_config is not None:
         for key in _STRICT_TRAINING_CONFIG_KEYS:
-            control_value = control_training_config.get(key)
-            run_value = run_training_config.get(key)
+            missing = _LEGACY_TRAINING_CONFIG_DEFAULTS.get(key)
+            control_value = control_training_config.get(key, missing)
+            run_value = run_training_config.get(key, missing)
             if control_value != run_value:
                 raise ValueError(
                     f"control report's training_config[{key!r}] is {control_value!r}, "
@@ -510,7 +521,16 @@ def main() -> None:
         choices=["bilateral", "oidn"],
         help="Pool/validation-target denoiser; must match the fixed control's (oidn).",
     )
+    parser.add_argument(
+        "--gate-lights",
+        type=int,
+        default=BASE_TRAIN_CONFIG["n_gate_lights"],
+        help="held-out lights per seed for the parity gate (default 96); must match "
+        "the fixed control's, checked via _STRICT_TRAINING_CONFIG_KEYS.",
+    )
     args = parser.parse_args()
+    if args.gate_lights <= 0:
+        raise SystemExit(f"--gate-lights must be positive, got {args.gate_lights}")
     binding = args.gate.replace("-", "_")
     gate_rule = EquivalenceGate()
 
@@ -544,11 +564,18 @@ def main() -> None:
         raise SystemExit("--bootstrap-resamples must be positive")
 
     control_cache = _relative_path(cache_path, root)
+    # n_gate_lights is CLI-configurable (--gate-lights), unlike the rest of
+    # _STRICT_TRAINING_CONFIG_KEYS, so the strict check must compare against this
+    # run's actual value rather than the static BASE_TRAIN_CONFIG default -- exactly
+    # how --iters and --denoise-method are compared against `args` below, not the
+    # static default.
+    run_training_config = dict(BASE_TRAIN_CONFIG)
+    run_training_config["n_gate_lights"] = args.gate_lights
     control = check_control_compatibility(
         control_report,
         cache=control_cache,
         base_resolution=args.base_resolution,
-        run_training_config=BASE_TRAIN_CONFIG,
+        run_training_config=run_training_config,
     )
     control["report"] = _relative_path(control_path, root)
     control_by_seed = control_metrics_by_seed(control_report, seeds)
@@ -576,8 +603,11 @@ def main() -> None:
     base_cfg["denoise"]["method"] = args.denoise_method
     if args.denoise_method == "oidn":
         base_cfg["denoise"].pop("radius", None)
+    base_cfg["n_gate_lights"] = args.gate_lights
 
-    validation_sets, validation_specs = build_frozen_validation_sets(cache, base_cfg, seeds)
+    validation_sets, validation_specs = build_frozen_validation_sets(
+        cache, base_cfg, seeds, n_gate_lights=base_cfg.get("n_gate_lights")
+    )
     fingerprints = {
         str(seed): validation_fingerprint(validation_specs[str(seed)]) for seed in seeds
     }
@@ -625,7 +655,8 @@ def main() -> None:
                 f"--seeds {' '.join(str(seed) for seed in seeds)} "
                 f"--resolutions {' '.join(str(res) for res in resolutions)} "
                 f"--iters {args.iters} --base-resolution {args.base_resolution} "
-                f"--denoise-method {args.denoise_method} --gate {args.gate}"
+                f"--denoise-method {args.denoise_method} --gate {args.gate} "
+                f"--gate-lights {args.gate_lights}"
             ),
             "cache": control_cache,
             "resolution": [cache.width, cache.height],

@@ -341,3 +341,228 @@ extension; stop at that first look (n=8) rather than follow the schedule upward.
 - docs/performance.md: new section at the end; the old K1 section is marked
   superseded with its per-seed numbers retracted as measurements (its conclusion
   survives). docs/plans/2026-08-27-kitchen-parity-next-steps.md banner updated.
+
+# SDD progress — held-out-light estimator (2026-08-29)
+
+Plan: docs/superpowers/plans/2026-08-29-heldout-light-estimator.md
+Branch: heldout-light-estimator (base: b043423, off main ddec973)
+
+Context: K1 is "undecided at 8 seeds" because the gate's per-seed value is a mean
+over only 12 held-out lights, whose per-light delta sd on Kitchen is ~3.3 dB ->
++/-0.94 dB standard error against a -0.5 dB threshold. Re-scoring the SAME committed
+checkpoints at 96 lights (16 s/seed vs ~548 s/seed to train one) moves world_sparse
+from -0.493 to -0.009 dB and drops seeds_needed 34->17 / 18->14 / 73->25. Tasks 1-8
+add zero training cost.
+
+Pre-flight fix (decided with the user before dispatch):
+- Task 4 would have added n_gate_lights to _STRICT_TRAINING_CONFIG_KEYS with a bare
+  .get(), making every committed control (which predates the key) read None vs 96 and
+  raise -- breaking the documented K1 command and Task 7. Resolution: absence
+  normalizes to 12 on both sides, via _LEGACY_TRAINING_CONFIG_DEFAULTS. Plan amended
+  in b043423 with two extra tests pinning both directions.
+
+## Tasks
+Task 1: complete (commit a6393c0, review clean, no fix round)
+  - build_val_set(cache, cfg, n_lights=None); None path byte-identical to before
+  - superset property mutation-tested BY THE REVIEWER: reseeding the RNG per count
+    makes the new test fail immediately, so it genuinely discriminates
+  - BRIEF ERROR caught by implementer: assertEqual(a["light"], b["light"]) can never
+    pass -- SphereLight is a plain @dataclass with ndarray fields, so its generated
+    __eq__ raises "ambiguous truth value" for ANY two instances, equal or not
+    (pre-existing defect in nrp/lights.py, unrelated). Substituted .to_dict() compare.
+  - MINOR (deferred, plan-mandated): brief named tests/test_torch_train.py as the
+    target, but tests/test_torch_backend.py is the established home for train.py unit
+    tests and already contains the identical trace_path_cache(5,4,2,1,seed=9) fixture
+    the new _tiny_cache() duplicates. Splits train.py coverage across two modules.
+    Consolidation candidate for final review.
+Task 2: complete (commit 5ca15aa, review clean, no fix round)
+  - build_frozen_validation_sets(..., n_gate_lights=None) threads into build_val_set's
+    3rd arg; all three call sites (r1_parity:455, r1a_variance:385, r1_kitchen_k1:580)
+    pass 3 positional args and are unaffected
+  - reviewer mutation-tested: ignoring n_gate_lights FAILS the test (the real
+    regression risk -- a runner wiring the key and it silently doing nothing)
+  - MINOR (observation only): a behaviorally-equivalent implementation that sets
+    cfg["n_val_lights"] before calling build_val_set also passes. Same observable
+    contract, so not a gap.
+  - load_r1a_variance mirrors the established load_runner() importlib pattern;
+    _small_cache() reuses trace_path_cache(...) rather than inventing a fixture style
+Task 3: complete (commits dd93470..67b3e26, review clean after 1 fix round)
+  - BASE_TRAIN_CONFIG["n_gate_lights"]=96 pre-registered; --gate-lights flag; recorded
+    in reproduce_command AND report["gate_lights"] + training_config
+  - FIXED (Important): the actual wiring line was UNTESTED -- reviewer's own mutation
+    (drop n_gate_lights= from the call site in run_experiment) left all 43 tests green.
+    Same defect class as the prior campaign's hand-copied mirror test.
+    Fix 67b3e26 adds RunExperimentGateLightsTest, which drives the REAL run_experiment
+    with train/load_trained_model/evaluate_model/build_frozen_validation_sets patched on
+    the module namespace, so the production call site executes.
+  - re-reviewer reproduced red/green ITSELF: mutation -> 1 failure ([None] != [20]);
+    restore -> 44 OK; git diff clean. Assertion discriminating: n_val_lights=12 vs
+    n_gate_lights=20 vs default 96 all distinct, so a wrong-key swap yields [12] and
+    still fails. Second assertion checks the value survives into report["validation_specs"].
+  - production code unchanged by the fix (git diff dd93470..67b3e26 -- ':!tests/' empty)
+Task 4: complete (commit 6d37eef, review clean, no fix round)
+  - n_gate_lights added to _STRICT_TRAINING_CONFIG_KEYS + _LEGACY_TRAINING_CONFIG_DEFAULTS
+    ({"n_gate_lights": 12}); every OTHER strict key still falls back to None (verified)
+  - --gate-lights flag, threaded into base_cfg, the call site, and the reproduce command
+  - DEVIATION 1 (justified, verified by reviewer against commit 67b3e26): main() passed
+    the STATIC BASE_TRAIN_CONFIG to check_control_compatibility, so the new guard was a
+    no-op for any non-default --gate-lights -- it would have falsely rejected a legacy
+    12-light control run with --gate-lights 12. Now built from args.gate_lights, matching
+    how --iters and --denoise-method are already checked.
+  - DEVIATION 2 (justified, verified): run_sweep_with_fakes structurally CANNOT reach this
+    module's call site -- build_frozen_validation_sets is called in main() (line 606), not
+    in run_sweep (which receives validation_sets already built). r1_parity differs. Test
+    drives main() directly instead.
+  - reviewer ran 3 mutations itself, all caught: (a) drop n_gate_lights= at call site ->
+    [None] != [20]; (b) revert legacy normalization -> legacy-control test fails; (c) drop
+    the key from _STRICT_TRAINING_CONFIG_KEYS -> both mismatch tests fail.
+  - 676 tests OK (7 expected optional-dep skips), ruff clean
+  - MINOR (deferred): main() builds run_training_config (shallow) and base_cfg (deep) from
+    BASE_TRAIN_CONFIG separately, each overriding n_gate_lights. Deliberate -- the
+    compatibility check must fail fast before the expensive cache load.
+Task 5: complete (commit 99f6613, review clean, no fix round)
+  - examples/rescore_checkpoints.py: evaluation-only re-read of a completed
+    r1_parity-schema run at any gate-light count. Trains nothing.
+  - REPRODUCTION TEST RAN FOR REAL (not skipped), 27.6-29.1s over 3 runs, reviewer
+    re-ran it itself: 32 checkpoints re-scored at n_gate_lights=12 match the committed
+    out/r1-parity-kitchen-eq/report.json to 6 decimal places. This is the correctness
+    basis for every downstream re-read.
+  - reviewer mutations, all caught: (a) sign swap control-arm -> deltas negated;
+    (b) TorchNRP.load instead of load_trained_model -> ValueError "world_sparse requires
+    occupancy" (confirms the occupancy claim is real, not decorative); (c) n_gate_lights+1
+    -> deltas shift ~0.028 dB.
+  - delta orientation verified against r1_parity's pair_validation_metrics (candidate -
+    control), so a world arm beating pixel2d is POSITIVE
+  - variance axes verified NOT transposed: light_sem_db = sqrt(mean_over_seeds(
+    var_ddof1(per-light deltas)) / n_gate_lights); between_seed_sd_db = pstdev(per-seed
+    means). EquivalenceGate.evaluate called with per-seed MEANS.
+  - no rescore_sweep (correctly deferred to Task 7)
+  - MINOR (brief inconsistency, fix for Task 7's brief): brief's prose Interfaces list
+    mentions pair_validation_metrics but its own code block inlines the equivalent.
+Task 6: complete (commit 4238f6a, review clean, no fix round)
+  - out/r1-parity-kitchen-eq/rescore-96.json + rescore-12.json; NO training, no committed
+    report.json modified (reviewer checked --name-only)
+  - reviewer INDEPENDENTLY RE-RAN both re-scores: 96-light -0.009/-0.416/-0.674 with
+    seeds_needed 17/14/25, byte-for-byte equal to the committed rescore-96.json; 12-light
+    -0.493/-0.446/-1.368 with 34/18/73, bit-for-bit against the historical report.json's
+    own gate fields
+  - every doc number recomputed from the JSON by the reviewer, not just read
+  - scoping verified: both doc sections state all three verdicts remain `continue`,
+    nothing is promoted, and the -0.493 -> -0.009 move is scoped as "retracted as a
+    measurement of the arm", NOT as world_sparse being vindicated
+  - additive-only diffs on both markdown files; new anchor resolves
+  - pipeline-audit failure set unchanged (pre-existing bedroom_cache.npz)
+  - MINOR (deferred, controller-caused): the brief sent the new paragraph to the
+    "R1 parity re-measurement" section, which is about the older per-seed-gate toy/Kitchen
+    comparison rather than the equivalence-gate material. Placement worth a second look at
+    final review.
+Task 7: complete (commits 51bc02a..de8cca6, review clean after 2 fix rounds)
+  THE HEADLINE RESULT. 12-light reproduction PASSED at 6dp (reviewer re-ran it: 2 tests,
+  82.6s, both ok not skipped). At 96 lights every K1 mean collapses toward zero:
+    res:  32      48      64      96      128
+    @12: -0.409  -0.248  -0.580  -0.381  -0.493
+    @96: -0.025  +0.036  +0.021  +0.138  -0.009   seeds_needed 13/16/9/19/17 (was 46/22/19/47/34)
+  Spearman flips +0.30 (p=0.683) from -0.30 at 12 lights ON THE IDENTICAL CHECKPOINTS --
+  evidence the correlation is 8-seed noise, not a trend. K1 REMAINS UNDECIDED; K2-K4 stay
+  cancelled per the unchanged stop condition. finest128 row bit-identical to Task 6's
+  world_sparse re-read (independent-path cross-check).
+  - CRITICAL (fixed, 0941e93): finest64 newly reads `pass` and the docs presented it as a
+    result. Reviewer established it passes on the SMALLEST SEED SD (0.402 vs 0.560-0.735),
+    NOT the best mean -- its mean (+0.021) is the MEDIAN of five; finest96 (+0.138) is best.
+    Under a pooled sd (0.613) NO setting passes and finest64 isn't even closest (finest96 is).
+    Margin 0.0042 dB; flips to `continue` on a 0.82% sd rise; sd's own spread at n=8 is 27%.
+    Both docs now open with a bolded "not evidence that finest_resolution=64 is at parity",
+    matching the register Task 6 set, and name the multiplicity explicitly.
+  - IMPORTANT (fixed): seeds_needed was described as "more seeds"; it is a TOTAL (finest64=9
+    is ONE more than the 8 run) and measures each setting's own interval, not the seeds to
+    resolve a rank correlation.
+  - IMPORTANT (fixed, de8cca6 -- MY error, propagated from my fix prompt): family-wise rate
+    mixed framings, citing 1-(1-0.0042)^30 = 11-12% while saying "at one look each"
+    (exponent 5 = 2.07%). All five settings have looks_taken=1, so the REALIZED rate is
+    ~2.1%; ~11-12% is the design ceiling if every arm ran all six looks. Both now stated
+    separately and labelled.
+  - 3 MINORs fixed: "same magnitude" compared 0.20 to 0.30; table sd column is ddof=0 while
+    the CI uses ddof=1 std_db (footnoted); tension with the pre-registered falsifier string
+    (unqualified by significance) now acknowledged with the conservative reading justified.
+  - fix authors twice corrected numbers I handed them rather than copying (0.524 was
+    finest32's POPULATION sd, not a sample sd; flip threshold 0.82% not 0.9%)
+Task 8: complete (commit 1af76c9, review clean, no fix round)
+  RECOVERY: the Opus implementer hit an API session rate limit and was terminated
+  mid-task -- no commit, no task-8-report.md. Its uncommitted work was found intact
+  (rescore-96.json 332KB + code + tests + 3 docs). Controller verified the reproduction
+  test, full suite (680 OK, 4 skips) and ruff, then committed it. The task reviewer was
+  therefore the FIRST real verification; briefed accordingly.
+  - BRIEF ERROR corrected by the implementer: I said the campaign used n_val_lights 4 and
+    12. The real per-row gate count is N_EVAL_LIGHTS = 8; the 4 and 12 are training-time
+    validation sizes in unrelated config dicts that never reach a gate row. Reviewer
+    confirmed the correction.
+  - 96 lights built as TWELVE independent draws of the campaign's own 8-light
+    configuration, so the estimand is unchanged; group 0 is bit-identical to the committed
+    draw (frozen_lights draws one at a time from default_rng([seed, 0xE1C0DE])).
+  - rescore_encoding_redesign IMPORTS the campaign's own camera arc, cache/camera/light
+    rotation, peak, model reload and gate functions rather than reimplementing them;
+    reviewer checked function by function. Only the outer loop and grouping are new.
+  - RUN-2 BUG GUARD PROVEN: reviewer edited rotated_lights to return lights unrotated
+    (reproducing the exact bug that invalidated campaign run 2) and the reproduction test
+    FAILED HARD (PSNR 47.67 vs expected 25.56, 22 dB off). Restored -> passes.
+  - reviewer independently RE-RAN the re-scorer at --gate-lights 8 and diffed all 180 rows
+    against the committed report.json: 0 mismatches on psnr_db, baseline_psnr_db, delta_db,
+    both occupancy-split PSNRs, out_of_occupancy_fraction, baseline_camera; stop_reason
+    byte-identical.
+  RESULT: the negative SURVIVES AND STRENGTHENS. No arm passes G1/G3/G4 at 96 lights.
+    Failing rows 83 -> 94 of 180 (world_sparse 24->24, triplane 29->32, world3d 30->38).
+    Mean deltas SHRINK: +1.88->+1.41, +1.40->+1.08, +1.41->+0.99. G3 0/5 for every arm.
+    15 dB floor still non-binding. 59 of the 83 original failures still fail; 35
+    previously-passing rows now fail -- churn that is itself evidence of the old
+    instrument's noise (per-row SEM 0.385 dB over 12 groups => ~1.33 dB on a single group).
+    R1 stays closed, now robust to the estimator. This does NOT promote R1.
+  - MINOR (deferred): peak_by_seed is a list-per-seed in the re-scorer vs a scalar in the
+    original report -- harmless schema divergence, undocumented.
+Task 9: complete (commit 99325a0, docs only -- docs/status/2026-08-29.md)
+  - every figure recomputed against the committed JSON; no discrepancies with the brief
+  - MINOR (deferred): hedged the Spearman p as "~0.68" claiming no scipy, but the K1
+    report computes it EXACTLY by enumerating all 120 orderings (82/120 = 0.68333) --
+    no scipy needed. Could be stated exactly.
+
+DEFERRED MINORS for final whole-branch review triage:
+  1. Task 1: new tests/test_torch_train.py duplicates the trace_path_cache(5,4,2,1,seed=9)
+     fixture already in tests/test_torch_backend.py, the established home for train.py
+     unit tests; splits coverage across two modules (plan-mandated file name)
+  2. Task 4: main() builds run_training_config (shallow) and base_cfg (deep) separately,
+     each overriding n_gate_lights -- deliberate (fail fast before the cache load)
+  3. Task 6: the 96-light paragraph landed in the "R1 parity re-measurement" section, which
+     is about the older per-seed-gate toy/Kitchen comparison (controller-caused placement)
+  4. Task 8: peak_by_seed is a list-per-seed in rescore-96.json vs a scalar in the original
+     report.json -- harmless schema divergence, undocumented
+  5. Task 9: Spearman p hedged as "~0.68" though it is exactly 82/120 by enumeration
+
+FINAL WHOLE-BRANCH REVIEW (opus): READY WITH FIXES. 13 commits, ddec973..99325a0.
+  Verified BY EXECUTION, not reading:
+  - tests.test_rescore_checkpoints 4 tests 92.2s OK, ZERO skips; full suite 680 OK (4 skips)
+  - UNROTATED-LIGHTS GUARD re-verified independently: mutated rotated_lights to
+    `return list(lights)` -> reproduction test failed 47.67 vs 25.56 dB (22.1 dB). Restored
+    -> passes. Reviewer refused to accept the prior verification on trust.
+  - FULL 180-row 8-light reproduction run by the reviewer itself: 0 mismatches on psnr_db,
+    baseline_psnr_db, delta_db, both occupancy PSNRs, out_of_occupancy_fraction,
+    baseline_camera; stop_reason and all G1/G3/G4 flags identical. Removes the
+    "run out of band" caveat entirely.
+  - 12-light parity reproduction matches report.json to 4.4e-16 (exact, not merely 6dp)
+  - independent-path cross-check: rescore_sweep's finest128 bit-identical to rescore's
+    world_sparse across all 8 per-seed deltas AND the entire gate dict
+  - BOTH n_gate_lights call sites proven covered: dropping the kwarg at r1_parity:463 and
+    r1_kitchen_k1:606 gives 2 failures ([None] != [20]) from the two tests that drive real
+    run_experiment/main. No sibling of the Task-3 mirror-test defect survives.
+  - experiment_gate.py untouched; no committed report.json modified; pipeline-audit failure
+    set unchanged; alpha arithmetic re-derived from source (realized 2.07%, ceiling 11.9%)
+  - every load-bearing figure across all three campaigns recomputed from JSON, all matched
+  IMPORTANT finding: --gate-lights default 96 silently changes what 6 historical r1_parity
+    reproduce commands replay (r1_kitchen_k1 is protected by _LEGACY_TRAINING_CONFIG_DEFAULTS;
+    r1_parity has no control report so nothing catches it). Branch names this exact hazard in
+    its own reproduce_command docstring and then leaves the commands unqualified.
+  OBSERVATION (not a defect): 96 was chosen after seeing its effect on related data. Benign
+    (estimator unbiased at any n; rationale answer-independent; the pre-registration
+    constraint is scoped to "before any new TRAINING") but finest64's pass did emerge at a
+    light count selected on related data -- worth one clause.
+  Triage of the 5 deferred minors: ALL five leave-alone, with two one-sentence doc additions
+    (peak_by_seed divergence; narrow "all per-seed numbers above" to Kitchen since the
+    +/-0.94-1.14 dB SE is Kitchen-specific and unmeasured on toy).

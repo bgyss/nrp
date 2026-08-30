@@ -30,6 +30,44 @@
 > `out/r1-kitchen-parity-k1-eq/report.json`,
 > `out/r1-parity-kitchen-eq/report.json` (the fixed control).
 >
+> **Re-read (2026-08-29): the same 40 sweep checkpoints were re-scored against 96
+> held-out lights instead of 12** (`examples/rescore_checkpoints.py::rescore_sweep`,
+> evaluation-only, trains nothing; reproduces the 12-light committed deltas exactly
+> before the 96-light output is trusted). Every mean delta moves toward zero, and
+> `finest64` newly clears the −0.5 dB gate (`pass`, CI lower −0.496 dB, margin
+> 0.004 dB) — the only setting to pass at either light count. **This is not
+> evidence that `finest_resolution=64` is at parity with `pixel2d`**: it is one
+> of five pre-registered settings and the pass is uncorrected for that
+> multiplicity (the equivalence gate's own multiplicity note applies directly
+> here — `docs/performance.md#the-equivalence-gate-from-2026-08-28` — and, at the
+> one look each actually taken, the resulting family-wise false-parity rate
+> across the sweep is roughly 2.1% against a nominal 5% (a full six-look
+> schedule across all five settings would reach ≈11–12%, but that is not what
+> was run); it passes on having the smallest per-seed sample sd
+> (0.402) of the five, not the best mean (`finest64`'s +0.021 dB mean is the
+> median of the five, `finest96`'s +0.138 dB is the best); and under a pooled
+> sample sd across all five settings (0.613), no setting passes and `finest64`
+> is not even the closest to the threshold (`finest96` is). Spearman is now
+> **+0.30** (permutation p ≈ 0.68) — matching the magnitude of the second prior
+> reading (−0.30 at 8 seeds/12 lights) but not the first (+0.20; 0.20 ≠ 0.30) —
+> and has flipped in sign again from that second reading, using the *identical*
+> checkpoints just scored more precisely — evidence the correlation itself is
+> dominated by 8-seed sampling noise, not evidence of a trend in either
+> direction. **K1 remains undecided; it neither confirms nor significantly
+> refutes the predicted negative correlation.** Per the plan's stop condition,
+> K2–K4 stay cancelled: an undecided sweep is not a confirmation. Read literally
+> the sweep's pre-registered `falsifier` string ("a flat or positive correlation
+> refutes...") is unqualified by significance and would call ρ = +0.30 a
+> refutation; this result applies the more conservative significance-qualified
+> reading instead (see `docs/performance.md#k1-sweep-re-read-at-96-held-out-lights-2026-08-29`
+> for why). Per-setting `seeds_needed` for a 0.5 dB half-width at 96 lights is
+> 9–19 total (down from 19–47 at 12 lights) — for `finest64` that is 9, i.e. one
+> more seed than the 8 already run; this is the seed count to resolve each
+> setting's own equivalence interval, not to decide the five-point rank
+> correlation, which is a different and larger question. Results:
+> `docs/performance.md#k1-sweep-re-read-at-96-held-out-lights-2026-08-29`,
+> `out/r1-kitchen-parity-k1-eq/rescore-96.json`.
+>
 > The plan below is preserved as written, before the result was known.
 
 ## Decision carried forward
