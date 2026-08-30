@@ -529,6 +529,8 @@ def main() -> None:
         "the fixed control's, checked via _STRICT_TRAINING_CONFIG_KEYS.",
     )
     args = parser.parse_args()
+    if args.gate_lights <= 0:
+        raise SystemExit(f"--gate-lights must be positive, got {args.gate_lights}")
     binding = args.gate.replace("-", "_")
     gate_rule = EquivalenceGate()
 

@@ -608,6 +608,8 @@ def main() -> None:
         help="held-out lights per seed for the promotion gate (default 96)",
     )
     args = parser.parse_args()
+    if args.gate_lights <= 0:
+        raise SystemExit(f"--gate-lights must be positive, got {args.gate_lights}")
 
     root = Path(__file__).resolve().parent.parent
     cache_path = Path(args.cache)

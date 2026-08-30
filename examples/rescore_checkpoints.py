@@ -191,6 +191,8 @@ def redesign_light_groups(cache: PathCache, seed: int, n_gate_lights: int) -> li
     committed campaign's light set, which is what makes the reproduction check at
     `n_gate_lights = 8` exact.
     """
+    if n_gate_lights <= 0:
+        raise ValueError(f"n_gate_lights must be positive, got {n_gate_lights}")
     if n_gate_lights % N_EVAL_LIGHTS != 0:
         raise ValueError(
             f"n_gate_lights={n_gate_lights} must be a multiple of the campaign's "

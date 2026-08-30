@@ -51,7 +51,9 @@ class TestRescore(unittest.TestCase):
                 )
                 for row in report["comparisons"][arm]
             ]
-            for a, b in zip(got["arms"][arm]["per_seed_mean_delta_db"], expected, strict=False):
+            got_deltas = got["arms"][arm]["per_seed_mean_delta_db"]
+            self.assertEqual(len(got_deltas), len(expected))
+            for a, b in zip(got_deltas, expected, strict=True):
                 self.assertAlmostEqual(a, b, places=6)
 
     def test_redesign_rescore_at_the_original_count_reproduces_the_committed_rows(self):
@@ -111,6 +113,23 @@ class TestRescore(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.redesign_light_groups(cache, 0, runner.N_EVAL_LIGHTS + 1)
 
+    def test_redesign_light_groups_rejects_nonpositive_n_gate_lights(self):
+        """n_gate_lights=0 is a multiple of N_EVAL_LIGHTS, so the multiple-of-8 check
+        alone lets it through; it must still be rejected before it reaches
+        `_aggregate_groups` with zero groups (which raised IndexError)."""
+        cache_path = ROOT / "out/r1-encoding-redesign/seed0/train0.npz"
+        if not cache_path.exists():
+            self.skipTest("committed encoding-redesign caches not present")
+
+        from nrp.path_cache import PathCache
+
+        runner = load_runner()
+        cache = PathCache.load(str(cache_path))
+        with self.assertRaises(ValueError):
+            runner.redesign_light_groups(cache, 0, 0)
+        with self.assertRaises(ValueError):
+            runner.redesign_light_groups(cache, 0, -runner.N_EVAL_LIGHTS)
+
     def test_rescore_sweep_at_the_original_count_reproduces_the_committed_deltas(self):
         """rescore_sweep at n_gate_lights=12 must reproduce the committed K1 sweep's
         per-resolution per-seed deltas exactly, because it reloads the same
@@ -139,7 +158,9 @@ class TestRescore(unittest.TestCase):
         for res_row in sweep_report["per_resolution"]:
             res = str(res_row["finest_resolution"])
             expected = res_row["gate"]["per_seed"]["per_seed_delta_db"]
-            for a, b in zip(got["resolutions"][res]["per_seed"], expected, strict=False):
+            got_deltas = got["resolutions"][res]["per_seed"]
+            self.assertEqual(len(got_deltas), len(expected))
+            for a, b in zip(got_deltas, expected, strict=True):
                 self.assertAlmostEqual(a, b, places=6)
 
 

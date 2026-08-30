@@ -67,7 +67,12 @@ Three consequences:
    indistinguishable from zero.
 2. `world_sparse`'s published −0.493 dB Kitchen deficit is almost entirely
    estimator noise: the same checkpoints read at 96 lights sit at −0.009 dB, i.e.
-   dead on parity.
+   dead on parity. [Correction, applied in the fixes pass that merged this plan:
+   the result docs deliberately do not draw this inference — the 96-light
+   verdict is still `continue`, and 17 more seeds are needed to say `world_sparse`
+   is at parity with `pixel2d`. See
+   `docs/performance.md#r1-kitchen-parity-re-read-at-96-held-out-lights-2026-08-29`.
+   This plan is preserved as written; the claim above is superseded.]
 3. All three arms move from "needs 18–73 seeds" to "needs 14–25", i.e. from
    partly-past the 48-seed cap to comfortably inside it. `world_sparse` becomes
    decidable at the n = 24 look — 16 more seeds, ≈ 2.4 CPU-hours.
