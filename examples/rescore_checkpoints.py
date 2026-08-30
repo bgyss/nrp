@@ -1,4 +1,4 @@
-"""Re-score a completed r1_parity-schema run at a different held-out light count.
+"""Re-score a completed run at a different held-out light count.
 
 Trains nothing. A run directory already holds one `model.pt` per (arm, seed); the
 number of held-out lights those checkpoints were SCORED against is an evaluation
@@ -10,6 +10,12 @@ re-read for free. See docs/superpowers/plans/2026-08-29-heldout-light-estimator.
 Because `build_val_set` draws lights one at a time from `default_rng([seed, 0x5EED])`,
 a larger set extends the committed one rather than replacing it: re-scoring at the
 original count must reproduce the original numbers exactly, and the test asserts it.
+
+`rescore_encoding_redesign` does the same for the held-out-camera encoding-redesign
+campaign (`examples/r1_encoding_redesign.py`), whose schema is different: it has no
+single cache, scores per (arm, seed, rotation, held-out camera), and renders one
+image per 8-light group. Every step of its evaluation path is imported from that
+runner rather than reimplemented here.
 """
 
 from __future__ import annotations
@@ -27,8 +33,35 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from examples.r1_encoding_redesign import (  # noqa: E402
+    ARM_NAMES,
+    N_EVAL_LIGHTS,
+    N_HELD_OUT_CAMERAS,
+    N_TRAIN_CAMERAS,
+    _sparse_collision_fraction,
+    camera_arc,
+    campaign_peak,
+    evaluate_camera,
+    frozen_lights,
+    load_conditioned_model,
+    nearest_trained_camera,
+    rotated_caches,
+    rotated_camera,
+    rotated_lights,
+)
+from examples.r1_promotion import rotation_matrix_y  # noqa: E402
 from nrp.experiment_gate import EquivalenceGate  # noqa: E402
 from nrp.path_cache import PathCache  # noqa: E402
+from nrp.torch_backend.encoder_registry import SPATIAL_ENCODERS  # noqa: E402
+from nrp.torch_backend.encoding_gates import (  # noqa: E402
+    g1_generalization,
+    g2_capacity_context,
+    g3_stability,
+    g4_frame_robustness,
+    g5_fallback_decomposition,
+    stop_reason,
+)
+from nrp.torch_backend.model import TorchNRP  # noqa: E402
 from nrp.torch_backend.train import (  # noqa: E402
     build_val_set,
     evaluate,
@@ -138,16 +171,245 @@ def rescore_sweep(
     return out
 
 
+def redesign_light_groups(cache: PathCache, seed: int, n_gate_lights: int) -> list[list]:
+    """Split one seed's held-out light draw into campaign-sized evaluation groups.
+
+    The encoding-redesign campaign does not score one light per row the way the
+    r1_parity schema does: `evaluate_camera` renders a *single* image lit by the whole
+    `frozen_lights` set (N_EVAL_LIGHTS = 8) and reports one PSNR for it. Scoring that
+    row against 96 lights summed into one image would change the estimand -- a
+    96-emitter image is a different, far brighter physical configuration, not a
+    lower-variance estimate of the same thing. So the extra light budget buys
+    *independent draws of the campaign's own 8-light configuration* instead:
+    `n_gate_lights` lights are split into `n_gate_lights // N_EVAL_LIGHTS` groups of 8,
+    each group scored exactly as the campaign scores its one group, and the row's
+    delta is the mean over groups. The estimand is unchanged; only the number of
+    samples of it goes up.
+
+    `frozen_lights` draws lights one at a time from `default_rng([seed, 0xE1C0DE])`,
+    so a larger draw *extends* the committed one: group 0 is bit-identical to the
+    committed campaign's light set, which is what makes the reproduction check at
+    `n_gate_lights = 8` exact.
+    """
+    if n_gate_lights % N_EVAL_LIGHTS != 0:
+        raise ValueError(
+            f"n_gate_lights={n_gate_lights} must be a multiple of the campaign's "
+            f"group size N_EVAL_LIGHTS={N_EVAL_LIGHTS}; a partial group would score "
+            "a row against a light configuration the campaign never defined"
+        )
+    lights = frozen_lights(cache, seed, n=n_gate_lights)
+    return [lights[i : i + N_EVAL_LIGHTS] for i in range(0, n_gate_lights, N_EVAL_LIGHTS)]
+
+
+def _mean_or_none(values: list) -> float | None:
+    present = [float(v) for v in values if v is not None]
+    return float(st.mean(present)) if present else None
+
+
+def _aggregate_groups(group_rows: list[dict]) -> dict:
+    """Average one row's per-group scores into the single row shape the gates read."""
+    row = dict(group_rows[0])
+    row["psnr_db"] = float(st.mean([r["psnr_db"] for r in group_rows]))
+    row["baseline_psnr_db"] = float(st.mean([r["baseline_psnr_db"] for r in group_rows]))
+    row["delta_db"] = float(st.mean([r["delta_db"] for r in group_rows]))
+    row["in_occupancy_psnr_db"] = _mean_or_none([r["in_occupancy_psnr_db"] for r in group_rows])
+    row["out_occupancy_psnr_db"] = _mean_or_none([r["out_occupancy_psnr_db"] for r in group_rows])
+    row["n_light_groups"] = len(group_rows)
+    row["per_group_delta_db"] = [float(r["delta_db"]) for r in group_rows]
+    if len(group_rows) > 1:
+        row["delta_sem_db"] = float(
+            st.stdev(row["per_group_delta_db"]) / math.sqrt(len(group_rows))
+        )
+    else:
+        row["delta_sem_db"] = None
+    return row
+
+
+def rescore_encoding_redesign(
+    run_dir: Path,
+    *,
+    seeds,
+    arms,
+    rotations,
+    n_gate_lights: int,
+    threshold_db: float = 1.0,
+    absolute_floor_db: float = 15.0,
+) -> dict:
+    """Re-score the R1 encoding-redesign campaign's committed checkpoints.
+
+    Trains nothing. Every step of the evaluation path is imported from
+    `examples/r1_encoding_redesign.py` itself -- the camera arc, the cache rotation,
+    the camera rotation, the *light* rotation, the per-seed PSNR peak, the row
+    construction, and the gate functions -- rather than reconstructed here. Run 2 of
+    this campaign was invalidated by reusing unrotated evaluation lights at 90/180
+    degrees; `rotated_lights` is the fix, and calling the campaign's own helper is the
+    only way to be sure this re-read does not repeat it.
+    """
+    trained, held_out = camera_arc(N_TRAIN_CAMERAS, N_HELD_OUT_CAMERAS)
+    rows_by_arm: dict[str, list[dict]] = {arm: [] for arm in arms}
+    capacity_rows: list[dict] = []
+    latest_capacity_report: dict[str, dict] = {}
+    collision_by_arm: dict[str, float] = {}
+    peak_by_seed: dict[int, list[float]] = {}
+
+    for seed in seeds:
+        seed_dir = run_dir / f"seed{seed}"
+        cache_paths = {c["name"]: seed_dir / f"{c['name']}.npz" for c in trained + held_out}
+        missing = [str(p) for p in cache_paths.values() if not p.exists()]
+        if missing:
+            raise FileNotFoundError(f"seed {seed} is missing caches: {missing}")
+        groups = redesign_light_groups(
+            PathCache.load(str(cache_paths[trained[0]["name"]])), seed, n_gate_lights
+        )
+        trained_unrotated = [PathCache.load(str(cache_paths[c["name"]])) for c in trained]
+        # One peak per light group, by the campaign's own recipe (trained cameras
+        # only). Group 0's peak reproduces the committed `peak_by_seed` entry.
+        peaks = [campaign_peak(trained_unrotated, group, seed=seed) for group in groups]
+        peak_by_seed[seed] = peaks
+        del trained_unrotated
+
+        for rotation in rotations:
+            rot_dir = seed_dir if rotation == 0.0 else seed_dir / f"rot{rotation:g}"
+            rotation_matrix = rotation_matrix_y(rotation)
+            caches = rotated_caches(cache_paths, rotation)
+            cameras_in_frame = {
+                camera["name"]: rotated_camera(camera, rotation_matrix)
+                for camera in trained + held_out
+            }
+            groups_in_frame = [
+                group if rotation == 0.0 else rotated_lights(group, rotation_matrix)
+                for group in groups
+            ]
+            baseline_models = {
+                camera["name"]: TorchNRP.load(
+                    str(rot_dir / "pixel2d" / camera["name"] / "model.pt")
+                ).eval()
+                for camera in trained
+            }
+            for arm in arms:
+                model = load_conditioned_model(
+                    rot_dir / arm / "model.pt", [caches[camera["name"]] for camera in trained]
+                )
+                if model.encoding is not None and hasattr(model.encoding, "capacity_report"):
+                    report = model.encoding.capacity_report()
+                    latest_capacity_report[arm] = report
+                    capacity_rows.append(
+                        {
+                            "arm": arm,
+                            "seed": seed,
+                            "rotation_degrees": float(rotation),
+                            "capacity_report": report,
+                        }
+                    )
+                    if getattr(SPATIAL_ENCODERS[arm], "guarantees_zero_collisions", False):
+                        collision_by_arm[arm] = max(
+                            collision_by_arm.get(arm, 0.0),
+                            _sparse_collision_fraction(report, arm),
+                        )
+                for camera in held_out:
+                    baseline_camera = nearest_trained_camera(camera, trained)
+                    group_rows = [
+                        evaluate_camera(
+                            model,
+                            arm,
+                            camera,
+                            cameras_in_frame[camera["name"]],
+                            caches[camera["name"]],
+                            baseline_models[baseline_camera["name"]],
+                            group,
+                            peaks[i],
+                        )
+                        for i, group in enumerate(groups_in_frame)
+                    ]
+                    row = _aggregate_groups(group_rows)
+                    row["seed"] = seed
+                    row["rotation_degrees"] = float(rotation)
+                    row["baseline_camera"] = baseline_camera["name"]
+                    rows_by_arm[arm].append(row)
+                del model
+            del baseline_models, caches
+
+    expected_seeds = set(seeds)
+    expected_cameras = {camera["name"] for camera in held_out}
+    zero_collision_arms = frozenset(
+        a for a in arms if getattr(SPATIAL_ENCODERS[a], "guarantees_zero_collisions", False)
+    )
+    arms_report = {}
+    for arm in arms:
+        rows = rows_by_arm[arm]
+        arm_collisions = {arm: collision_by_arm[arm]} if arm in collision_by_arm else {}
+        arms_report[arm] = {
+            "rows": rows,
+            "rows_count": len(rows),
+            "capacity_report": latest_capacity_report.get(arm),
+            "g1": g1_generalization(
+                rows,
+                threshold_db,
+                expected_seeds=expected_seeds,
+                expected_cameras=expected_cameras,
+                absolute_floor_db=absolute_floor_db,
+            ),
+            "g3": g3_stability(rows, arm_collisions, threshold_db, zero_collision_arms),
+            "g4": g4_frame_robustness(rows, threshold_db),
+            "g5": g5_fallback_decomposition(rows),
+        }
+
+    report = {
+        "n_gate_lights": int(n_gate_lights),
+        "n_light_groups": int(n_gate_lights // N_EVAL_LIGHTS),
+        "light_group_size": int(N_EVAL_LIGHTS),
+        "seeds": list(seeds),
+        "rotations": [float(r) for r in rotations],
+        "absolute_floor_db": absolute_floor_db,
+        "threshold_db": threshold_db,
+        "peak_by_seed": {str(s): peaks for s, peaks in peak_by_seed.items()},
+        "arms": arms_report,
+        "g2_capacity_context": g2_capacity_context(capacity_rows),
+        "promoted": False,
+    }
+    report["stop_reason"] = stop_reason(report)
+    report["promoted"] = report["stop_reason"] is None
+    return report
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--sweep-dir", type=Path)
     parser.add_argument("--control-dir", type=Path)
+    parser.add_argument("--redesign-dir", type=Path)
     parser.add_argument("--resolutions", type=int, nargs="+")
-    parser.add_argument("--cache", required=True, type=Path)
+    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    parser.add_argument("--cache", type=Path)
     parser.add_argument("--gate-lights", type=int, default=96)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
+
+    if args.redesign_dir is not None:
+        # The encoding-redesign campaign carries its caches inside its own run
+        # directory (one per camera per seed), so --cache does not apply here.
+        result = rescore_encoding_redesign(
+            args.redesign_dir,
+            seeds=args.seeds,
+            arms=ARM_NAMES,
+            rotations=[0.0, 90.0, 180.0],
+            n_gate_lights=args.gate_lights,
+        )
+        result["source_report"] = str(args.redesign_dir / "report.json")
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(result, indent=2))
+        for arm, row in result["arms"].items():
+            g1 = row["g1"]
+            print(
+                f"{arm:24s} mean={g1['mean_delta_db']:+.3f} worst={g1['worst_delta_db']:+.3f} "
+                f"g1_failures={len(g1['failures'])}/{row['rows_count']} "
+                f"seeds_passing={row['g3']['seeds_passing']}/{row['g3']['seeds_total']}"
+            )
+        print(f"stop_reason: {result['stop_reason']}")
+        return 0 if result["promoted"] else 2
+
+    if args.cache is None:
+        parser.error("--cache is required for --run-dir and --sweep-dir modes")
 
     if args.sweep_dir is not None:
         if args.control_dir is None or args.resolutions is None:

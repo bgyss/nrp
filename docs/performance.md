@@ -3742,3 +3742,130 @@ Evidence: `out/r1-kitchen-parity-k1-eq/rescore-96.json` (96-light re-read),
 `out/r1-kitchen-parity-k1-eq/report.json` (unmodified committed sweep),
 `out/r1-parity-kitchen-eq/report.json` (unmodified committed control). Runner:
 `examples/rescore_checkpoints.py::rescore_sweep`.
+
+## Encoding-redesign campaign re-read at 96 held-out lights (2026-08-29)
+
+The held-out-camera campaign that closed R1 as a characterized negative
+(§"World-anchored encoding redesign" above) was read with the same class of
+estimator the two re-reads above corrected. Its 1.0 dB comparative margin is
+applied per row, and each row is a *single* image lit by one draw of 8 held-out
+lights (`N_EVAL_LIGHTS` in `examples/r1_encoding_redesign.py`; the `n_val_lights`
+values of 4 and 12 in that file are the training runs' own validation sets and
+never reach a gate row). Against ≈1.9 dB of row-to-row spread, a row's verdict was
+decided by one light draw. This section re-reads the campaign's 165 committed
+checkpoints against 96 held-out lights. **Nothing was retrained.**
+
+**What "96 lights" means here, and what it deliberately does not.** Unlike the
+`r1_parity` schema — where the val set is scored one light per row — this campaign
+sums its 8 lights into one rendered image. Scoring one image lit by 96 emitters
+would be a *different physical configuration*, not a lower-variance estimate of the
+same one, so it would change the estimand. Instead the extra budget buys twelve
+independent draws of the campaign's own 8-light configuration
+(`redesign_light_groups`), each scored exactly as the campaign scores its single
+group — same `campaign_peak` recipe per group, same rotation handling — and the
+row's delta is the mean of the twelve. The estimand is unchanged; only the number
+of samples of it goes up. Because `frozen_lights` draws lights one at a time from
+`default_rng([seed, 0xE1C0DE])`, group 0 *is* the committed campaign's light set.
+
+```sh
+nix develop --command uv run python examples/rescore_checkpoints.py \
+  --redesign-dir out/r1-encoding-redesign --gate-lights 96 \
+  --out out/r1-encoding-redesign/rescore-96.json
+```
+
+**Reproduction check first.** Re-scoring at the original count
+(`--gate-lights 8`, one group) reproduces the committed
+`out/r1-encoding-redesign/report.json` exactly: all **180 rows across all three
+arms** match on `psnr_db`, `baseline_psnr_db`, `delta_db`,
+`out_of_occupancy_fraction`, both occupancy-split PSNRs and `baseline_camera` to
+6 decimal places, all five per-seed PSNR peaks match, and the G1/G3/G4 summaries
+and `stop_reason` are identical. `tests/test_rescore_checkpoints.py` carries a
+fast one-seed/one-rotation slice of that check; the full 180-row version was run
+out of band (~95 s). The re-scorer imports the campaign's own `camera_arc`,
+`rotated_caches`, `rotated_camera`, `rotated_lights`, `campaign_peak`,
+`load_conditioned_model`, `evaluate_camera` and gate functions rather than
+reimplementing them — in particular `rotated_lights`, whose absence invalidated
+campaign run 2.
+
+**Gate results at 96 lights, against the committed 8-light reading:**
+
+| arm | mean Δ, 8 (dB) | mean Δ, 96 (dB) | worst Δ, 96 (dB) | std, 96 (dB) | rows failing G1, 8 | rows failing G1, 96 | seeds passing G3, 96 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `world_sparse` | +1.880 | **+1.412** | −1.624 | 1.421 | 24/60 | **24/60** | 0/5 |
+| `world_normal_triplane` | +1.399 | **+1.079** | −1.592 | 1.599 | 29/60 | **32/60** | 0/5 |
+| `world3d` | +1.409 | **+0.992** | −1.777 | 1.463 | 30/60 | **38/60** | 0/5 |
+
+`stop_reason` at 96 lights is byte-identical to the committed one: "no arm passed
+G1 across all seeds, cameras, and orientations (world3d, world_normal_triplane,
+world_sparse); close as a characterized negative with the G5 decomposition."
+`promoted: false`. G4 fails for all three arms, and the 15 dB absolute floor is
+still non-binding — every one of the 94 failing rows fails for
+`below_delta_threshold` alone, and the dimmest row at 96 lights is 19.60 dB.
+
+**Of the 83 previously-failing rows, 59 still fail at 96 lights.** The rest of the
+churn goes the other way: 35 rows that passed at 8 lights now fail, so the total
+failing-row count rises from 83 to 94.
+
+| arm | previously failing | still failing | 0° | 90° | 180° |
+|---|---:|---:|---:|---:|---:|
+| `world_sparse` | 24 | 14 | 4/6 | 6/10 | 4/8 |
+| `world_normal_triplane` | 29 | 22 | 4/6 | 7/9 | 11/14 |
+| `world3d` | 30 | 23 | 4/6 | 10/12 | 9/12 |
+| **all arms** | **83** | **59** | 12/18 | 23/31 | 24/34 |
+
+**Per-rotation means at 96 lights** (compare §"G4 — rotation breakdown" above):
+
+| arm | 0° | 90° | 180° |
+|---|---:|---:|---:|
+| `world_sparse` | +1.46 | +1.37 | +1.41 |
+| `world_normal_triplane` | +1.68 | +0.94 | +0.62 |
+| `world3d` | +1.44 | +0.80 | +0.73 |
+
+`world_sparse`'s frame-robustness finding survives (flat to within 0.10 dB across
+rotations), and both hashed arms still degrade with rotation. What does *not*
+survive as a measurement is `world3d`'s published +2.42 dB at 0°: it reads +1.44 dB
+at 96 lights. Every arm's published mean delta shrinks by 0.32–0.47 dB, and
+`world3d`'s 0° mean by 0.98 dB, so the campaign's per-rotation and per-arm mean
+deltas are retracted as measurements of the arms and stand only as measurements
+made with an 8-light estimator.
+
+**How noisy the original per-row instrument was.** The mean per-row standard error
+of the delta across the twelve groups is 0.385 dB (`delta_sem_db` in
+`rescore-96.json`; max 1.04 dB), which implies ≈1.33 dB on a single 8-light group —
+larger than the 1.0 dB threshold each row was judged against. That is the defect,
+stated in the campaign's own units: the original gate decided each row with a
+measurement whose noise exceeded the margin it was testing. It is also why 35 rows
+flipped to failing and 24 flipped to passing without any model changing.
+
+**The per-row verdict is still noisy at 96 lights, and the campaign's verdict is
+still robust to it.** Only 10/19/19 rows (`world_sparse` / `world_normal_triplane`
+/ `world3d`) fail by more than 2 SEM, and 22/17/12 pass by more than 2 SEM; the
+remainder sit within noise of the 1.0 dB line, so individual row labels should not
+be read as findings. The *campaign* verdict does not depend on them: promotion
+requires all 60 of an arm's rows to clear +1.0 dB, and each arm's worst row sits at
+−1.6 to −1.8 dB, 4.2–8.6 SEM below the line. Every seed of every arm contributes
+at least one failing row: the worst per-seed delta is negative in 10 of the 15
+arm×seed cells and never exceeds +0.53 dB in the other five. No plausible
+re-reading of the light draw turns any arm into a pass.
+
+**G5 is unchanged in substance.** For `world_sparse`, mean out-of-occupancy query
+fraction is 0.45% (identical — it does not depend on the lights), and
+out-of-occupancy PSNR is still slightly *higher* than in-occupancy PSNR (24.04 vs
+23.15 dB at 96 lights, against 24.44 vs 23.46 dB at 8). The sparse fallback is
+still not the limiting factor.
+
+**Verdict: the campaign's negative survives the estimator fix, and is now a
+stronger statement than it was.** R1 stays closed as a characterized negative.
+Under a 12× larger held-out light sample, no arm passes G1, G3 or G4; the
+failing-row count goes up rather than down; and every arm's advantage over the
+`pixel2d` baseline shrinks. The individual per-row deltas, per-rotation means and
+per-arm means published for this campaign are retracted as measurements and
+superseded by `rescore-96.json`; the conclusion they were used to support is not.
+Per gate spec, no threshold widening, seed drop, arm addition, or rotation-set
+change follows from this re-read.
+
+Evidence: `out/r1-encoding-redesign/rescore-96.json` (96-light re-read),
+`out/r1-encoding-redesign/report.json` (unmodified committed run),
+`out/r1-encoding-redesign/report-INVALID-unrotated-lights.json` (unmodified,
+preserved run 2). Runner:
+`examples/rescore_checkpoints.py::rescore_encoding_redesign`.

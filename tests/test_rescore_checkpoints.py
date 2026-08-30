@@ -54,6 +54,63 @@ class TestRescore(unittest.TestCase):
             for a, b in zip(got["arms"][arm]["per_seed_mean_delta_db"], expected, strict=False):
                 self.assertAlmostEqual(a, b, places=6)
 
+    def test_redesign_rescore_at_the_original_count_reproduces_the_committed_rows(self):
+        """The encoding-redesign campaign's own correctness guard.
+
+        `frozen_lights` extends rather than replaces its draw, so one group of
+        `N_EVAL_LIGHTS` lights is exactly the light set the committed run used: at
+        `n_gate_lights=N_EVAL_LIGHTS` every re-scored row must equal the committed
+        row to 6 decimal places. One seed at one rotation is enough to catch a wrong
+        cache, a wrong camera, an unrotated evaluation light, or a mis-rebuilt
+        occupancy table; the full five-seed three-rotation check (all 180 rows) is
+        run out of band and recorded in docs/performance.md, because it costs ~95 s.
+        """
+        run_dir = ROOT / "out/r1-encoding-redesign"
+        if not (run_dir / "report.json").exists():
+            self.skipTest("committed encoding-redesign run not present")
+
+        runner = load_runner()
+        committed = json.loads((run_dir / "report.json").read_text())
+        got = runner.rescore_encoding_redesign(
+            run_dir,
+            seeds=[0],
+            arms=["world_sparse"],
+            rotations=[90.0],
+            n_gate_lights=runner.N_EVAL_LIGHTS,
+        )
+        expected = {
+            (row["seed"], row["rotation_degrees"], row["camera"]): row
+            for row in committed["arms"]["world_sparse"]["rows"]
+        }
+        rows = got["arms"]["world_sparse"]["rows"]
+        self.assertEqual(len(rows), 4)
+        for row in rows:
+            want = expected[(row["seed"], row["rotation_degrees"], row["camera"])]
+            self.assertEqual(row["baseline_camera"], want["baseline_camera"])
+            for field in ("psnr_db", "baseline_psnr_db", "delta_db"):
+                self.assertAlmostEqual(row[field], want[field], places=6)
+
+    def test_redesign_light_groups_extend_the_committed_draw(self):
+        """A larger held-out draw must start with the committed one, or the
+        reproduction check above would be comparing different lights."""
+        cache_path = ROOT / "out/r1-encoding-redesign/seed0/train0.npz"
+        if not cache_path.exists():
+            self.skipTest("committed encoding-redesign caches not present")
+
+        from nrp.path_cache import PathCache
+
+        runner = load_runner()
+        cache = PathCache.load(str(cache_path))
+        one = runner.redesign_light_groups(cache, 0, runner.N_EVAL_LIGHTS)
+        many = runner.redesign_light_groups(cache, 0, 3 * runner.N_EVAL_LIGHTS)
+        self.assertEqual(len(one), 1)
+        self.assertEqual(len(many), 3)
+        for first, later in zip(one[0], many[0], strict=True):
+            self.assertEqual(list(first.center), list(later.center))
+            self.assertEqual(first.radius, later.radius)
+        with self.assertRaises(ValueError):
+            runner.redesign_light_groups(cache, 0, runner.N_EVAL_LIGHTS + 1)
+
     def test_rescore_sweep_at_the_original_count_reproduces_the_committed_deltas(self):
         """rescore_sweep at n_gate_lights=12 must reproduce the committed K1 sweep's
         per-resolution per-seed deltas exactly, because it reloads the same

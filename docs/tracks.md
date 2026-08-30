@@ -12,7 +12,7 @@ prompts (or, for phase 3, a decision document); each links its evidence into
 | 4 | Production track | [production-track.md](production-track.md) | ✅ Complete — all 10 rungs measured (T1–T4, G1–G2, F1–F2, V1–V2); three closed as honest negatives/partials |
 | 5 | Hardening track | [hardening-track.md](hardening-track.md) | ✅ Complete — all 7 rungs measured (H1–H7); several land as honest negatives/partials, per this program's convention |
 | 6 | Scale & speed track | [scale-track.md](scale-track.md) | ✅ Complete locally — S1–S6 measured; CUDA stretch S7/S8 parked |
-| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ R1 not promoted (redesigned held-out-camera gate) — no arm passes on all 5 seeds; closed as a characterized negative with a G5 decomposition; R2 pilot remains an honest negative. Fair-allocation single-view parity re-measured on two scenes with opposite outcomes: all 3 world arms pass 5/5 on toy 64², none passes on Kitchen 128²; the earlier "19× allocation handicap explains the Kitchen negative" claim is retracted |
+| 7 | Representation track | [representation-track.md](representation-track.md) | ⛔ R1 not promoted (redesigned held-out-camera gate) — no arm passes on all 5 seeds; closed as a characterized negative with a G5 decomposition; R2 pilot remains an honest negative. Fair-allocation single-view parity re-measured on two scenes with opposite outcomes: all 3 world arms pass 5/5 on toy 64², none passes on Kitchen 128²; the earlier "19× allocation handicap explains the Kitchen negative" claim is retracted (2026-08-29) The held-out-camera campaign that closed R1 has been re-read at 96 held-out lights from its committed checkpoints (no retraining): the negative survives and strengthens -- no arm passes G1/G3/G4, the failing-row count rises from 83 to 94 of 180, and every arm's mean delta shrinks; the campaign's published per-row and per-rotation deltas are retracted as measurements while its conclusion stands |
 
 ## How the phases connect
 
@@ -74,6 +74,18 @@ prompts (or, for phase 3, a decision document); each links its evidence into
    passes on Country Kitchen — and retracts the earlier claim that the ~19×
    parameter-matching handicap explained the Kitchen negative, since removing that
    handicap reproduces the same negative almost exactly.
+
+   The held-out-camera campaign itself was re-read on 2026-08-29 against 96 held-out
+   lights (12 independent draws of its own 8-light evaluation configuration), from
+   the same 165 committed checkpoints and with no retraining. It reproduces the
+   committed run exactly at the original light count, and at 96 lights the negative
+   survives and strengthens: no arm passes G1, G3 or G4, the number of failing rows
+   rises from 83 to 94 of 180, and every arm's mean delta over the `pixel2d`
+   baseline shrinks by 0.32–0.47 dB. The campaign's published per-row, per-rotation
+   and per-arm mean deltas are retracted as measurements of the arms (the original
+   per-row estimator's ~1.33 dB standard error exceeded the 1.0 dB margin it was
+   testing); the closure they supported is unchanged. See
+   `docs/performance.md#encoding-redesign-campaign-re-read-at-96-held-out-lights-2026-08-29`.
 
 Evidence conventions for all phases: every measured claim lands in a JSON
 report under `out/` and in [performance.md](performance.md) with hardware
