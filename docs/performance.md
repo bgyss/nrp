@@ -3900,3 +3900,88 @@ Evidence: `out/r1-encoding-redesign/rescore-96.json` (96-light re-read),
 `out/r1-encoding-redesign/report-INVALID-unrotated-lights.json` (unmodified,
 preserved run 2). Runner:
 `examples/rescore_checkpoints.py::rescore_encoding_redesign`.
+
+## R1 Kitchen parity at 32 seeds: `world_sparse` passes (2026-08-30)
+
+The 96-light re-read above left all three world arms at `continue` with 14–25
+seeds needed. All three were funded to the gate's n=32 look. **`world_sparse`
+passes**; the other two remain `continue`. This is the first promotion-gate pass
+recorded on the representation track.
+
+Nothing about the gate changed to produce it: threshold −0.5 dB, look schedule
+(8, 16, 24, 32, 40, 48), cap 48, α = 0.05 split six ways, and the estimand is
+the same mean paired PSNR delta versus the same-seed `pixel2d` control over the
+same light prior. Only the seed count grew, at the pre-registered 96 held-out
+lights.
+
+| arm | verdict | mean Δ (dB) | 99.17% CI (dB) | sample sd (dB) | seeds needed | per-seed rule |
+|---|---|---:|---:|---:|---:|---:|
+| `world_sparse` | **pass** | **−0.096** | **[−0.447, +0.254]** | 0.703 | 18 | 23/32 |
+| `world_normal_triplane` | `continue` | −0.363 | [−0.689, −0.036] | 0.655 | 16 | 18/32 |
+| `world3d` | `continue` | −0.385 | [−0.732, −0.037] | 0.697 | 18 | 20/32 |
+
+The interval is the binding Student-t interval at the gate's Bonferroni-corrected
+per-look confidence (99.17%), taken at the fourth scheduled look. The "per-seed
+rule" column is the superseded rule, reported for contrast only — it is not the
+gate. Sample sd is ddof=1 (`std_db`, what the CI is built from); the
+`between_seed_sd_db` field in the JSON is ddof=0 and is 0.692 for `world_sparse`.
+
+**What this establishes.** `world_sparse` is certified at parity with `pixel2d`
+for **single-view fair-allocation reconstruction on Country Kitchen 128²** — the
+question the R1 parity re-measurement asks. Its CI lies entirely at or above the
+threshold, so the gate's own definition of a pass is met, and the two remaining
+arms are genuinely undecided rather than failing: both CI upper bounds sit just
+below zero (−0.036, −0.037 dB).
+
+**What it does not establish, and this is the important part.** It is *not* the
+held-out-camera generalization gate that closed R1. That campaign was re-read at
+96 lights (see the encoding-redesign section below) and its negative **survives
+and strengthens** — no arm passes G1/G3/G4, and failing rows rise from 83 to 94
+of 180. A single-view parity pass is a weaker claim than cross-camera
+generalization, which is what R1 promotion and the R2–R6 ladder actually require.
+**This result does not promote R1 and does not unblock R2–R6.**
+
+**Two caveats carried forward.**
+
+- *Uncorrected multiplicity.* Three arms were tested against one control, and the
+  one being reported is the one that passed. The equivalence-gate section above
+  flags exactly this as uncorrected ("multiplicity across arms... a future
+  'promote whichever of N arms passes' selection would need its own correction").
+  Each look's one-sided false-pass rate is ≈0.417%; over the four looks taken
+  that is ≈1.66% per arm, so across three arms the family-wise false-parity rate
+  is ≈4.9% against a nominal 5% budget — at the edge of the budget rather than
+  inside it.
+- *Margin.* The CI lower bound clears the threshold by 0.053 dB. That is an order
+  of magnitude more room than the `finest64` observation in the K1 sweep section
+  (0.0042 dB) and it does not rest on an unusually small sd — `world_sparse`'s
+  sd (0.703) is the *largest* of the three arms, so it passed despite the widest
+  interval, not because of a narrow one. But it is not a large margin, and the
+  gate reports 18 seeds needed against the 32 run.
+
+**The gate change was load-bearing.** Under the superseded per-seed rule
+`world_sparse` clears −0.5 dB on only 23 of 32 seeds and would have been rejected
+outright, as would every other arm. That is the 76–91% false-rejection behaviour
+the equivalence gate was built to remove, observed directly on a result the old
+rule would have discarded: adding seeds under the old rule makes rejection *more*
+likely, which is why the track spent four campaigns unable to certify anything.
+
+**Determinism, re-verified on fresh trainings.** Seeds 0–7 of this run were
+retrained from scratch in a separate process and output directory, and their
+per-seed deltas reproduce
+`out/r1-parity-kitchen-eq/rescore-96.json` to within 1e-9 for all three arms
+(−0.0086 / −0.4160 / −0.6738). The earlier re-reads exercised only the
+evaluation path; this exercises training, checkpointing, occupancy
+reconstruction, evaluation and the gate end to end.
+
+Hardware: Apple M1 Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU, OIDN pinned to one
+thread. 128 trainings (4 arms × 32 seeds), ≈4.9 CPU-hours.
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
+  --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-eq32 \
+  --iters 3000 --finest-resolution 128 --base-resolution 4 \
+  --denoise-method oidn --gate equivalence --max-seeds 32 --gate-lights 96
+```
+
+Evidence: `out/r1-parity-kitchen-eq32/report.json`. The 96-light re-read this
+extends is `out/r1-parity-kitchen-eq/rescore-96.json`.
