@@ -3985,3 +3985,81 @@ UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
 
 Evidence: `out/r1-parity-kitchen-eq32/report.json`. The 96-light re-read this
 extends is `out/r1-parity-kitchen-eq/rescore-96.json`.
+
+## R1 Kitchen parity at the n=48 cap: the other two arms end `underpowered` (2026-08-31)
+
+The n=32 look above left `world_normal_triplane` and `world3d` at `continue`.
+Both were funded to a further look. The n=40 look was **skipped** and the run
+went straight to n=48, the schedule's cap: projecting each arm's n=32 mean and sd
+forward showed neither could reach a terminal verdict at n=40, so that look would
+have spent ~6 CPU-hours and a look's alpha to learn nothing. Taking fewer looks
+than the six-look budget is conservative on the error rate, never liberal.
+
+The projection held. Evaluated after the fact from the completed run, n=40 would
+have returned CI [−0.607, −0.073] and [−0.650, −0.066] — `continue` for both,
+against a prediction of [−0.651, −0.075] and [−0.691, −0.078].
+
+Nothing about the gate changed: threshold −0.5 dB, schedule (8, 16, 24, 32, 40,
+48), cap 48, α = 0.05 split six ways, 96 held-out lights, same estimand.
+
+| arm | verdict | mean Δ (dB) | 99.17% CI (dB) | sample sd (dB) | per-seed rule |
+|---|---|---:|---:|---:|---:|
+| `world_sparse` | `pass` (2nd) | −0.146 | [−0.402, +0.109] | 0.642 | 33/48 |
+| `world_normal_triplane` | **`underpowered`** | −0.356 | [−0.590, −0.122] | 0.589 | 28/48 |
+| `world3d` | **`underpowered`** | −0.346 | [−0.601, −0.091] | 0.642 | 30/48 |
+
+**`underpowered` at the cap is a terminal answer, not another `continue`.** The
+seed budget is exhausted. Neither arm is demonstrably at parity, and neither is
+demonstrably worse: both CIs sit inside the margin on the upper side and cross
+−0.5 dB on the lower, by 0.090 and 0.101 dB respectively.
+
+**Neither arm could ever have returned `fail`.** A `fail` needs the whole
+interval below −0.5 dB, and both means (−0.356, −0.346) sit above the threshold.
+From n=32 onward the only reachable outcomes were `pass` and `underpowered`.
+
+**More seeds are not the fix.** The 16 added seeds narrowed each interval by
+~30% and moved the means by less than 0.04 dB — these arms are converging on a
+true mean near −0.35 dB, which is simply too close to a −0.5 dB threshold for
+this design to resolve. Holding each arm's current mean and sd, passing would
+require **120 seeds for `world_normal_triplane` and 126 for `world3d`** — 2.5×
+the cap, ≈19 CPU-hours per arm. Note that the reports' `seeds_needed` fields (14
+and 16) answer a different question: seeds for a 0.5 dB *half-width*, which both
+arms met three times over. They are not the seeds needed to pass.
+
+**`world_sparse` passes a second time, with a tighter interval.** Its mean moved
+from −0.096 to −0.146 dB while the CI narrowed from [−0.447, +0.254] to [−0.402,
++0.109], so the lower bound now clears the threshold by 0.098 dB rather than
+0.053 dB. The scope is unchanged and is the important part: this is
+**single-view fair-allocation parity on Country Kitchen 128²**, *not* the
+held-out-camera generalization gate that closed R1. That negative was re-read at
+96 lights and stands. **R1 remains unpromoted and R2–R6 remain blocked.**
+
+**Multiplicity, stated two ways.** Three arms are still tested against one
+control with no correction across arms. Counting all six schedule positions —
+the conservative bound, matching the convention used in the n=32 section — the
+per-arm one-sided false-pass rate is 6 × 0.417% = 2.5% and the family-wise rate
+across three arms is ≈7.3%, above the nominal 5%. But only **two** looks were
+ever actually taken on this schedule (n=32 and n=48; each run trained its seeds
+as a single batch and evaluated once), giving 0.833% per arm and ≈2.5%
+family-wise. The honest figure is the second one; the first is the bound you get
+if you assume every scheduled look was spent.
+
+**Determinism, exactly.** All 128 shared (arm, seed) validation means from the
+n=32 run reproduce in this fresh process with a maximum absolute difference of
+**0.000e+00 dB** — bit-identical, across a different seed count, output
+directory, and process. This supersedes the seeds 0–7 spot-check recorded for
+the n=32 run.
+
+Hardware: Apple M1 Max, macOS 27.0 arm64, PyTorch 2.12.1, CPU, OIDN pinned to one
+thread. 192 trainings (4 arms × 48 seeds), ≈7.5 CPU-hours, 7.9 h wall clock.
+
+```sh
+UV_CACHE_DIR=.uv-cache uv run python examples/r1_parity.py \
+  --cache out/kitchen/path_cache.npz --out-dir out/r1-parity-kitchen-eq48 \
+  --seeds $(seq -s' ' 0 47) \
+  --iters 3000 --finest-resolution 128 --base-resolution 4 \
+  --denoise-method oidn --gate equivalence --max-seeds 48 --gate-lights 96
+```
+
+Evidence: `out/r1-parity-kitchen-eq48/report.json`. The n=32 look this closes out
+is `out/r1-parity-kitchen-eq32/report.json`.
